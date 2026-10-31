@@ -115,6 +115,7 @@ bool LoadRelAsset(void* dst, const char* dvdPath, std::initializer_list<OffsetVe
 }
 
 bool LoadArchivedRelAsset(void* dst, u32 memType, const char* relFileName, std::initializer_list<OffsetVersion> offset, s32 size) {
+
     auto resOffset = GetOffsetForVersion(offset);
 
     // On TARGET_PC, cDyl_InitCallback skips DynamicModuleControl::initialize() due to static linking

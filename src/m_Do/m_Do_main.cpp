@@ -98,6 +98,8 @@
 #include <system_error>
 #include <thread>
 
+#include "dusk/settings.h"
+#include "dusk/tphd/HdAssetLayer.hpp"
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
@@ -477,9 +479,9 @@ u8 OSGetLanguage() {
 }
 
 static void LanguageInit() {
-    // Keep language at 0 (English) if not on a PAL disc.
+    // Keep language at 0 (English) if not on a PAL disc and if TPHD is unloaded.
     // Doubt this matters, but avoid funky shit.
-    if (!dusk::version::isRegionPal()) {
+    if (!dusk::version::isRegionPal() && !dusk::tphd_active()) {
         return;
     }
 
@@ -704,7 +706,11 @@ int game_main(int argc, char* argv[]) {
         config.desiredBackend = ResolveDesiredBackend(parsed_arg_options);
         config.logCallback = borealis::log::aurora_callback();
         config.logLevel = borealis::log::to_aurora_level(startupLogLevel);
-        config.mem1Size = 256 * 1024 * 1024;
+        if (dusk::tphd_active()) {
+            config.mem1Size = 768 * 1024 * 1024;
+        } else {
+            config.mem1Size = 256 * 1024 * 1024;
+        }
         config.mem2Size = 24 * 1024 * 1024;
         config.allowJoystickBackgroundEvents = dusk::getSettings().game.allowBackgroundInput;
         config.pauseOnFocusLost = dusk::getSettings().game.pauseOnFocusLost;
@@ -901,6 +907,15 @@ int game_main(int argc, char* argv[]) {
 
         dusk::IsGameLaunched = true;
     }
+
+#if DUSK_TPHD
+    {
+        const auto hdPath = dusk::tphd_content_path();
+        if (!hdPath.empty()) {
+            dusk::tphd::set_hd_content_path(hdPath);
+        }
+    }
+#endif
 
     dusk::version::init();
     LanguageInit();

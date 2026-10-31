@@ -150,8 +150,16 @@ public:
         return (J2DTextBoxVBinding)(mFlags & 3);
     }
 
+    void setVBinding(J2DTextBoxVBinding binding) {
+        mFlags = (mFlags & ~3) | (binding & 3);
+    }
+
     J2DTextBoxHBinding getHBinding() const {
         return (J2DTextBoxHBinding)((mFlags >> 2) & 3);
+    }
+
+    void setHBinding(J2DTextBoxHBinding binding) {
+        mFlags = (mFlags & ~0x0C) | ((binding & 3) << 2);
     }
 
     JUtility::TColor getCharColor() { return mCharColor; }

@@ -188,8 +188,10 @@ set(DOLZEL_FILES
         src/d/d_menu_letter.cpp
         src/d/d_menu_option.cpp
         src/d/d_menu_ring.cpp
+        src/d/d_menu_ring_hd.cpp
         src/d/d_menu_save.cpp
         src/d/d_menu_skill.cpp
+        src/d/d_menu_stamp.cpp
         src/d/d_menu_window_HIO.cpp
         src/d/d_menu_window.cpp
         src/d/d_meter_HIO.cpp
@@ -1682,4 +1684,14 @@ set(DUSK_FILES
         src/helpers/offset_ptr.cpp
         src/helpers/string.cpp
         src/helpers/cast.cpp
+        src/dusk/tphd/TphdPack.hpp
+        src/dusk/tphd/TphdPack.cpp
+        src/dusk/tphd/GtxParser.hpp
+        src/dusk/tphd/GtxParser.cpp
+        src/dusk/tphd/AddrLib.hpp
+        src/dusk/tphd/AddrLib.cpp
+        src/dusk/tphd/HdAssetLayer.hpp
+        src/dusk/tphd/HdAssetLayer.cpp
+        src/dusk/tphd/LosTable.hpp
+        src/dusk/tphd/LosTable.cpp
 )

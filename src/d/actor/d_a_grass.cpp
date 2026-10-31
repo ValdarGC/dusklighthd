@@ -6,6 +6,8 @@
 #include "d/dolzel_rel.h" // IWYU pragma: keep
 
 #include "d/actor/d_a_grass.h"
+#include "m_Do/m_Do_lib.h"
+#include "dusk/settings.h"
 #include "SSystem/SComponent/c_counter.h"
 #include "SSystem/SComponent/c_math.h"
 #include "d/d_com_inf_game.h"

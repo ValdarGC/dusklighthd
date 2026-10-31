@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "dusk/settings.h"
 #include "registry.hpp"
 
 #include "dusk/mods/loader/loader.hpp"
@@ -183,12 +184,6 @@ constexpr AuroraOverlayCallbacks s_overlayCallbacks = {
 };
 
 void overlay_sync_files() {
-    static bool callbacksRegistered = false;
-    if (!callbacksRegistered) {
-        aurora_dvd_overlay_callbacks(&s_overlayCallbacks);
-        callbacksRegistered = true;
-    }
-
     s_overlaysDirty = false;
 
     std::vector<AuroraOverlayFile> files;
@@ -200,6 +195,20 @@ void overlay_sync_files() {
             find_overlay_files(files, mod, claims);
             append_runtime_overlays(files, mod, claims);
         }
+    }
+
+#if DUSK_TPHD
+    // With HD content active, the TPHD layer owns the DVD overlay. If no mod adds files,
+    // leave it alone: registering here would clear its files and replace its callbacks.
+    if (files.empty() && dusk::tphd_active()) {
+        return;
+    }
+#endif
+
+    static bool callbacksRegistered = false;
+    if (!callbacksRegistered) {
+        aurora_dvd_overlay_callbacks(&s_overlayCallbacks);
+        callbacksRegistered = true;
     }
 
     Log.debug("Registering {} overlay file(s).", files.size());

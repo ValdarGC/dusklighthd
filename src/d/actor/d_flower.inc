@@ -681,13 +681,32 @@ dFlower_packet_c::dFlower_packet_c() {
 #endif
 
 #if TARGET_PC
-    GXInitTexObj(&mTexObj_l_J_Ohana00_64TEX, l_J_Ohana00_64TEX,
-        l_J_Ohana00_64TEX__width + 1, l_J_Ohana00_64TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
-    );
+    if (dusk::tphd_active()) {
+        ResTIMG* ohana00Img = (ResTIMG*)dComIfG_getObjectRes("Always", 0x64);
+        ResTIMG* ohana01Img = (ResTIMG*)dComIfG_getObjectRes("Always", 0x65);
+        if (ohana00Img != NULL) {
+            mDoLib_setResTimgObj(ohana00Img, &mTexObj_l_J_Ohana00_64TEX, 0, NULL);
+        } else {
+            GXInitTexObj(&mTexObj_l_J_Ohana00_64TEX, l_J_Ohana00_64TEX,
+                l_J_Ohana00_64TEX__width + 1, l_J_Ohana00_64TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
+            );
+        }
+        if (ohana01Img != NULL) {
+            mDoLib_setResTimgObj(ohana01Img, &mTexObj_l_J_Ohana01_64128_0419TEX, 0, NULL);
+        } else {
+            GXInitTexObj(&mTexObj_l_J_Ohana01_64128_0419TEX, l_J_Ohana01_64128_0419TEX,
+                l_J_Ohana01_64128_0419TEX__width + 1, l_J_Ohana01_64128_0419TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
+            );
+        }
+    } else {
+        GXInitTexObj(&mTexObj_l_J_Ohana00_64TEX, l_J_Ohana00_64TEX,
+            l_J_Ohana00_64TEX__width + 1, l_J_Ohana00_64TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
+        );
 
-    GXInitTexObj(&mTexObj_l_J_Ohana01_64128_0419TEX, l_J_Ohana01_64128_0419TEX,
-        l_J_Ohana01_64128_0419TEX__width + 1, l_J_Ohana01_64128_0419TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
-    );
+        GXInitTexObj(&mTexObj_l_J_Ohana01_64128_0419TEX, l_J_Ohana01_64128_0419TEX,
+            l_J_Ohana01_64128_0419TEX__width + 1, l_J_Ohana01_64128_0419TEX__height + 1, GX_TF_CMPR, GX_MIRROR, GX_MIRROR, GX_FALSE
+        );
+    }
 
     batch::decode_leaf_template(l_J_hana00DL, 0x140, mTplHana00);
     batch::decode_leaf_template(l_J_hana00_cDL, 0xC0, mTplHana00Cut);

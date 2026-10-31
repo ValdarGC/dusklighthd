@@ -1,6 +1,7 @@
 #include "dusk/language.hpp"
 
 #include "dusk/version.hpp"
+#include "dusk/settings.h"
 
 namespace dusk::language {
 namespace {
@@ -63,9 +64,10 @@ const char* msg_folder() noexcept {
     case GameLanguage::German:
         return "Msgde";
     case GameLanguage::French:
-        return "Msgfr";
+        // TPHD: the Wii U US content has its own French / Spanish folders.
+        return (tphd_active() && !isRegionPal()) ? "Msgusfr" : "Msgfr";
     case GameLanguage::Spanish:
-        return "Msgsp";
+        return (tphd_active() && !isRegionPal()) ? "Msgussp" : "Msgsp";
     case GameLanguage::Italian:
         return "Msgit";
     case GameLanguage::Japanese:

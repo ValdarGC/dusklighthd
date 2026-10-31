@@ -9,6 +9,17 @@
 #include "JSystem/JSupport/JSURandomInputStream.h"
 #include "JSystem/JUtility/JUTResFont.h"
 
+#if TARGET_PC
+// TPHD (Wii U) J2DTextBoxEx::drawSelf behaviour, enabled when the Wii U layouts are in use.
+// Decompiled from the TPHD RPX (J2DTextBoxEx::drawSelf @ 0x02b498f4):
+//  - TEV colour inputs that read GX_CC_TEXC are rewritten to GX_CC_ONE (the HD font sheets are
+//    sampled as RRRR, so text keeps its material colour and the glyph only drives alpha).
+//  - Panes whose user info is 's_01' (the black "shadow" copy laid under each HUD caption in the
+//    Revo .blo files) are printed 12 times around their position, which produces the uniform
+//    outline: x in {-0.7,-0.35,+0.35,+0.7} x y in {-0.7,0,+0.7} (data at 0x100ab634..0x100ab648).
+bool g_hdTextOutline = false;
+#endif
+
 J2DTextBoxEx::J2DTextBoxEx(J2DPane* p_pane, JSURandomInputStream* p_stream, u32 param_2,
                                J2DMaterial* p_material) {
     J2DTextBoxInfo info;
@@ -106,6 +117,28 @@ void J2DTextBoxEx::drawSelf(f32 param_0, f32 param_1, Mtx* p_mtx) {
     print.setFontSize((int)mFontSizeX, (int)mFontSizeY);
 
     if (mMaterial != NULL) {
+#if TARGET_PC
+        if (g_hdTextOutline && mMaterial->getTevBlock() != NULL) {
+            J2DTevBlock* tev = mMaterial->getTevBlock();
+            for (u32 i = 0; i < tev->getTevStageNum(); i++) {
+                J2DTevStage* st = tev->getTevStage(i);
+                if (st == NULL) {
+                    continue;
+                }
+                u8 c[4] = {st->getColorA(), st->getColorB(), st->getColorC(), st->getColorD()};
+                bool changed = false;
+                for (u8& v : c) {
+                    if (v == GX_CC_TEXC) {
+                        v = GX_CC_ONE;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    st->setColorABCD(c[0], c[1], c[2], c[3]);
+                }
+            }
+        }
+#endif
         mMaterial->setGX();
         MTXConcat(*p_mtx, mGlobalMtx, m);
 
@@ -128,6 +161,21 @@ void J2DTextBoxEx::drawSelf(f32 param_0, f32 param_1, Mtx* p_mtx) {
                 GXSetChanMatColor(GX_ALPHA0, JUtility::TColor(mColorAlpha));
             }
 
+#if TARGET_PC
+            if (g_hdTextOutline && mUserInfoTag == 0x735f3031 /* 's_01' */) {
+                static const f32 kX[4] = {-0.7f, -0.35f, 0.35f, 0.7f};
+                static const f32 kY[3] = {-0.7f, 0.0f, 0.7f};
+                for (f32 dx : kX) {
+                    for (f32 dy : kY) {
+                        print.locate(param_0 + mBounds.i.x + dx, param_1 + mBounds.i.y + dy);
+                        print.printReturn(mStringPtr, (int)(mBounds.getWidth() + 0.0001f),
+                                          (int)mBounds.getHeight(), getHBinding(), getVBinding(),
+                                          field_0x10c, field_0x110, alpha);
+                    }
+                }
+                return;
+            }
+#endif
             print.printReturn(mStringPtr, (int)(mBounds.getWidth() + 0.0001f), (int)mBounds.getHeight(),
                             getHBinding(), getVBinding(), field_0x10c, field_0x110, alpha);
         }

@@ -4,7 +4,7 @@ include_guard(GLOBAL)
 get_filename_component(_game_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 # PARTIAL_DEBUG makes debug and release share one struct/vtable ABI so a mod binary loads into either
-set(_game_compile_defs TARGET_PC=1 WIDESCREEN_SUPPORT=1 AVOID_UB=1 VERSION=0 MTX_USE_PS=1 PARTIAL_DEBUG=1)
+set(_game_compile_defs TARGET_PC=1 WIDESCREEN_SUPPORT=1 AVOID_UB=1 VERSION=0 MTX_USE_PS=1 PARTIAL_DEBUG=1 DUSK_TPHD=1)
 if (ANDROID)
     list(APPEND _game_compile_defs TARGET_ANDROID=1)
 endif ()

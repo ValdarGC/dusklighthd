@@ -576,13 +576,33 @@ dGrass_packet_c::dGrass_packet_c() {
 #endif
 
 #if TARGET_PC
-    GXInitTexObj(&mTexObj_l_M_kusa05_RGBATEX, l_M_kusa05_RGBATEX,
-        l_M_kusa05_RGBATEX__width + 1, l_M_kusa05_RGBATEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
-    );
+    if (dusk::tphd_active()) {
+        ResTIMG* kusaImg = (ResTIMG*)dComIfG_getObjectRes("Always",
+            strcmp(dComIfGp_getStartStageName(), "F_SP108") == 0 ? 0x68 : 0x67);
+        ResTIMG* hijikiImg = (ResTIMG*)dComIfG_getObjectRes("Always", 0x66);
+        if (kusaImg != NULL) {
+            mDoLib_setResTimgObj(kusaImg, &mTexObj_l_M_kusa05_RGBATEX, 0, NULL);
+        } else {
+            GXInitTexObj(&mTexObj_l_M_kusa05_RGBATEX, l_M_kusa05_RGBATEX,
+                l_M_kusa05_RGBATEX__width + 1, l_M_kusa05_RGBATEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
+            );
+        }
+        if (hijikiImg != NULL) {
+            mDoLib_setResTimgObj(hijikiImg, &mTexObj_l_M_Hijiki00TEX, 0, NULL);
+        } else {
+            GXInitTexObj(&mTexObj_l_M_Hijiki00TEX, l_M_Hijiki00TEX,
+                l_M_Hijiki00TEX__width + 1, l_M_Hijiki00TEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
+            );
+        }
+    } else {
+        GXInitTexObj(&mTexObj_l_M_kusa05_RGBATEX, l_M_kusa05_RGBATEX,
+            l_M_kusa05_RGBATEX__width + 1, l_M_kusa05_RGBATEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
+        );
 
-    GXInitTexObj(&mTexObj_l_M_Hijiki00TEX, l_M_Hijiki00TEX,
-        l_M_Hijiki00TEX__width + 1, l_M_Hijiki00TEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
-    );
+        GXInitTexObj(&mTexObj_l_M_Hijiki00TEX, l_M_Hijiki00TEX,
+            l_M_Hijiki00TEX__width + 1, l_M_Hijiki00TEX__height + 1, GX_TF_RGB5A3, GX_REPEAT, GX_CLAMP, GX_FALSE
+        );
+    }
 #endif
 
     mp_kusa9q_DL = l_kusa9q_matDL;

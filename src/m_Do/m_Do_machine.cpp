@@ -813,6 +813,18 @@ int mDoMch_Create() {
     gameHeapSize += 0x200000;
     gameHeapSize += 0x100000;
     dynamicLinkHeapSize = 0x180000;
+#if DUSK_TPHD
+    // HD assets ship much larger archives/actors (CMPR texture injection
+    // pushes stage BMDs past 8 MB and Link's Kmdl past 5 MB). Parent arena is
+    // 1 GB on PC, distribute generously across every heap that holds model
+    // or animation data at runtime.
+    if (dusk::tphd_active()) {
+        archiveHeapSize     += 0x08000000;  // +128 MB  (large RARCs)
+        gameHeapSize        += 0x10000000;  // +256 MB  (parent of per-actor heaps like "Alink original")
+        j2dHeapSize         += 0x01000000;  // +16  MB  (UI textures)
+        dynamicLinkHeapSize += 0x01000000;  // +16  MB
+    }
+#endif
 
     #if !DEBUG
     // Fakematch because the heap sizes differ between debug and retail.
@@ -855,14 +867,16 @@ int mDoMch_Create() {
 
 #if TARGET_PC
     // Change heap sizes to account for 64bit pointers & extra memory available.
-    arenaSize = 32 * 1024 * 1024;
+    arenaSize = 64 * 1024 * 1024;
     commandHeapSize *= 2;
 #if DEBUG
     dynamicLinkHeapSize *= 2;
 #endif
-    archiveHeapSize *= 2;
-    j2dHeapSize *= 2;
-    gameHeapSize *= 20; // NOTE: increased from 2 to 20 to try to solve heap alloc crashes. maybe do a better fix later
+    if (!dusk::tphd_active()) {
+        archiveHeapSize *= 2;
+        j2dHeapSize *= 2;
+        gameHeapSize *= 20; // NOTE: increased from 2 to 20 to try to solve heap alloc crashes. maybe do a better fix later
+    }
 #endif
 
     JFWSystem::setSysHeapSize(arenaSize);
@@ -962,7 +976,11 @@ int mDoMch_Create() {
 
     JKRHeap* systemHeap = JKRGetSystemHeap();
     s32 size = systemHeap->getFreeSize();
+#if TARGET_PC
+    size -= 0x800000;
+#else
     size -= 0x10000;
+#endif
     JUT_ASSERT(1549, size > 0);
     JKRHeap* zeldaHeap = mDoExt_createZeldaHeap(size, systemHeap);
     my_SysPrintHeap("ゼルダヒープ", zeldaHeap, size);

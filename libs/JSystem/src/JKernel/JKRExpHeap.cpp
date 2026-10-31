@@ -216,33 +216,41 @@ void* JKRExpHeap::do_alloc(u32 size, int alignment) {
 #if TARGET_PC
     if (!ptr) {
         // Allocation failed.
-        OSReport_Error(
-            "Failed to alloc memory! (%s) (0x%X bytes).\n  Heap size: 0x%X\n  Used size: 0x%X\n",
-            this->getName(), size, getSize(), getTotalUsedSize());
-        OSReport_Error("Free block list as follows:\n");
-        OSReport_Error("Start    | End      | Size    \n");
+        OS_REPORT(
+            "[HEAP FAIL] Failed to alloc memory! (%s) (0x%X bytes, align %d).\n  Heap size: 0x%X, Used size: 0x%X, Free size: 0x%X, HeadFree: %p, HeadUsed: %p\n",
+            this->getName(), size, alignment, getSize(), getTotalUsedSize(), getFreeSize(), mHeadFreeList, mHeadUsedList);
+        OS_REPORT("Free block list as follows:\n");
+        OS_REPORT("Start    | End      | Size     | Magic\n");
 
         for (const CMemBlock* block = mHeadFreeList; block; block = block->mNext) {
-            if (block->mMagic) {
-                // Allocated, ignore.
-                continue;
-            }
-
             auto blockStart = (uintptr_t)block - (uintptr_t)mStart;
             auto blockEnd = (uintptr_t)block + block->size - (uintptr_t)mStart;
             auto blockSize = block->size;
-            OSReport_Error("%08X | %08X | %08X\n", (u32) blockStart, (u32) blockEnd, (u32) blockSize);
+            OS_REPORT("%08X | %08X | %08X | %04X\n", (u32) blockStart, (u32) blockEnd, (u32) blockSize, (u32)block->mMagic);
         }
 
-        OSReport_Error("Child heaps as follows:\n");
-        OSReport_Error("Start    | End      | Name    \n");
+        OS_REPORT("Used block list as follows:\n");
+        OS_REPORT("Start    | End      | Size     | Group | Flags\n");
+        for (const CMemBlock* block = mHeadUsedList; block; block = block->mNext) {
+            auto blockStart = (uintptr_t)block - (uintptr_t)mStart;
+            auto blockEnd = (uintptr_t)block + block->size + sizeof(CMemBlock) - (uintptr_t)mStart;
+            auto blockSize = block->size;
+            OS_REPORT("%08X | %08X | %08X | %02X    | %02X\n", (u32) blockStart, (u32) blockEnd, (u32) blockSize, (u32)block->getGroupId(), (u32)block->isTempMemBlock());
+        }
+
+        OS_REPORT("Child heaps as follows:\n");
+        OS_REPORT("Start    | End      | Name    \n");
 
         const JSUTree<JKRHeap>& tree = getHeapTree();
         for (JSUTreeIterator iter(tree.getFirstChild()); iter != tree.getEndChild(); ++iter) {
-            OSReport_Error("%08X | %08X | %s\n", iter->getStartAddr(), iter->getEndAddr(), iter->getName());
+            OS_REPORT("%08X | %08X | %s\n", iter->getStartAddr(), iter->getEndAddr(), iter->getName());
         }
 
-        CRASH("Aborting due to allocation failure!");
+        char crashMsg[256];
+        snprintf(crashMsg, sizeof(crashMsg),
+                 "Allocation failure in heap '%s' (req 0x%X, size 0x%X, used 0x%X, free 0x%X)!",
+                 this->getName() ? this->getName() : "unnamed", (u32)size, (u32)getSize(), (u32)getTotalUsedSize(), (u32)getFreeSize());
+        CRASH(crashMsg);
     }
 #else
     if (ptr == NULL) {

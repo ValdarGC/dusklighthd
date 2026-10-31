@@ -143,6 +143,38 @@ using namespace dusk::version;
 #define MAIN2D_PATH "/res/Layout/main2D.arc"
 #endif
 
+#if TARGET_PC
+// Wii U (TPHD) HUD layout archive, mounted next to the GC main2D archive. Used as an overlay.
+JKRArchive* g_tphdMain2DRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdMain2DRevoCmd = NULL;
+// Wii U item screen layout (zelda_items_procon.blo), used by dMenu_ItemHD_c.
+JKRArchive* g_tphdRingRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdRingRevoCmd = NULL;
+// fishresR.arc (5 KB): holds title_backdrop.bti, the item-name backdrop of the Wii U item screen
+// (on Wii U it comes from the collection screen archive, which is not the Revo one here).
+JKRArchive* g_tphdFishRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdFishRevoCmd = NULL;
+// clctresR.arc: Wii U TV collection screen (d_menu_collect.cpp, zelda_collect_soubi_screen_revo.blo).
+JKRArchive* g_tphdCollectRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdCollectRevoCmd = NULL;
+// Wii U interaction prompt layout (zelda_game_image_button_info_revo.blo), see d_meter_button.cpp.
+JKRArchive* g_tphdButtonRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdButtonRevoCmd = NULL;
+// msgres00R.arc: Wii U 3-way choice window (zelda_window_3menu_revo.blo, d_msg_scrn_3select.cpp).
+JKRArchive* g_tphdMsgRes0RevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdMsgRes0RevoCmd = NULL;
+// msgres01R.arc / msgcomR.arc: Wii U explain window (zelda_message_window_new_revo.blo and the Revo
+// zelda_message_window_text.blo, 19 pt text inside an n_43 mg_null), d_msg_scrn_explain.cpp.
+JKRArchive* g_tphdMsgRes1RevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdMsgRes1RevoCmd = NULL;
+JKRArchive* g_tphdMsgComRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdMsgComRevoCmd = NULL;
+JKRArchive* g_tphdOptRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdOptRevoCmd = NULL;
+JKRArchive* g_tphdStampRevoArchive = NULL;
+static mDoDvdThd_mountXArchive_c* s_tphdStampRevoCmd = NULL;
+#endif
+
 class dLog_HIO_c : public JORReflexible {
 public:
     dLog_HIO_c();
@@ -726,6 +758,17 @@ void dScnLogo_c::nvLogoOutDraw() {
 #endif
 
 void dScnLogo_c::dvdWaitDraw() {
+    #if TARGET_PC
+    static bool s_logged = false;
+    if (!s_logged) {
+        s_logged = true;
+        DuskLog.info("dvdWait: particle={} itemTable={} enemyItem={} entry(common-r.jpc)={} entry(common.jpc)={}",
+            (void*)mParticleCommand, (void*)mItemTableCommand, (void*)mEnemyItemCommand,
+            DVDConvertPathToEntrynum("/res/Particle/common-r.jpc"),
+            DVDConvertPathToEntrynum("/res/Particle/common.jpc"));
+    }
+    #endif
+    
     #if PLATFORM_WII || PLATFORM_SHIELD
     dComIfGd_set2DOpa(mStrapImg);
     #endif
@@ -757,6 +800,18 @@ void dScnLogo_c::dvdWaitDraw() {
             && mpMsgResCommand[6]->sync()
             && mpFontResCommand->sync()
             && mpMain2DCommand->sync()
+#if TARGET_PC
+            && (s_tphdMain2DRevoCmd == NULL || s_tphdMain2DRevoCmd->sync())
+            && (s_tphdRingRevoCmd == NULL || s_tphdRingRevoCmd->sync())
+            && (s_tphdFishRevoCmd == NULL || s_tphdFishRevoCmd->sync())
+            && (s_tphdCollectRevoCmd == NULL || s_tphdCollectRevoCmd->sync())
+            && (s_tphdButtonRevoCmd == NULL || s_tphdButtonRevoCmd->sync())
+            && (s_tphdMsgRes0RevoCmd == NULL || s_tphdMsgRes0RevoCmd->sync())
+            && (s_tphdMsgRes1RevoCmd == NULL || s_tphdMsgRes1RevoCmd->sync())
+            && (s_tphdMsgComRevoCmd == NULL || s_tphdMsgComRevoCmd->sync())
+            && (s_tphdOptRevoCmd == NULL || s_tphdOptRevoCmd->sync())
+            && (s_tphdStampRevoCmd == NULL || s_tphdStampRevoCmd->sync())
+#endif
             && mpRubyResCommand->sync()
             && mParticleCommand->sync()
             && mItemTableCommand->sync()
@@ -967,6 +1022,38 @@ dScnLogo_c::~dScnLogo_c() {
     dComIfGp_setFontArchive(mpFontResCommand->getArchive());
     dComIfGp_setRubyArchive(mpRubyResCommand->getArchive());
     dComIfGp_setMain2DArchive(mpMain2DCommand->getArchive());
+#if TARGET_PC
+    if (s_tphdMain2DRevoCmd != NULL) {
+        g_tphdMain2DRevoArchive = s_tphdMain2DRevoCmd->getArchive();
+    }
+    if (s_tphdRingRevoCmd != NULL) {
+        g_tphdRingRevoArchive = s_tphdRingRevoCmd->getArchive();
+    }
+    if (s_tphdFishRevoCmd != NULL) {
+        g_tphdFishRevoArchive = s_tphdFishRevoCmd->getArchive();
+    }
+    if (s_tphdCollectRevoCmd != NULL) {
+        g_tphdCollectRevoArchive = s_tphdCollectRevoCmd->getArchive();
+    }
+    if (s_tphdButtonRevoCmd != NULL) {
+        g_tphdButtonRevoArchive = s_tphdButtonRevoCmd->getArchive();
+    }
+    if (s_tphdMsgRes0RevoCmd != NULL) {
+        g_tphdMsgRes0RevoArchive = s_tphdMsgRes0RevoCmd->getArchive();
+    }
+    if (s_tphdMsgRes1RevoCmd != NULL) {
+        g_tphdMsgRes1RevoArchive = s_tphdMsgRes1RevoCmd->getArchive();
+    }
+    if (s_tphdMsgComRevoCmd != NULL) {
+        g_tphdMsgComRevoArchive = s_tphdMsgComRevoCmd->getArchive();
+    }
+    if (s_tphdOptRevoCmd != NULL) {
+        g_tphdOptRevoArchive = s_tphdOptRevoCmd->getArchive();
+    }
+    if (s_tphdStampRevoCmd != NULL) {
+        g_tphdStampRevoArchive = s_tphdStampRevoCmd->getArchive();
+    }
+#endif
 
     mpField0Command->destroy();
     mpAlAnmCommand->destroy();
@@ -986,6 +1073,48 @@ dScnLogo_c::~dScnLogo_c() {
     }
     mpFontResCommand->destroy();
     mpMain2DCommand->destroy();
+#if TARGET_PC
+    if (s_tphdMain2DRevoCmd != NULL) {
+        s_tphdMain2DRevoCmd->destroy();
+        s_tphdMain2DRevoCmd = NULL;
+    }
+    if (s_tphdRingRevoCmd != NULL) {
+        s_tphdRingRevoCmd->destroy();
+        s_tphdRingRevoCmd = NULL;
+    }
+    if (s_tphdFishRevoCmd != NULL) {
+        s_tphdFishRevoCmd->destroy();
+        s_tphdFishRevoCmd = NULL;
+    }
+    if (s_tphdCollectRevoCmd != NULL) {
+        s_tphdCollectRevoCmd->destroy();
+        s_tphdCollectRevoCmd = NULL;
+    }
+    if (s_tphdButtonRevoCmd != NULL) {
+        s_tphdButtonRevoCmd->destroy();
+        s_tphdButtonRevoCmd = NULL;
+    }
+    if (s_tphdMsgRes0RevoCmd != NULL) {
+        s_tphdMsgRes0RevoCmd->destroy();
+        s_tphdMsgRes0RevoCmd = NULL;
+    }
+    if (s_tphdMsgRes1RevoCmd != NULL) {
+        s_tphdMsgRes1RevoCmd->destroy();
+        s_tphdMsgRes1RevoCmd = NULL;
+    }
+    if (s_tphdMsgComRevoCmd != NULL) {
+        s_tphdMsgComRevoCmd->destroy();
+        s_tphdMsgComRevoCmd = NULL;
+    }
+    if (s_tphdOptRevoCmd != NULL) {
+        s_tphdOptRevoCmd->destroy();
+        s_tphdOptRevoCmd = NULL;
+    }
+    if (s_tphdStampRevoCmd != NULL) {
+        s_tphdStampRevoCmd->destroy();
+        s_tphdStampRevoCmd = NULL;
+    }
+#endif
     mpRubyResCommand->destroy();
 
     #if !PLATFORM_SHIELD
@@ -1594,13 +1723,33 @@ void dScnLogo_c::dvdDataLoad() {
 
     mpField0Command = aramMount("/res/FieldMap/Field0.arc", mDoExt_getJ2dHeap());
     mpAlAnmCommand = aramMount("/res/Object/AlAnm.arc", NULL);
+#if TARGET_PC
+    // TPHD: the Wii U TV field map layouts (zelda_map_screen_title_revo.blo, d_menu_fmap2D.cpp).
+    mpFmapResCommand = aramMount(dusk::tphd_active() ? "/res/LayoutRevo/fmapresR.arc" : FMAP_RES_PATH,
+                                 mDoExt_getJ2dHeap());
+#else
     mpFmapResCommand = aramMount(FMAP_RES_PATH, mDoExt_getJ2dHeap());
+#endif
+#if TARGET_PC
+    // TPHD: the Wii U TV dungeon map layouts (zelda_dungeon_map_base_revo.blo, d_menu_dmap.cpp).
+    mpDmapResCommand = aramMount(dusk::tphd_active() ? "/res/LayoutRevo/dmapresR.arc" : DMAP_RES_PATH,
+                                 mDoExt_getJ2dHeap());
+#else
     mpDmapResCommand = aramMount(DMAP_RES_PATH, mDoExt_getJ2dHeap());
+#endif
     mpCollectResCommand = aramMount(COLLECT_RES_PATH, mDoExt_getJ2dHeap());
     mpItemIconCommand = aramMount("/res/Layout/itemicon.arc", mDoExt_getJ2dHeap());
     mpRingResCommand = aramMount(RING_RES_PATH, mDoExt_getJ2dHeap());
     mpPlayerNameCommand = aramMount("/res/Layout/playerName.arc", mDoExt_getJ2dHeap());
+#if TARGET_PC
+    // TPHD: the Wii U item explain layouts (zelda_item_screen_info.blo with the HD frame, 30-unit
+    // icon in a 110 back; zelda_item_set_info.blo). The RPX mounts itmInfResR.arc here.
+    mpItemInfResCommand = aramMount(
+        dusk::tphd_active() ? "/res/LayoutRevo/itmInfResR.arc" : ITEM_INF_RES_PATH,
+        mDoExt_getJ2dHeap());
+#else
     mpItemInfResCommand = aramMount(ITEM_INF_RES_PATH, mDoExt_getJ2dHeap());
+#endif
     mpButtonCommand = aramMount(BUTTON_RES_PATH, mDoExt_getJ2dHeap());
     mpCardIconCommand = aramMount(ICON_RES_PATH, mDoExt_getJ2dHeap());
 
@@ -1666,6 +1815,39 @@ void dScnLogo_c::dvdDataLoad() {
     mpMsgResCommand[6] = aramMount("/res/Layout/msgres06.arc", mDoExt_getJ2dHeap());
 
     mpMain2DCommand = onMemMount(MAIN2D_PATH);
+#if TARGET_PC
+    s_tphdMain2DRevoCmd = dusk::tphd_active() ? onMemMount("/res/LayoutRevo/main2DR.arc") : NULL;
+    // ARAM-style mount (like the GC ringres.arc): files are fetched one by one into the
+    // (TPHD-enlarged) archive heap, Yaz0 entries get decompressed and every fetched BTI is matched
+    // with its HD texture (register_copied_hd_resource). A MEM mount hands back the raw,
+    // still-compressed bytes of the 28 compressed BTIs of this archive.
+    s_tphdRingRevoCmd = dusk::tphd_active()
+                            ? aramMount("/res/LayoutRevo/ringresR.arc", mDoExt_getArchiveHeap())
+                            : NULL;
+    s_tphdFishRevoCmd = dusk::tphd_active()
+                            ? aramMount("/res/LayoutRevo/fishresR.arc", mDoExt_getArchiveHeap())
+                            : NULL;
+    s_tphdCollectRevoCmd = dusk::tphd_active()
+                               ? aramMount("/res/LayoutRevo/clctresR.arc", mDoExt_getArchiveHeap())
+                               : NULL;
+    s_tphdButtonRevoCmd = dusk::tphd_active()
+                              ? aramMount("/res/LayoutRevo/buttonR.arc", mDoExt_getArchiveHeap())
+                              : NULL;
+    // Same heap as the GC msgres00.arc it stands in for.
+    s_tphdMsgRes0RevoCmd = dusk::tphd_active()
+                               ? aramMount("/res/LayoutRevo/msgres00R.arc", mDoExt_getJ2dHeap())
+                               : NULL;
+    s_tphdMsgRes1RevoCmd = dusk::tphd_active()
+                               ? aramMount("/res/LayoutRevo/msgres01R.arc", mDoExt_getJ2dHeap())
+                               : NULL;
+    s_tphdMsgComRevoCmd = dusk::tphd_active()
+                              ? aramMount("/res/LayoutRevo/msgcomR.arc", mDoExt_getJ2dHeap())
+                              : NULL;
+    // optresR / stampResR are NOT preloaded: they overflowed the archive heap at boot.
+    // The options menu mounts optresR itself; the stamp menu will mount stampResR on demand.
+    // TPHD stamp items (Obj_Stamp) in the item tables.
+    dItem_tphdInitStampData();
+#endif
 
 #if TARGET_PC
     const auto fontResPath = regionSelect<const char*>("/res/Fontus/fontres.arc",
@@ -1696,7 +1878,7 @@ void dScnLogo_c::dvdDataLoad() {
     mpRubyResCommand = onMemMount("/res/Fontus/rubyres.arc");
 #endif
 
-    mParticleCommand = mDoDvdThd_toMainRam_c::create(PARTICLE_COM_PATH, 0, dComIfGp_particle_getResHeap());
+    mParticleCommand = mDoDvdThd_toMainRam_c::create(DUSK_IF_ELSE(dusk::tphd_active() ? "/res/Particle/common-r.jpc" : PARTICLE_COM_PATH, PARTICLE_COM_PATH), 0, dComIfGp_particle_getResHeap());
 
     mItemTableCommand = mDoDvdThd_toMainRam_c::create("/res/ItemTable/item_table.bin", 0, NULL);
     JUT_ASSERT(2620, mItemTableCommand != NULL);
