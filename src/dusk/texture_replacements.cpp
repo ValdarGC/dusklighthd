@@ -17,7 +17,8 @@ void reload() {
     s_directoryGroup.registrations.clear();
     tphd::reload_user_hd_textures();
 
-    if (!getSettings().game.enableTextureReplacements) {
+    // TPHD mode only takes packs made for the HD textures (tphd_*, see HdTextureExport.hpp).
+    if (!getSettings().game.enableTextureReplacements || tphd_active()) {
         return;
     }
 

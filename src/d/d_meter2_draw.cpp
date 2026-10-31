@@ -718,7 +718,7 @@ void hdPinOffset(const char* tag, f32* dx, f32* dy) {
         {"juji_n", 7.3f, 1.0f},
         {"midona_n", -2.1f, 0.0f},  // Midna centred on the d-pad column (TV capture)
         {"juj_i_n", -2.5f, 0.0f},   // d-pad icon: 4 px right of the TV capture (overlapped "Mini-Map")
-        {"i_text_n", 19.6f, -1.0f},  // "Collection/Save" (measured: 48 px left / 2 px low vs the TV capture)
+        {"i_text_n", 25.7f, -1.0f},  // "Collection/Save": centred under the d-pad icon (TV capture)
         {"m_text_n", 8.3f, 0.0f},
         {"b_text_n", 3.4f, -1.9f},  // "Attack" (wolf): measured against the Wii U 1920x1080 capture
     };
@@ -1217,10 +1217,19 @@ void hdRevoFrame(J2DScreen* scr) {
     hdRestorePins(scr);
     // The Wii U third item slot (itm_2 + its badge/glow) does not exist in the GC game.
     static const char* const kOff[] = {"itmBtn_3"};
-    // ZL badge follows the Midna icon.
+    // ZL badge follows the Midna icon. Before Midna can be called (same event checks as
+    // setButtonIconMidonaAlpha) both stay hidden: when the item screen opens, the icon is drawn
+    // with its blo alpha until setButtonIconMidonaAlpha runs again, which flashed it for a second.
+    const bool midnaCallable = dComIfGs_isEventBit(0x0C10) && !dComIfGs_isEventBit(0x6140) &&
+                               (dComIfGs_isEventBit(0x0540) || dMeter2Info_isUseButton(0x800));
+    if (!midnaCallable) {
+        if (J2DPane* mid = scr->search(hdTag("midona_n"))) {
+            mid->setAlpha(0);
+        }
+    }
     if (J2DPane* zl = scr->search(hdTag("L_btn"))) {
         J2DPane* mid = scr->search(hdTag("midona_n"));
-        const bool on = mid != NULL && mid->isVisible() && mid->getAlpha() > 0;
+        const bool on = midnaCallable && mid != NULL && mid->isVisible() && mid->getAlpha() > 0;
         zl->show();
         zl->setAlpha(on ? mid->getAlpha() : 0);
     }
@@ -1271,7 +1280,11 @@ void hdRevoFrame(J2DScreen* scr) {
         const bool dig = wolf && captionOn("y_text_n", "cont_yt5");
         hdSetVisible(scr, "WolfAtk", atk);
         hdSetVisible(scr, "WolfAtk2", atk);
-        hdSetVisible(scr, "smell", sense);
+        // The collected scent sits over the wolf X slot ("Sense"), also on the item screen; with no
+        // scent the slot stays empty.
+        const u8 curSmell = dComIfGs_getCollectSmell();
+        const bool hasSmell = curSmell != dItemNo_NONE_e && curSmell != 0;
+        hdSetVisible(scr, "smell", wolf && hasSmell && (sense || g_tphdItemScreenOpen));
         // TPHD dMeter2Draw_c keeps "smell" as the item pane of this slot (ctor 0x02a2892c stores it
         // in the item-pane table), so the collected scent (dComIfGs_getCollectSmell) is drawn in
         // it like an item icon; with no scent it keeps the blo's swirl texture.
@@ -3616,8 +3629,15 @@ void dMeter2Draw_c::drawKantera(s32 i_max, DUSK_IF_ELSE(f32, s32) i_oil, f32 i_p
     field_0x5a8[1] = mpMagicFrameL->getInitPosY();
     field_0x5b4[1] = var_f4 * mpMagicBase->getInitSizeX();
     field_0x5c0[1] = mpMagicBase->getInitSizeY();
-    field_0x5cc[1] = g_drawHIO.mLanternMeterScale;
-    field_0x5d8[1] = g_drawHIO.mLanternMeterScale;
+#if TARGET_PC
+    // Wii U HIO lantern meter scale is 1 (hdApplyWiiUHio); the frame interpolation can draw the
+    // gauge before the Wii U values are applied, which left it at the GC 0.7 (smaller, off-centre).
+    const f32 lanternScale = dusk::tphd_active() ? 1.0f : g_drawHIO.mLanternMeterScale;
+#else
+    const f32 lanternScale = g_drawHIO.mLanternMeterScale;
+#endif
+    field_0x5cc[1] = lanternScale;
+    field_0x5d8[1] = lanternScale;
     field_0x5e4[1] = i_posX;
     field_0x5f0[1] = i_posY;
 }
@@ -3704,8 +3724,13 @@ void dMeter2Draw_c::drawOxygen(s32 i_max, DUSK_IF_ELSE(f32, s32) i_oxygen, f32 i
     field_0x5a8[2] = mpMagicFrameL->getInitPosY();
     field_0x5b4[2] = var_f4 * mpMagicBase->getInitSizeX();
     field_0x5c0[2] = mpMagicBase->getInitSizeY();
-    field_0x5cc[2] = g_drawHIO.mOxygenMeterScale;
-    field_0x5d8[2] = g_drawHIO.mOxygenMeterScale;
+#if TARGET_PC
+    const f32 oxygenScale = dusk::tphd_active() ? 1.0f : g_drawHIO.mOxygenMeterScale;  // as the lantern
+#else
+    const f32 oxygenScale = g_drawHIO.mOxygenMeterScale;
+#endif
+    field_0x5cc[2] = oxygenScale;
+    field_0x5d8[2] = oxygenScale;
     field_0x5e4[2] = i_posX;
     field_0x5f0[2] = i_posY;
 }
@@ -4355,11 +4380,16 @@ void dMeter2Draw_c::drawButtonB(u8 i_action, bool param_1, f32 i_posX, f32 i_pos
     // Wii U item screen: B shows the sword, without the "Back" text, also while the item explain
     // is open (ZeldaItemScreen input 0x02b000bc sets the A / do status DAT_1014b62d = 0x12
     // "Back" and the B status DAT_1014b655 = 0).
-    const bool hdItemScreen = dusk::tphd_active() && g_tphdItemScreenOpen;
+    // Wolf Link has no sword: B stays empty on the item screen and its explain.
+    const bool hdItemScreenAny = dusk::tphd_active() && g_tphdItemScreenOpen;
+    const bool hdItemScreenWolf = hdItemScreenAny && daPy_py_c::checkNowWolf();
+    const bool hdItemScreen = hdItemScreenAny && !hdItemScreenWolf;
 #else
+    const bool hdItemScreenAny = false;
+    const bool hdItemScreenWolf = false;
     const bool hdItemScreen = false;
 #endif
-    if (!hdItemScreen && *mp_string != 0 && i_action != 0 && i_action != 0x2E &&
+    if (!hdItemScreenAny && *mp_string != 0 && i_action != 0 && i_action != 0x2E &&
         ((dComIfGp_getDoStatus() == 0 ||
           (dComIfGp_getDoStatus() != dComIfGp_getAStatus() &&
            dComIfGp_getDoStatus() != dComIfGp_getAStatusForce())) ||
@@ -4391,7 +4421,7 @@ void dMeter2Draw_c::drawButtonB(u8 i_action, bool param_1, f32 i_posX, f32 i_pos
     }
 
 #if TARGET_PC
-    if (dusk::getSettings().game.enableTouchControls) {
+    if (dusk::getSettings().game.enableTouchControls || hdItemScreenWolf) {
         mpScreen->search(MULTI_CHAR('item_b_n'))->hide();
     } else
 #endif

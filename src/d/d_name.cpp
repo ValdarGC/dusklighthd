@@ -16,6 +16,8 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/utilities.hpp"
 #include "dusk/version.hpp"
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
 
 static bool isPalOrJpn() {
     return dusk::version::isRegionPal() || dusk::version::isRegionJpn();
@@ -1587,6 +1589,19 @@ void dName_c::nameWide() {
         pane->setBasePosition(J2DBasePosition_4);
         pane->scale(1.0f, 1.0f);
         pane->translate(entry.origTransX, entry.origTransY);
+    }
+
+    if (dusk::tphd_active()) {
+        // Wii U: the keyboard (zelda_player_name.blo of the HD playerName.arc, screenSet RPX
+        // 0x02a8a874) is drawn on the stretched file select pane, and J2DPane::draw (0x02b34334)
+        // squeezes back every 'n_43' pane: the letters m_xx_y, the typed name_0x and the
+        // ABC / abc / END captions. The cursor follows the stretched panes like the file select one.
+        dusk::tphd::applyN43(nameIn.NameInScr, dusk::tphd::wiiuTvN43(), false, true);
+        if (mSelIcon) {
+            mSelIcon->refreshAspectScale(1.0f);
+            mSelIcon->setRevoTrack(dusk::tphd::subscreenScaleX(), mDoGph_gInf_c::getMinXF());
+        }
+        return;
     }
 
     switch (dusk::getSettings().game.menuScalingMode) {

@@ -4631,6 +4631,12 @@ void dFile_select_c::fileSelectRevo() {
         mSelIcon->getTrackPane() == m3mSelPane[mSelectMenuNum]->getPanePtr())
     {
         J2DPane* btn = m3mSelPane[mSelectMenuNum]->getPanePtr();
+        const Vec p0 = btn->getGlbVtx(0);
+        const Vec p3 = btn->getGlbVtx(3);
+        const f32 pcx = (p0.x + p3.x) * 0.5f;
+        const f32 pcy = (p0.y + p3.y) * 0.5f;
+        const f32 phw = std::fabs(p3.x - p0.x) * 0.5f;
+        const f32 phh = std::fabs(p3.y - p0.y) * 0.5f;
         f32 minPx = 1e9f, maxPx = -1e9f, minPy = 1e9f, maxPy = -1e9f;
         for (J2DPane* c = btn->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
             if (c->getTypeID() != 18 || !c->isVisible() || c->getAlpha() == 0) {
@@ -4638,14 +4644,22 @@ void dFile_select_c::fileSelectRevo() {
             }
             const Vec v0 = c->getGlbVtx(0);
             const Vec v3 = c->getGlbVtx(3);
+            // Only pictures drawn over the button: collapsed or hidden-by-animation pictures sit at
+            // the screen origin and pulled the cursor off the top of the screen.
+            const f32 cx = (v0.x + v3.x) * 0.5f;
+            const f32 cy = (v0.y + v3.y) * 0.5f;
+            if (std::fabs(v3.x - v0.x) < 1.0f || std::fabs(v3.y - v0.y) < 1.0f ||
+                std::fabs(cx - pcx) > phw || std::fabs(cy - pcy) > phh)
+            {
+                continue;
+            }
             minPx = std::min(minPx, std::min(v0.x, v3.x));
             maxPx = std::max(maxPx, std::max(v0.x, v3.x));
             minPy = std::min(minPy, std::min(v0.y, v3.y));
             maxPy = std::max(maxPy, std::max(v0.y, v3.y));
         }
+        mSelIcon->setTrackOffset(0.0f, 0.0f);
         if (maxPx > minPx && maxPy > minPy) {
-            const Vec p0 = btn->getGlbVtx(0);
-            const Vec p3 = btn->getGlbVtx(3);
             const f32 dx = ((minPx + maxPx) - (p0.x + p3.x)) * 0.5f / sx;
             const f32 dy = ((minPy + maxPy) - (p0.y + p3.y)) * 0.5f;
             mSelIcon->setTrackOffset(dx, dy);
