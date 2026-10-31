@@ -264,22 +264,39 @@ void applyResampler(Resampler resampler) {
     }
 }
 
+// A TPHD content folder is the "content" folder of the Wii U game: it must hold res/LayoutRevo.
+// Anything else (empty, wrong or missing folder) leaves the TPHD mode off instead of running
+// half of it without the HD archives. The result is cached per configured path.
+static bool isTphdContentFolder(const std::filesystem::path& i_path) {
+    std::error_code ec;
+    return std::filesystem::is_directory(i_path / "res" / "LayoutRevo", ec);
+}
+
 std::filesystem::path tphd_content_path() {
 #if DUSK_TPHD
+    static std::string s_checkedFor;
+    static std::filesystem::path s_result;
+    static bool s_checked = false;
     const std::string& hdPath = g_userSettings.backend.hdContentPath;
-    if (!hdPath.empty()) {
-        return hdPath;
+    if (s_checked && s_checkedFor == hdPath) {
+        return s_result;
     }
+    s_checked = true;
+    s_checkedFor = hdPath;
+    s_result.clear();
 
-    if (!ConfigPath.empty()) {
-        std::error_code ec;
+    if (!hdPath.empty() && isTphdContentFolder(hdPath)) {
+        s_result = hdPath;
+    } else if (!ConfigPath.empty()) {
         auto localPath = ConfigPath / "tphd" / "content";
-        if (std::filesystem::is_directory(localPath, ec)) {
-            return localPath;
+        if (isTphdContentFolder(localPath)) {
+            s_result = localPath;
         }
     }
-#endif
+    return s_result;
+#else
     return {};
+#endif
 }
 
 bool tphd_active() {

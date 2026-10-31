@@ -419,7 +419,10 @@ void daAlink_c::changeLink(int param_0) {
 
 #if TARGET_PC
     if (dusk::tphd_active()) {
-        mpGhostKanteraModel = initModelEnv(static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "ghost_lantern.bmd")), 0);
+        // A mod may replace Alink.arc with one that has no Ghost Lantern models: skip them.
+        J3DModelData* ghostData =
+            static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "ghost_lantern.bmd"));
+        mpGhostKanteraModel = ghostData != NULL ? initModelEnv(ghostData, 0) : NULL;
         if (mpGhostKanteraModel != NULL) {
             Vec scale = {0.75f, 0.75f, 0.75f};
             mpGhostKanteraModel->setBaseScale(scale);
@@ -427,7 +430,7 @@ void daAlink_c::changeLink(int param_0) {
             mpGhostKanteraModel->getModelData()->getJointNodePointer(1)->setCallBack(daAlink_ghostKandelaarModelCallBack);
         }
         modelData = static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "ef_ghost_lantern.bmd"));
-        mpGhostKanteraFlameModel = initModel(modelData, 0x200);
+        mpGhostKanteraFlameModel = modelData != NULL ? initModel(modelData, 0x200) : NULL;
         mpGhostKanteraFlameBtk = static_cast<J3DAnmTextureSRTKey*>(dComIfG_getObjectRes(mArcName, "ef_ghost_lantern.btk"));
         if (mpGhostKanteraFlameBtk != NULL && modelData != NULL) {
             mpGhostKanteraFlameBtk->setFrame(0.0f);
