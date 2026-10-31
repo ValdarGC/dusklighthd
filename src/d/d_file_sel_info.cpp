@@ -14,7 +14,103 @@
 #include <cstdio>
 #include <cstring>
 
+#include "helpers/string.hpp"
 #if TARGET_PC
+#include "dusk/settings.h"
+
+namespace {
+// TPHD file select area name (Wii U dFile_info_c 0x0294c620, run through all its stage tests):
+// message id of the "last location" saved in the reserve area. Unknown stage: 0x579 "Hyrule Kingdom".
+struct TphdLoc {
+    const char* stage;
+    u16 msg;
+};
+const TphdLoc kTphdLoc[] = {
+    {"D_MN01", 0x373},  {"D_MN01A", 0x373}, {"D_MN01B", 0x373}, {"D_MN04", 0x372},
+    {"D_MN04A", 0x372}, {"D_MN04B", 0x372}, {"D_MN05", 0x371},  {"D_MN05A", 0x371},
+    {"D_MN05B", 0x371}, {"D_MN06", 0x376},  {"D_MN06A", 0x376}, {"D_MN06B", 0x376},
+    {"D_MN07", 0x377},  {"D_MN07A", 0x377}, {"D_MN07B", 0x377}, {"D_MN08", 0x378},
+    {"D_MN08A", 0x378}, {"D_MN08B", 0x378}, {"D_MN08C", 0x378}, {"D_MN08D", 0x378},
+    {"D_MN09", 0x370},  {"D_MN09A", 0x370}, {"D_MN09B", 0x370}, {"D_MN09C", 0x370},
+    {"D_MN10", 0x374},  {"D_MN10A", 0x374}, {"D_MN10B", 0x374}, {"D_MN11", 0x375},
+    {"D_MN11A", 0x375}, {"D_MN11B", 0x375}, {"D_SB00", 0x583},  {"D_SB01", 0x58b},
+    {"D_SB02", 0x583},  {"D_SB03", 0x587},  {"D_SB04", 0x583},  {"D_SB10", 0x580},
+    {"F_SP00", 0x57a},  {"F_SP102", 0x583}, {"F_SP103", 0x57b}, {"F_SP104", 0x57c},
+    {"F_SP108", 0x580}, {"F_SP109", 0x581}, {"F_SP110", 0x582}, {"F_SP111", 0x589},
+    {"F_SP112", 0x585}, {"F_SP113", 0x586}, {"F_SP114", 0x58a}, {"F_SP115", 0x587},
+    {"F_SP116", 0x58c}, {"F_SP117", 0x58d}, {"F_SP118", 0x58b}, {"F_SP121", 0x583},
+    {"F_SP122", 0x583}, {"F_SP123", 0x583}, {"F_SP124", 0x58b}, {"F_SP125", 0x5cd},
+    {"F_SP126", 0x585}, {"F_SP127", 0x585}, {"F_SP128", 0x58f}, {"F_SP200", 0x579},
+    {"R_SP01", 0x57b},  {"R_SP108", 0x580}, {"R_SP109", 0x581}, {"R_SP110", 0x582},
+    {"R_SP116", 0x58c}, {"R_SP127", 0x585}, {"R_SP128", 0x58f}, {"R_SP160", 0x58c},
+    {"R_SP161", 0x58c}, {"R_SP209", 0x581}, {"R_SP301", 0x58e},
+};
+
+u16 tphdLocationMsg(const char* i_stage, s16 i_room, s8 i_layer, s8 i_saveTbl) {
+    // Grottos: the area depends on the layer.
+    static const struct {
+        const char* stage;
+        u16 msg[5];  // layer 0..4 (other layers: 0x579)
+    } kGrotto[] = {
+        {"D_SB05", {0x583, 0x583, 0x580, 0x583, 0x579}},
+        {"D_SB06", {0x583, 0x583, 0x58d, 0x583, 0x579}},
+        {"D_SB07", {0x58b, 0x58b, 0x58a, 0x583, 0x579}},
+        {"D_SB08", {0x583, 0x58b, 0x58a, 0x583, 0x579}},
+        {"D_SB09", {0x583, 0x583, 0x587, 0x583, 0x587}},
+    };
+    for (const auto& g : kGrotto) {
+        if (strcmp(i_stage, g.stage) == 0) {
+            return (i_layer >= 0 && i_layer <= 4) ? g.msg[i_layer] : 0x579;
+        }
+    }
+    if (strcmp(i_stage, "R_SP107") == 0) {
+        if (i_saveTbl != 13) {
+            return 0x592;
+        }
+        return i_room == 1 ? 0x58c : 0x370;
+    }
+    for (const auto& l : kTphdLoc) {
+        if (strcmp(i_stage, l.stage) == 0) {
+            return l.msg;
+        }
+    }
+    return 0x579;
+}
+
+void tphdSetLocation(J2DScreen* i_scr, dSv_save_c* i_savedata) {
+    J2DPane* p = i_scr != NULL ? i_scr->searchUserInfo(MULTI_CHAR('location')) : NULL;
+    if (p == NULL && i_scr != NULL) {
+        p = i_scr->search(MULTI_CHAR('location'));
+    }
+    if (p == NULL || p->getTypeID() != 19) {
+        return;
+    }
+    J2DTextBox* tb = static_cast<J2DTextBox*>(p);
+    if (i_savedata == NULL || !dusk::tphd_active()) {
+        SAFE_STRCPY(tb->getStringPtr(), "");
+        return;
+    }
+    char stage[8];
+    s16 room;
+    s8 layer = 0;
+    s8 saveTbl = 0;
+    const dSv_reserve_c& r = i_savedata->getReserve();
+    if (r.hasTphdLocation()) {
+        r.getTphdLocStage(stage);
+        room = r.getTphdLocRoom();
+        layer = r.getTphdLocLayer();
+        saveTbl = r.getTphdLocSaveTbl();
+    } else {
+        // Saved by the GC game (no location): use the respawn place.
+        dSv_player_return_place_c& rp = i_savedata->getPlayer().getPlayerReturnPlace();
+        strncpy(stage, rp.getName(), 7);
+        stage[7] = 0;
+        room = rp.getRoomNo();
+    }
+    dMeter2Info_getString(tphdLocationMsg(stage, room, layer, saveTbl), tb->getStringPtr(), NULL);
+}
+}  // namespace
+#endif
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
 #endif
@@ -116,10 +212,24 @@ void dFile_info_c::screenSet() {
     mSaveStatus = info_text[1]->getStringPtr();
     mSaveDate = info_text[2]->getStringPtr();
     mPlayTime = info_text[3]->getStringPtr();
+#if TARGET_PC
+    // TPHD: area name of the save (Wii U 0x0294b6bc: textbox 'location').
+    J2DPane* loc = mFileInfo.Scr->searchUserInfo(MULTI_CHAR('location'));
+    if (loc == NULL) {
+        loc = mFileInfo.Scr->search(MULTI_CHAR('location'));
+    }
+    if (loc != NULL && loc->getTypeID() == 19) {
+        static_cast<J2DTextBox*>(loc)->setFont(mFileInfo.mFont);
+        static_cast<J2DTextBox*>(loc)->setString(INFO_TEXT_SIZE, "");
+    }
+#endif
 }
 
 int dFile_info_c::setSaveData(dSv_save_c* i_savedata, BOOL i_validChksum, u8 i_dataNo) {
     int result;
+#if TARGET_PC
+    tphdSetLocation(mFileInfo.Scr, NULL);
+#endif
     if (i_validChksum) {
         char* player_name = i_savedata->getPlayer().getPlayerInfo().getPlayerName();
         if (*player_name == 0) {
@@ -141,6 +251,9 @@ int dFile_info_c::setSaveData(dSv_save_c* i_savedata, BOOL i_validChksum, u8 i_d
             SAFE_STRCPY(mPlayerName, player_name);
             setSaveDate(i_savedata);
             setPlayTime(i_savedata);
+#if TARGET_PC
+            tphdSetLocation(mFileInfo.Scr, i_savedata);
+#endif
             result = 0;
         }
     } else {
@@ -244,7 +357,47 @@ void dFile_info_c::modeWait() {}
 
 void dFile_info_c::modeMove() {}
 
+#if TARGET_PC
+
+static u64 const heart_tags[] = {
+    MULTI_CHAR('hear_20'),
+    MULTI_CHAR('hear_21'),
+    MULTI_CHAR('hear_22'),
+    MULTI_CHAR('hear_23'),
+    MULTI_CHAR('hear_24'),
+    MULTI_CHAR('hear_25'),
+    MULTI_CHAR('hear_26'),
+    MULTI_CHAR('hear_27'),
+    MULTI_CHAR('hear_28'),
+    MULTI_CHAR('hear_29'),
+    MULTI_CHAR('hear_30'),
+    MULTI_CHAR('hear_31'),
+    MULTI_CHAR('hear_32'),
+    MULTI_CHAR('hear_33'),
+    MULTI_CHAR('hear_34'),
+    MULTI_CHAR('hear_35'),
+    MULTI_CHAR('hear_36'),
+    MULTI_CHAR('hear_37'),
+    MULTI_CHAR('hear_38'),
+    MULTI_CHAR('hear_39'),
+};
+
+void dFile_info_c::fileSelectWide() {
+    // TPHD Exclusions
+    if (dusk::tphd_active()) {
+        mFileInfo.Scr->search(MULTI_CHAR('t_w_01'))->hide();
+
+        for (int i = 0; i < 20; i++) {
+            static_cast<J2DPicture*>(mFileInfo.Scr->search(heart_tags[i]))
+                ->setBlackWhite(
+                    JUtility::TColor(231, 25, 0, 0), JUtility::TColor(255, 255, 255, 255));
+        }
+    }
+}
+#endif
+
 void dFile_info_c::_draw() {
+    fileSelectWide();
     dComIfGd_set2DOpa(&mFileInfo);
 }
 

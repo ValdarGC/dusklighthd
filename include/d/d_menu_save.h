@@ -265,6 +265,11 @@ public:
 
 #if TARGET_PC
     void menuSaveWide();
+    void menuSaveRevo();
+    void tphdSaveScreenSet();
+    void tphdSaveUpdate();
+    bool tphdSaveSelect();
+    void tphdExitCancel();
     bool pointerSaveSelect();
     bool pointerYesNoSelect(bool errorSelect, u8 errParam = 0, u8 soundParam = 0);
     void presentLayoutAnims();

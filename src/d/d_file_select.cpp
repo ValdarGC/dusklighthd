@@ -21,8 +21,14 @@
 #include "m_Do/m_Do_Reset.h"
 #include "m_Do/m_Do_controller_pad.h"
 #include "m_Do/m_Do_graphic.h"
+#include <algorithm>
 #include <cstring>
 
+#include "dusk/version.hpp"
+#if DUSK_TPHD
+#include "dusk/settings.h"
+#include "dusk/tphd/HdAssetLayer.hpp"
+#endif
 #if TARGET_PC
 #include "dusk/game_clock.h"
 #include "dusk/game_mode.hpp"
@@ -32,6 +38,22 @@
 #include "dusk/utilities.hpp"
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "d/d_menu_stamp.h"
+#include "JSystem/JKernel/JKRExpHeap.h"
+
+namespace {
+// Draw list entry of the TPHD A/B captions (icon_parts_revo).
+struct dDlst_FileSelTphdIcon_c : public dDlst_base_c {
+    J2DScreen* mpScr = NULL;
+    virtual void draw() {
+        dusk::tphd::drawRevoIconScreen(mpScr, dComIfGp_getCurrentGrafPort());
+    }
+};
+dDlst_FileSelTphdIcon_c s_tphdIconDlst;
+u16 s_tphdIconA = 0xFFFF;
+u16 s_tphdIconB = 0xFFFF;
+}  // namespace
 
 namespace {
 constexpr u8 pointer_target(u8 group, u8 index) noexcept {
@@ -68,6 +90,16 @@ static s32 SelOpenEndFrameTbl[3] = {
     460,
     659,
 };
+
+#if TARGET_PC
+// TPHD (RPX 0x1011df60..0x1011df88): extra frames of the base bck used by the Wii U copy flow.
+// The selected log slides from the "open" pose (259) to the copy-source pose (260..271) while the
+// copy panes come in, and plays 272..284 while the copy runs.
+static s32 TphdCopyFromStartTbl[3] = {260, 460, 660};
+static s32 TphdCopyFromEndTbl[3] = {271, 471, 671};
+static s32 TphdCopyDoStartTbl[3] = {272, 472, 672};
+static s32 TphdCopyDoEndTbl[3] = {284, 484, 684};
+#endif
 
 static s32 MenuSelStartFrameTbl[3] = {
     1997,
@@ -216,6 +248,14 @@ dFile_select_c::~dFile_select_c() {
     mDoExt_removeMesgFont();
     mDoExt_removeSubFont();
 
+#if TARGET_PC
+    tphdStampAlbumClose();
+    if (mpTphdIconScr != NULL) {
+        JKR_DELETE(mpTphdIconScr);
+        mpTphdIconScr = NULL;
+    }
+    s_tphdIconDlst.mpScr = NULL;
+#endif
     JKR_DELETE(stick);
     JKR_DELETE(mSelIcon);
     JKR_DELETE(mSelIcon2);
@@ -356,6 +396,11 @@ static DataSelProcFunc DataSelProc[] = {
     &dFile_select_c::cardToNandDataCopyErrDisp2,
     &dFile_select_c::cardToNandDataCopyErrDisp3,
     #endif
+#if TARGET_PC
+    &dFile_select_c::tphdEraseConfirmOut,
+    &dFile_select_c::tphdEraseConfirmIn,
+    &dFile_select_c::tphdEraseConfirmBack,
+#endif
 };
 
 void dFile_select_c::_move() {
@@ -372,6 +417,14 @@ void dFile_select_c::_move() {
     #endif
 
     dMeter2Info_decMsgKeyWaitTimer();
+
+#if TARGET_PC
+    // TPHD: while the stamp album is open it takes the input (RPX dFile_select draw 0x0293c8c4
+    // only draws the album then).
+    if (tphdStampAlbumMove()) {
+        return;
+    }
+#endif
 
     #if PLATFORM_GCN
     s32 drive_status = DVDGetDriveStatus();
@@ -417,6 +470,10 @@ void dFile_select_c::_move() {
 
     mpFileWarning->_move();
     mpFileSelect3d->_move();
+
+#if TARGET_PC
+    tphdIconUpdate();
+#endif
 
     mDoMemCd_clearProbeStat();
 }
@@ -971,6 +1028,14 @@ void dFile_select_c::dataSelect() {
     // If A or Start was pressed
     if (mDoCPd_c::getTrigA(PAD_1) || mDoCPd_c::getTrigStart(PAD_1)) {
         dataSelectStart();  // run the quest log open process
+#if TARGET_PC
+    } else if (dusk::tphd_active() && mDoCPd_c::getTrigB(PAD_1)) {
+        // TPHD: "Back" (B) on the save list returns to the title screen.
+        mDoAud_seStart(Z2SE_SY_CURSOR_CANCEL, NULL, 0, 0);
+        mSelIcon->setAlphaRate(0.0f);
+        mTphdBackToTitle = true;
+        mDataSelProc = DATASELPROC_NEXT_MODE_WAIT;
+#endif
     } else if (stick->checkUpTrigger()) {
         // if we're not on the top quest log
         if (mSelectNum != 0) {
@@ -1239,6 +1304,9 @@ void dFile_select_c::dataSelectMoveAnime() {
 
 void dFile_select_c::makeRecInfo(u8 i_dataNo) {
     dSv_save_c* pSave = (dSv_save_c*)&mSaveData[i_dataNo];
+#if TARGET_PC
+    tphdStampBoxSet(i_dataNo);
+#endif
 
     J2DPane* ken0 = mSelDt.ScrDt->search(MULTI_CHAR('ken_00'));
     J2DPane* ken1 = mSelDt.ScrDt->search(MULTI_CHAR('ken_01'));
@@ -1435,6 +1503,16 @@ void dFile_select_c::menuSelect() {
 
     stick->checkTrigger();
 
+#if TARGET_PC
+    // TPHD: + (the "+" of the stamp box of the details window) opens the stamp album of the file.
+    if (dusk::tphd_active() && mDoCPd_c::getTrigStart(PAD_1) && !mIsDataNew[mSelectNum] &&
+        mTphdStampNum[mSelectNum] != 0)
+    {
+        tphdStampAlbumOpen();
+        return;
+    }
+#endif
+
     // if a was pressed, do the menu selection process
     if (mDoCPd_c::getTrigA(PAD_1)) {
         menuSelectStart();
@@ -1490,6 +1568,13 @@ void dFile_select_c::menuSelectStart() {
 #endif
     } else if (mSelectMenuNum == 0) {
         mSelIcon->setAlphaRate(0.0f);
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x02940c6c (menu A, "Erase"): the Start/Copy/Erase bar slides out (0x329->799)
+            // together with the Yes/No window sliding in, so they never overlap.
+            menuMoveAnmInitSet(0x329, 799);
+        }
+#endif
         yesnoMenuMoveAnmInitSet(0x473, 0x47d);
         headerTxtSet(0x49, 0, 0);
         mCommand = 1;
@@ -1499,6 +1584,12 @@ void dFile_select_c::menuSelectStart() {
         menuMoveAnmInitSet(0x329, 799);
         headerTxtSet(0x44, 0, 0);
         mSelIcon->setAlphaRate(0.0f);
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x02940c6c (menu A, "Copy"): the chosen log goes to the copy-source pose.
+            selectDataMoveAnmInitSet(TphdCopyFromStartTbl[mSelectNum], TphdCopyFromEndTbl[mSelectNum]);
+        } else
+#endif
         selectDataMoveAnmInitSet(SelOpenEndFrameTbl[mSelectNum], SelOpenStartFrameTbl[mSelectNum]);
         selectWakuAlpahAnmInit(mSelectNum, 0, 255, g_fsHIO.select_box_appear_frames);
         copySelMoveAnmInitSet(0xd1f, 0xd29);
@@ -1559,6 +1650,14 @@ bool dFile_select_c::menuMoveAnm() {
 #endif
         ret = false;
     } else {
+#if TARGET_PC
+        if (dusk::tphd_active() && field_0x035c == 0x0329) {
+            // The TPHD 3menu bck slides "w_del_n" in over frames 800..810 (one frame after the
+            // others); stopping at 809 left it overlapping the next button.
+            m3mBck->setFrame(810.0f);
+            m3mMenuPane->animationTransform();
+        }
+#endif
         m3mMenuPane->setAnimation((J2DAnmTransform*)NULL);
         if (field_0x035c == 0x0329) {
             field_0x0360 = true;
@@ -1917,6 +2016,9 @@ void dFile_select_c::ToCopyPaneMove() {
         field_0x026b = 0;
         Vec pos = mCpSelPane[field_0x026b]->getGlobalVtxCenter(false, 0);
         mSelIcon2->setPos(pos.x, pos.y, mCpSelPane[field_0x026b]->getPanePtr(), true);
+        if (dusk::tphd_active()) {
+            mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
+        }
         mSelIcon2->setAlphaRate(1.0f);
 
         #if PLATFORM_WII || PLATFORM_SHIELD
@@ -1930,6 +2032,12 @@ void dFile_select_c::ToCopyPaneMove() {
 void dFile_select_c::ToErasePaneMove() {
     bool isHeaderTxtChange = headerTxtChangeAnm();
     bool isYnMenuMove = yesnoMenuMoveAnm();
+#if TARGET_PC
+    // TPHD: RPX state 0x13 also waits for the menu bar to leave.
+    if (dusk::tphd_active() && !menuMoveAnm()) {
+        isYnMenuMove = false;
+    }
+#endif
 
     if (isHeaderTxtChange == true && isYnMenuMove == true) {
         yesnoCursorShow();
@@ -1941,6 +2049,49 @@ void dFile_select_c::ToErasePaneMove() {
         mDataSelProc = DATASELPROC_YES_NO_SELECT;
     }
 }
+
+#if TARGET_PC
+// TPHD: first "Yes" of the erase prompt. Wait for the Yes/No to leave, then show the
+// "Are you sure? This Quest Log will be permanently erased." window (msg 0x147, RPX 0x0293e590 +
+// 0x0293e9fc 0xb21->0xb2b) and slide the Yes/No in again (default "No").
+void dFile_select_c::tphdEraseConfirmOut() {
+    if (!yesnoMenuMoveAnm()) {
+        return;
+    }
+    mErrorMsgTxtPane[mErrorTxtDispIdx]->setAlpha(0xff);
+    mErrorMsgTxtPane[mErrorTxtDispIdx ^ 1]->setAlpha(0);
+    fileSel.mMessageString->getString(0x147,
+                                      (J2DTextBox*)mErrorMsgTxtPane[mErrorTxtDispIdx]->getPanePtr(),
+                                      NULL, fileSel.font[0], NULL, 0);
+    errorMoveAnmInitSet(0xb21, 0xb2b);
+    yesnoMenuMoveAnmInitSet(1139, 1149);
+    mDataSelProc = DATASELPROC_TPHD_ERASE_CONFIRM_IN;
+}
+
+void dFile_select_c::tphdEraseConfirmIn() {
+    bool isErrMove = errorMoveAnm();
+    bool isYnMove = yesnoMenuMoveAnm();
+    if (isErrMove && isYnMove) {
+        mCommand = 3;
+        yesnoCursorShow();
+#if PLATFORM_WII || PLATFORM_SHIELD
+        field_0x4333 = field_0x0268;
+#endif
+        mDataSelProc = DATASELPROC_YES_NO_SELECT;
+    }
+}
+
+void dFile_select_c::tphdEraseConfirmBack() {
+    if (errorMoveAnm()) {
+        mCommand = 1;
+        yesnoCursorShow();
+#if PLATFORM_WII || PLATFORM_SHIELD
+        field_0x4333 = field_0x0268;
+#endif
+        mDataSelProc = DATASELPROC_YES_NO_SELECT;
+    }
+}
+#endif
 
 void dFile_select_c::backSelectMove() {
     bool isHeaderTxtChange = headerTxtChangeAnm();
@@ -2074,6 +2225,12 @@ void dFile_select_c::copyDataToSelectStart() {
 
         selectWakuAlpahAnmInit(mCpDataToNum, 0, 0xff, g_fsHIO.select_box_appear_frames);
         copySelMoveAnmInitSet(3369, 3359);
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x02941650 (destination without data): the source log plays 272..284.
+            selectDataMoveAnmInitSet(TphdCopyDoStartTbl[mSelectNum], TphdCopyDoEndTbl[mSelectNum]);
+        }
+#endif
 
         mCpEffBtkFrame = 0;
         mCpDtEffBrkFrame = 0;
@@ -2092,6 +2249,12 @@ void dFile_select_c::copyDataToSelectStart() {
 
 void dFile_select_c::copyDataToSelectCansel() {
     mDoAud_seStart(Z2SE_SY_CURSOR_CANCEL, 0, 0, 0);
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // RPX 0x029418b8: the log goes back from the copy-source pose (271 -> 260).
+        selectDataMoveAnmInitSet(TphdCopyFromEndTbl[mSelectNum], TphdCopyFromStartTbl[mSelectNum]);
+    } else
+#endif
     selectDataMoveAnmInitSet(SelOpenStartFrameTbl[mSelectNum], SelOpenEndFrameTbl[mSelectNum]);
     menuMoveAnmInitSet(799, 809);
     copySelMoveAnmInitSet(3369, 3359);
@@ -2185,6 +2348,9 @@ void dFile_select_c::copyDataToSelectMoveAnm() {
 
             Vec pos = mCpSelPane[field_0x026b]->getGlobalVtxCenter(false, 0);
             mSelIcon2->setPos(pos.x, pos.y, mCpSelPane[field_0x026b]->getPanePtr(), true);
+            if (dusk::tphd_active()) {
+                mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
+            }
             mSelIcon2->setAlphaRate(1.0f);
         }
 
@@ -2307,6 +2473,18 @@ void dFile_select_c::yesnoMenuMoveAnmInitSet(int param_1, int param_2) {
         field_0x0281 = true;
         ((J2DTextBox*)mYnSelTxtPane[field_0x0268]->getPanePtr())->setWhite(JUtility::TColor(0xff, 0xff, 0xff, 0xff));
         ((J2DTextBox*)mYnSelTxtPane[field_0x0269]->getPanePtr())->setWhite(JUtility::TColor(0x96, 0x96, 0x96, 0xff));
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x0293e0b8: when the window comes in, the frame / glow panes of BOTH buttons go
+            // to alpha 0; 0x0293e388 lights only the current one at the end of the slide (here
+            // yesnoCursorShow). A previous yes / no left the other one lit.
+            for (int i = 0; i < 2; i++) {
+                mYnSelPane_m[i]->setAlpha(0);
+                mYnSelPane_g[i]->setAlpha(0);
+                mYnSelPane_gr[i]->setAlpha(0);
+            }
+        }
+#endif
     }
 
     mSelIcon->setAlphaRate(0.0f);
@@ -2466,7 +2644,11 @@ void dFile_select_c::yesnoCursorShow() {
         mSelIcon->setPos(pos.x, pos.y, mYnSelPane[field_0x0268]->getPanePtr(), true);
         mSelIcon->setAlphaRate(1.0f);
 
-        mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+        if (dusk::tphd_active()) {
+            mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.50f, 0.50f);
+        } else {
+            mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+        }
     }
 }
 
@@ -2506,6 +2688,24 @@ void dFile_select_c::yesNoSelectStart() {
 #endif
     if (field_0x0268 != 0) {
         mDoAud_seStart(Z2SE_SY_CURSOR_OK, NULL, 0, 0);
+#if TARGET_PC
+        if (dusk::tphd_active() && mCommand == 1) {
+            // RPX 0x02941124 (mode 1) + state 0x26: erasing a log asks twice. The first "Yes"
+            // slides the Yes/No out, then the "Are you sure?" window (msg 0x147) and the Yes/No
+            // slide in again.
+            mSelIcon->setAlphaRate(0.0f);
+            yesnoMenuMoveAnmInitSet(1149, 1139);
+            mDataSelProc = DATASELPROC_TPHD_ERASE_CONFIRM_OUT;
+            return;
+        }
+        bool tphdSecondConfirm = false;
+        if (dusk::tphd_active() && mCommand == 3) {
+            // RPX 0x02941124 (mode 3): second "Yes" -> the warning window leaves, "Erasing...".
+            tphdSecondConfirm = true;
+            mCommand = 1;
+            errorMoveAnmInitSet(0xb2b, 0xb21);
+        }
+#endif
         field_0x03b1 = 1;
 
         switch (mCommand) {
@@ -2515,6 +2715,9 @@ void dFile_select_c::yesNoSelectStart() {
             mDeleteEfPane[mSelectNum]->getPanePtr()->scale(1.0f, 1.0f);
             mDeleteEfPane[mSelectNum]->alphaAnimeStart(0);
             mDeleteEfPane[mSelectNum]->setAlpha(0);
+#if TARGET_PC
+            if (!tphdSecondConfirm)
+#endif
             menuMoveAnmInitSet(809, 799);
             yesnoMenuMoveAnmInitSet(1149, 1139);
             mSelIcon->setAlphaRate(0.0f);
@@ -2548,6 +2751,12 @@ void dFile_select_c::yesNoSelectStart() {
             mSelIcon2->setAlphaRate(0.0f);
             selectWakuAlpahAnmInit(mCpDataToNum, 0, 0xff, g_fsHIO.select_box_appear_frames);
             copySelMoveAnmInitSet(0xd29, 0xd1f);
+#if TARGET_PC
+            if (dusk::tphd_active()) {
+                // RPX 0x02941124 (mode 0, "Yes"): the source log plays 272..284.
+                selectDataMoveAnmInitSet(TphdCopyDoStartTbl[mSelectNum], TphdCopyDoEndTbl[mSelectNum]);
+            }
+#endif
             mCpEffBtkFrame = 0;
             mCpDtEffBrkFrame = 0;
             field_0x0209 = 1;
@@ -2584,9 +2793,24 @@ void dFile_select_c::yesnoCancelAnmSet() {
     mDoAud_seStart(Z2SE_SY_CURSOR_CANCEL, NULL, 0, 0);
     mSelIcon->setAlphaRate(0.0f);
 
+#if TARGET_PC
+    if (dusk::tphd_active() && mCommand == 3) {
+        // RPX 0x0293ec38 (mode 3): only the "Are you sure?" window leaves, the first prompt
+        // (Yes/No "Erase this Quest Log?") stays.
+        errorMoveAnmInitSet(0xb2b, 0xb21);
+        mDataSelProc = DATASELPROC_TPHD_ERASE_CONFIRM_BACK;
+        return;
+    }
+#endif
     switch (mCommand) {
     case 1:
         headerTxtSet(msgTbl[mSelectNum], 1, 0);
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x0293ec38 (mode 1): the Start/Copy/Erase bar slides back in.
+            menuMoveAnmInitSet(799, 809);
+        }
+#endif
         break;
     case 2:
         headerTxtSet(67, 1, 0);
@@ -2609,6 +2833,11 @@ void dFile_select_c::YesNoCancelMove() {
     switch (mCommand) {
     case 1:
         isSelDataMove = true;
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            isSelDataMove = menuMoveAnm();
+        }
+#endif
         break;
     case 2:
         isSelDataMove = selectDataMoveAnm();
@@ -2628,7 +2857,11 @@ void dFile_select_c::YesNoCancelMove() {
                                  m3mSelPane[mSelectMenuNum]->getPanePtr(), true);
                 mSelIcon->setAlphaRate(1.0f);
 
-                mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+                if (dusk::tphd_active()) {
+                    mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.50f, 0.50f);
+                } else {
+                    mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+                }
 
                 #if PLATFORM_WII || PLATFORM_SHIELD
                 field_0x4333 = mSelectMenuNum;
@@ -2703,6 +2936,11 @@ void dFile_select_c::CmdExecPaneMove0() {
         isMenuMove = menuMoveAnm();
         isSelWakuAlpha = true;
         isNameMove = true;
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            isNameMove = errorMoveAnm();
+        }
+#endif
         break;
     case 2:
         isEffAlphaAnm = mDeleteEfPane[mSelectNum]->alphaAnime(g_fsHIO.copy_erase_frames, 0, 0xff, 0);
@@ -2721,6 +2959,11 @@ void dFile_select_c::CmdExecPaneMove0() {
         }
         isSelWakuAlpha = selectWakuAlpahAnm(mCpDataToNum);
         isNameMove = nameMoveAnm();
+#if TARGET_PC
+        if (dusk::tphd_active() && !selectDataMoveAnm()) {
+            isNameMove = false;
+        }
+#endif
         break;
     }
 
@@ -3494,6 +3737,11 @@ void dFile_select_c::screenSet() {
             ((J2DTextBox*)mHeaderTxtPane[i]->getPanePtr())->setLineSpace(20.0f);
             ((J2DTextBox*)mHeaderTxtPane[i]->getPanePtr())->setCharSpace(0.0f);
         }
+        if (dusk::tphd_active()) {
+            J2DTextBox* tb = (J2DTextBox*)mHeaderTxtPane[i]->getPanePtr();
+            tb->setHBinding(J2DTextBoxHBinding::HBIND_CENTER);
+            tb->mBounds.set(-260.0f, tb->mBounds.i.y, 260.0f, tb->mBounds.f.y);
+        }
 #elif VERSION == VERSION_GCN_JPN
         ((J2DTextBox*)mHeaderTxtPane[i]->getPanePtr())->setFontSize(21.0f, 21.0f);
         ((J2DTextBox*)mHeaderTxtPane[i]->getPanePtr())->setLineSpace(22.0f);
@@ -3593,7 +3841,11 @@ void dFile_select_c::screenSet() {
     mSelIcon = JKR_NEW dSelect_cursor_c(0, 1.0f, NULL);
     JUT_ASSERT(5209, mSelIcon != NULL);
 
-    mSelIcon->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    if (dusk::tphd_active()) {
+        mSelIcon->setParam(0.97f, 0.94f, 0.03f, 0.70f, 0.70f);
+    } else {
+        mSelIcon->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    }
 
     Vec vtxCenter;
     vtxCenter = mSelFilePanes[mSelectNum]->getGlobalVtxCenter(false, 0);
@@ -3727,10 +3979,18 @@ void dFile_select_c::screenSetCopySel() {
     mSelIcon2 = JKR_NEW dSelect_cursor_c(0, 1.0f, NULL);
     JUT_ASSERT(5406, mSelIcon2 != NULL);
 
-    mSelIcon2->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    if (dusk::tphd_active()) {
+        // RPX 0x02934220: the copy cursor keeps the creation params (0.96, 0.94, 0.03, 0.7, 0.7).
+        mSelIcon2->setParam(0.96f, 0.94f, 0.03f, 0.70f, 0.70f);
+    } else {
+        mSelIcon2->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    }
 
     Vec center = mCpSelPane[0]->getGlobalVtxCenter(false, 0);
     mSelIcon2->setPos(center.x, center.y, mCpSelPane[0]->getPanePtr(), true);
+    if (dusk::tphd_active()) {
+        mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
+    }
     mSelIcon2->setAlphaRate(0.0f);
 
     for (int i = 0; i < 2; i++) {
@@ -3908,8 +4168,20 @@ void dFile_select_c::screenSetDetail() {
 
     mpFileSelect3d->setBasePane(mSelDtPane_mset);
     mpFileSelect3d->setBase2Pane(fileSel.Scr->search(MULTI_CHAR('w_sub_n')));
-
-    mSelDt.ScrDt->search(MULTI_CHAR('d_win_n'))->setUserInfo('n_43');
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // RPX 0x0293af60 / 0x029407xx: font of the stamp counter, set when a file is opened.
+        J2DPane* p = mSelDt.ScrDt->searchUserInfo(MULTI_CHAR('stamps_t'));
+        if (p == NULL) {
+            p = mSelDt.ScrDt->search(MULTI_CHAR('stamps_t'));
+        }
+        if (p != NULL && p->getTypeID() == 19) {
+            static_cast<J2DTextBox*>(p)->setFont(mDoExt_getMesgFont());
+            static_cast<J2DTextBox*>(p)->setString(0x40, "");
+        }
+    }
+    tphdIconScreenSet();
+#endif
 }
 
 void dFile_select_c::setWakuAnm() {
@@ -3999,6 +4271,22 @@ void dFile_select_c::headerTxtSet(u16 i_msgId, u8 i_type, u8 param_3) {
             static f32 charspace[2] = {0.0f, 0.0f};
         #endif
 
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // RPX 0x0293bb04: every header uses the single message font (FUN_02addd44) at 27 pt,
+            // line space 20, char space 3 (JP) / 0 (other languages); the GC "type" (font/size)
+            // argument is ignored.
+            i_type = 1;
+            ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setFont(fileSel.font[0]);
+            ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setFontSize(27.0f, 27.0f);
+            ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setLineSpace(20.0f);
+            ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setCharSpace(dusk::version::isRegionJpn() ? 3.0f : 0.0f);
+            fileSel.mMessageString->getString(i_msgId,
+                                              ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr()), NULL,
+                                              fileSel.font[0], NULL, 0);
+        } else
+#endif
+        {
         ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setFont(fileSel.font[i_type]);
         ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setFontSize(fontsize[i_type], fontsize[i_type]);
         ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr())->setLineSpace(DUSK_IF_ELSE(dusk::version::isRegionJpn() ? linespace_jpn[i_type] : linespace[i_type], linespace[i_type]));
@@ -4006,6 +4294,14 @@ void dFile_select_c::headerTxtSet(u16 i_msgId, u8 i_type, u8 param_3) {
         fileSel.mMessageString->getString(i_msgId,
                                           ((J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr()), NULL,
                                           fileSel.font[i_type], NULL, 0);
+        }
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            J2DTextBox* tb = (J2DTextBox*)mHeaderTxtPane[dispIdx]->getPanePtr();
+            tb->setHBinding(J2DTextBoxHBinding::HBIND_CENTER);
+            tb->mBounds.set(-260.0f, tb->mBounds.i.y, 260.0f, tb->mBounds.f.y);
+        }
+#endif
     }
 
     if (param_3 == 0) {
@@ -4142,9 +4438,25 @@ void dFile_select_c::selFileCursorShow() {
 
     Vec local_1c = mSelFilePanes[mSelectNum]->getGlobalVtxCenter(false, 0);
     mSelIcon->setPos(local_1c.x, local_1c.y, mSelFilePanes[mSelectNum]->getPanePtr(), true);
+    if (dusk::tphd_active()) {
+        // RPX 0x02940390: centre + (1, 0) for the log slots, + (0, 1) for the others.
+        if (mSelectNum < 3) {
+            mSelIcon->setTrackOffset(1.0f, 0.0f);
+        } else {
+            mSelIcon->setTrackOffset(0.0f, 1.0f);
+        }
+    }
     mSelIcon->setAlphaRate(1.0f);
 
-    mSelIcon->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    if (dusk::tphd_active()) {
+        if (mSelectNum < 3) {
+            mSelIcon->setParam(0.97f, 0.94f, 0.03f, 0.70f, 0.70f);
+        } else {
+            mSelIcon->setParam(1.02f, 0.94f, 0.06f, 0.50f, 0.50f);
+        }
+    } else {
+        mSelIcon->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+    }
 }
 
 void dFile_select_c::menuWakuAlpahAnmInit(u8 i_idx, u8 param_1, u8 param_2, u8 param_3) {
@@ -4187,7 +4499,11 @@ void dFile_select_c::menuCursorShow() {
         mSelIcon->setPos(local_24.x, local_24.y, m3mSelPane[mSelectMenuNum]->getPanePtr(), true);
         mSelIcon->setAlphaRate(1.0f);
 
-        mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+        if (dusk::tphd_active()) {
+            mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.50f, 0.50f);
+        } else {
+            mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+        }
     }
 }
 
@@ -4261,8 +4577,268 @@ static dusk::utils::PaneCache fileSelPanes[] = {
     {MULTI_CHAR('er_for0'), 0.0f, 0.0f, false},
     {MULTI_CHAR('er_for1'), 0.0f, 0.0f, false},
 };
+// TPHD: the Wii U J2DPane::draw (RPX 0x02b34334) stretches every root pane from the 608 layout to
+// the TV ortho and squeezes back the panes tagged 'n_43' (user info), so the file select keeps the
+// HD layout proportions without the GC/Wii widescreen tweaks of fileSelectWide.
+void dFile_select_c::fileSelectRevo() {
+    const f32 sx = dusk::tphd::subscreenScaleX();
+    const f32 invSx = dusk::tphd::wiiuTvN43();
+    const f32 minX = mDoGph_gInf_c::getMinXF();
+
+    J2DScreen* roots[3] = {fileSel.Scr, m3mSel.Scr3m, mYnSel.ScrYn};
+    for (J2DScreen* scr : roots) {
+        if (scr == NULL) {
+            continue;
+        }
+        scr->scale(sx, 1.0f);
+        scr->translate(minX, 0.0f);
+        dusk::tphd::applyN43(scr, invSx, false, true);
+    }
+    // Screens placed on a pane of the main screen through setMtx (details, copy): their root
+    // stays unstretched, the main screen stretch comes with the matrix of the base pane.
+    // Apply n_43 squeeze to restore correct 1:1 square aspect for icons (armor, shield, sword).
+    J2DScreen* subs[2] = {mSelDt.ScrDt, mCpSel.Scr};
+    for (J2DScreen* scr : subs) {
+        if (scr == NULL) {
+            continue;
+        }
+        scr->scale(1.0f, 1.0f);
+        scr->translate(0.0f, 0.0f);
+        dusk::tphd::applyN43(scr, invSx, false, true);
+    }
+
+    // "Manual" button of the Wii U save list (electronic manual): not ported.
+    if (J2DPane* p = fileSel.Scr->search(MULTI_CHAR('w_sel_03'))) {
+        p->hide();
+    }
+
+    // Yellow cursor: the Wii U cursor screen is stretched like the layout and its corner box
+    // follows the selected pane (RPX 0x0293ef50 / 0x02940540 / 0x029407xx).
+    dSelect_cursor_c* cursors[2] = {mSelIcon, mSelIcon2};
+    for (dSelect_cursor_c* c : cursors) {
+        if (c != NULL) {
+            c->refreshAspectScale(1.0f);
+            c->setRevoTrack(sx, minX);
+        }
+    }
+
+    // Start / Erase / Copy: the RPX (menuCursorShow 0x02940540) puts the cursor on the centre of
+    // w_sta_n / w_del_n / w_cop_n (+0x39c, the same panes as here). The button art of w_del_n is
+    // not centred on its pane after the TPHD 3menu bck (the Erase cursor sat ~4 px high), so the
+    // cursor follows the centre of the drawn pictures instead. Estimate: the Wii U offset itself
+    // comes from bck tracks we cannot read reliably.
+    if (mSelIcon != NULL && mSelectMenuNum < 3 && m3mSelPane[mSelectMenuNum] != NULL &&
+        mSelIcon->getTrackPane() == m3mSelPane[mSelectMenuNum]->getPanePtr())
+    {
+        J2DPane* btn = m3mSelPane[mSelectMenuNum]->getPanePtr();
+        f32 minPx = 1e9f, maxPx = -1e9f, minPy = 1e9f, maxPy = -1e9f;
+        for (J2DPane* c = btn->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+            if (c->getTypeID() != 18 || !c->isVisible() || c->getAlpha() == 0) {
+                continue;
+            }
+            const Vec v0 = c->getGlbVtx(0);
+            const Vec v3 = c->getGlbVtx(3);
+            minPx = std::min(minPx, std::min(v0.x, v3.x));
+            maxPx = std::max(maxPx, std::max(v0.x, v3.x));
+            minPy = std::min(minPy, std::min(v0.y, v3.y));
+            maxPy = std::max(maxPy, std::max(v0.y, v3.y));
+        }
+        if (maxPx > minPx && maxPy > minPy) {
+            const Vec p0 = btn->getGlbVtx(0);
+            const Vec p3 = btn->getGlbVtx(3);
+            const f32 dx = ((minPx + maxPx) - (p0.x + p3.x)) * 0.5f / sx;
+            const f32 dy = ((minPy + maxPy) - (p0.y + p3.y)) * 0.5f;
+            mSelIcon->setTrackOffset(dx, dy);
+        }
+    }
+}
+
+void dFile_select_c::tphdIconScreenSet() {
+    if (!dusk::tphd_active() || mpTphdIconScr != NULL) {
+        return;
+    }
+    if (JKRGetNameResource("zelda_file_select_icon_parts_revo.blo", mpArchive) == NULL) {
+        return;
+    }
+    // RPX 0x0293b0e8
+    mpTphdIconScr = JKR_NEW J2DScreen();
+    mpTphdIconScr->setPriority("zelda_file_select_icon_parts_revo.blo", 0x20000, mpArchive);
+    dusk::tphd::setupRevoButtonText(mpTphdIconScr);
+    s_tphdIconA = 0xFFFF;
+    s_tphdIconB = 0xFFFF;
+}
+
+// RPX 0x0293fac0 (A "Confirm" 0x40c) / 0x0293f7f0 (B "Back" 0x3f9): the captions follow the GC
+// bottom bar texts (kettei / modoru), the save list also offers "Back" (to the title screen).
+void dFile_select_c::tphdIconUpdate() {
+    if (mpTphdIconScr == NULL) {
+        return;
+    }
+    // RPX: the captions are only switched by the state changes that start or end a command
+    // (0x02941d1c turns A on when the log list is ready, 0x02940fd8 / 0x02941124 / 0x029494c8 turn
+    // both off for the command execution / name entry). The slot and menu cursor moves
+    // (0x02941ffc / 0x02941e90 ...) never touch them: the texts stay on while moving.
+    bool aOn = field_0x024b != 0;
+    bool bOn = field_0x024a != 0;
+    switch (mDataSelProc) {
+    case DATASELPROC_DATA_SELECT:
+    case DATASELPROC_DATA_SELECT_MOVE_ANIME:
+    case DATASELPROC_SELECT_DATA_OPEN_MOVE:
+    case DATASELPROC_SELECT_DATA_OPENERASE_MOVE:
+    case DATASELPROC_MENU_SELECT:
+    case DATASELPROC_MENU_SELECT_MOVE_ANM:
+    case DATASELPROC_TO_COPY_PANE_MOVE:
+    case DATASELPROC_TO_ERASE_PANE_MOVE:
+    case DATASELPROC_BACK_SELECT_MOVE:
+    case DATASELPROC_COPY_DATA_TO_SELECT:
+    case DATASELPROC_COPY_DATA_TO_SELECT_MOVE_ANM:
+    case DATASELPROC_COPY_TO_SEL_BACK:
+    case DATASELPROC_COPY_TO_SEL_PANE_MOVE:
+    case DATASELPROC_YES_NO_SELECT:
+    case DATASELPROC_YES_NO_CANCEL_MOVE:
+    case DATASELPROC_YES_NO_CURSOR_MOVE_ANM:
+#if TARGET_PC
+    case DATASELPROC_TPHD_ERASE_CONFIRM_OUT:
+    case DATASELPROC_TPHD_ERASE_CONFIRM_IN:
+    case DATASELPROC_TPHD_ERASE_CONFIRM_BACK:
+#endif
+        aOn = true;
+        bOn = true;
+        break;
+    default:
+        break;
+    }
+    const u16 aMsg = aOn ? 0x40C : 0;
+    const u16 bMsg = bOn ? 0x3F9 : 0;
+    if (aMsg != s_tphdIconA) {
+        dusk::tphd::setRevoButtonText(mpTphdIconScr, aMsg, true, true);
+        s_tphdIconA = aMsg;
+    }
+    if (bMsg != s_tphdIconB) {
+        dusk::tphd::setRevoButtonText(mpTphdIconScr, bMsg, false, true);
+        s_tphdIconB = bMsg;
+    }
+}
+
+// RPX 0x029407xx / 0x0293cxxx: stamp box of the details window, "%2d/%d" stamps of the file, the
+// counter and the "+" are hidden when the file has none.
+void dFile_select_c::tphdStampBoxSet(u8 i_dataNo) {
+    J2DPane* box = mSelDt.ScrDt->searchUserInfo(MULTI_CHAR('stamps_n'));
+    if (box == NULL) {
+        box = mSelDt.ScrDt->search(MULTI_CHAR('stamps_n'));
+    }
+    if (box == NULL) {
+        return;
+    }
+    if (!dusk::tphd_active()) {
+        box->hide();
+        return;
+    }
+    dSv_save_c* pSave = (dSv_save_c*)&mSaveData[i_dataNo];
+    int num = 0;
+    for (int i = 0; i < dMenu_Stamp_c::STAMP_MAX; i++) {
+        if (pSave->isStamp(i)) {
+            num++;
+        }
+    }
+    mTphdStampNum[i_dataNo] = (u8)num;
+    box->show();
+    J2DPane* text = mSelDt.ScrDt->searchUserInfo(MULTI_CHAR('stamps_t'));
+    if (text == NULL) {
+        text = mSelDt.ScrDt->search(MULTI_CHAR('stamps_t'));
+    }
+    J2DPane* plus = mSelDt.ScrDt->searchUserInfo(MULTI_CHAR('stamps_p'));
+    if (plus == NULL) {
+        plus = mSelDt.ScrDt->search(MULTI_CHAR('stamps_p'));
+    }
+    if (text != NULL && text->getTypeID() == 19) {
+        char buf[0x40];
+        snprintf(buf, sizeof(buf), "%2d/%d", num, dMenu_Stamp_c::STAMP_MAX);
+        J2DTextBox* tb = static_cast<J2DTextBox*>(text);
+        tb->setFont(mDoExt_getMesgFont());
+        tb->setString(0x40, buf);
+    }
+    if (text != NULL) {
+        if (num != 0) {
+            text->show();
+        } else {
+            text->hide();
+        }
+    }
+    if (plus != NULL) {
+        if (num != 0) {
+            plus->show();
+        } else {
+            plus->hide();
+        }
+    }
+}
+
+// RPX 0x0293b0ac: dMenu_Stamp_c(mode 1) with the stamps of the opened file (+0x3e0 / +0x3e4).
+void dFile_select_c::tphdStampAlbumOpen() {
+    if (mpTphdStamp != NULL) {
+        return;
+    }
+    JKRHeap* gameHeap = mDoExt_getGameHeap();
+    u32 size = gameHeap->getFreeSize() / 2;
+    if (size > 0x300000) {
+        size = 0x300000;
+    }
+    if (size < 0x100000) {
+        return;
+    }
+    mpTphdStampHeap = JKRCreateExpHeap(size, gameHeap, false);
+    if (mpTphdStampHeap == NULL) {
+        return;
+    }
+    JKRHeap* prev = mDoExt_setCurrentHeap(mpTphdStampHeap);
+    mpTphdStamp = JKR_NEW dMenu_Stamp_c(mpTphdStampHeap, stick, NULL, dMenu_Stamp_c::MODE_FILESEL);
+    mDoExt_setCurrentHeap(prev);
+    if (mpTphdStamp == NULL) {
+        mDoExt_destroyExpHeap(mpTphdStampHeap);
+        mpTphdStampHeap = NULL;
+        return;
+    }
+    dSv_save_c* pSave = (dSv_save_c*)&mSaveData[mSelectNum];
+    mpTphdStamp->setOverrideFlags(pSave->getReserve().getStampFlags());
+    mDoAud_seStart(Z2SE_SY_CURSOR_OK, NULL, 0, 0);
+}
+
+bool dFile_select_c::tphdStampAlbumMove() {
+    if (mpTphdStamp == NULL) {
+        return false;
+    }
+    JKRHeap* prev = mDoExt_setCurrentHeap(mpTphdStampHeap);
+    if (mpTphdStamp->getStatus() == 1) {
+        mpTphdStamp->_open();
+    } else if (mpTphdStamp->getStatus() == 2) {
+        stick->checkTrigger();
+        mpTphdStamp->_move();
+    }
+    const bool closing = mpTphdStamp->getStatus() == 3 || mpTphdStamp->getStatus() == 0;
+    mDoExt_setCurrentHeap(prev);
+    if (closing) {
+        tphdStampAlbumClose();
+    }
+    return true;
+}
+
+void dFile_select_c::tphdStampAlbumClose() {
+    if (mpTphdStamp != NULL) {
+        JKR_DELETE(mpTphdStamp);
+        mpTphdStamp = NULL;
+    }
+    if (mpTphdStampHeap != NULL) {
+        mDoExt_destroyExpHeap(mpTphdStampHeap);
+        mpTphdStampHeap = NULL;
+    }
+}
 
 void dFile_select_c::fileSelectWide() {
+    if (dusk::tphd_active()) {
+        fileSelectRevo();
+        return;
+    }
     static bool cachedPanes = false;
     // Get pre-scale values for each pane
     if (!cachedPanes) {
@@ -4466,6 +5042,7 @@ void dFile_select_c::fileSelectWide() {
         }
         break;
     }
+
 }
 
 void dFile_select_c::presentLayoutAnims() {
@@ -4611,6 +5188,13 @@ void dFile_select_c::presentAnims() {
 #endif
 
 void dFile_select_c::_draw() {
+#if TARGET_PC
+    // RPX 0x0293c8c4: while the stamp album is shown only the album is drawn.
+    if (mpTphdStamp != NULL && mpTphdStamp->getStatus() >= 2) {
+        dComIfGd_set2DOpa(mpTphdStamp);
+        return;
+    }
+#endif
     if (!mHasDrawn) {
 #if TARGET_PC
         if (dusk::game_clock::is_presentation_frame()) {
@@ -4641,6 +5225,12 @@ void dFile_select_c::_draw() {
 
         dComIfGd_set2DOpa(&m3mSel);
         dComIfGd_set2DOpa(&mYnSel);
+        #if TARGET_PC
+        if (mpTphdIconScr != NULL) {
+            s_tphdIconDlst.mpScr = mpTphdIconScr;
+            dComIfGd_set2DOpaTop(&s_tphdIconDlst);
+        }
+        #endif
         mpFileWarning->draw();
         dComIfGd_set2DOpa(mSelIcon);
         dComIfGd_set2DOpa(mSelIcon2);
@@ -4680,8 +5270,16 @@ void dDlst_FileSelCp_c::draw() {
     J2DGrafContext* grafContext = dComIfGp_getCurrentGrafPort();
     MtxP local_98 = (MtxP)&mpPane1->getGlbMtx()[0][0];
     Mtx auStack_90;
-    MTXScale(auStack_90, mpPane1->getWidth() / mpPane2->getWidth(),
-             mpPane1->getHeight() / mpPane2->getHeight(), 1.0f);
+    f32 ratioX = mpPane1->getWidth() / mpPane2->getWidth();
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // TPHD: the main name_n is tagged n_43 (its x axis squeezed back to 1:1), but the copy
+        // screen's frames are laid out to cover the stretched quest log slots, so the hookup
+        // cancels that squeeze; the copy screen's own n_43 panes are squeezed in fileSelectRevo.
+        ratioX /= dusk::tphd::wiiuTvN43();
+    }
+#endif
+    MTXScale(auStack_90, ratioX, mpPane1->getHeight() / mpPane2->getHeight(), 1.0f);
     MTXConcat(local_98, auStack_90, local_98);
     mpPane2->setMtx(local_98);
     Scr->draw(0.0f, 0.0f, grafContext);
@@ -6207,7 +6805,9 @@ void dFile_select3D_c::_move() {
 
     cXyz stack_20;
     Vec stack_8 = mPaneMgr->getGlobalVtxCenter(false, 0);
-    toItem3Dpos(oREG_F(0) + (stack_8.x + field_0x03b8.x), oREG_F(1) + (stack_8.y + field_0x03b8.y), oREG_F(2) + 720.0f, &stack_20);
+    f32 itemY = stack_8.y + field_0x03b8.y;
+    toItem3Dpos(oREG_F(0) + (stack_8.x + field_0x03b8.x), oREG_F(1) + itemY,
+                oREG_F(2) + 720.0f, &stack_20);
     field_0x03a4.set(stack_20);
     field_0x03b0.set(0, 0, 0);
     animePlay();
@@ -6256,6 +6856,10 @@ void dFile_select3D_c::setJ3D(char const* param_0, char const* param_1, char con
     JUT_ASSERT(5285, bmdRes != NULL);
 
     void* bmdWork = make_work_copy(bmdRes);
+#if DUSK_TPHD
+    dusk::tphd::register_copied_hd_resource(
+        archive->mEntryNum, param_0, bmdWork, archive->getResSize(bmdRes));
+#endif
     modelData = J3DModelLoaderDataBase::load(bmdWork, 0x51020010);
     JUT_ASSERT(5290, modelData != NULL);
 
@@ -6345,7 +6949,9 @@ void dFile_select3D_c::animeEntry() {
 }
 
 void dFile_select3D_c::createMaskModel() {
-    const static f32 m_kamen_offset_x[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const static f32 m_kamen_offset_x_gc[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const static f32 m_kamen_offset_x_hd[5] = {0.0f, -10.0f, -10.0f, -10.0f, -10.0f};
+    const f32* m_kamen_offset_x = dusk::tphd_active() ? m_kamen_offset_x_hd : m_kamen_offset_x_gc;
     const static f32 m_kamen_offset_y[5] = {0.0f, 0.0f, 0.0f, 5.0f, 5.0f};
     const static f32 m_kamen_scale[5] = {2.0f, 2.0f, 2.0f, 1.6f, 1.6f};
     static const char* bck_name[4] = {
@@ -6388,7 +6994,9 @@ void dFile_select3D_c::createMaskModel() {
     }
 }
 void dFile_select3D_c::createMirrorModel() {
-    const static f32 m_mirror_offset_x[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const static f32 m_mirror_offset_x_gc[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const static f32 m_mirror_offset_x_hd[5] = {0.0f, -10.0f, -10.0f, -10.0f, -10.0f};
+    const f32* m_mirror_offset_x = dusk::tphd_active() ? m_mirror_offset_x_hd : m_mirror_offset_x_gc;
     const static f32 m_mirror_offset_y[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     const static f32 m_mirror_scale[5] = {0.6f, 0.6f, 0.6f, 0.6f, 0.6f};
     static const char* bck_name[4] = {
@@ -6442,9 +7050,14 @@ void dFile_select3D_c::toItem3Dpos(f32 param_0, f32 param_1, f32 param_2, cXyz* 
     Mtx adStack_98;
     Mtx auStack_c8;
 #if TARGET_PC
-    param_0 =
-        (2.0f * ((param_0 - mDoGph_gInf_c::getSafeMinXF()) / mDoGph_gInf_c::getSafeWidthF()) -
-         1.0f);
+    if (dusk::tphd_active()) {
+        param_0 =
+            (2.0f * ((param_0 - mDoGph_gInf_c::getMinXF()) / mDoGph_gInf_c::getWidthF()) - 1.0f);
+    } else {
+        param_0 =
+            (2.0f * ((param_0 - mDoGph_gInf_c::getSafeMinXF()) / mDoGph_gInf_c::getSafeWidthF()) -
+             1.0f);
+    }
 #else
     param_0 = (2.0f * ((param_0 - mDoGph_gInf_c::getMinXF()) / mDoGph_gInf_c::getWidthF()) - 1.0f);
 #endif

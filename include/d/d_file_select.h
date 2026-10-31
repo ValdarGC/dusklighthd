@@ -9,6 +9,12 @@
 #include "JSystem/J3DGraphLoader/J3DModelLoader.h"
 #include "JSystem/J3DGraphLoader/J3DAnmLoader.h"
 
+class dMenu_Stamp_c;
+class JKRExpHeap;
+
+class dFile_info_c;
+class J2DPicture;
+
 #if TARGET_PC
 #include "mods/svc/game_mode.h"
 #endif
@@ -227,6 +233,11 @@ public:
         DATASELPROC_CARD_TO_NAND_DATA_COPY_ERR_DISP2,
         DATASELPROC_CARD_TO_NAND_DATA_COPY_ERR_DISP3,
         #endif
+        #if TARGET_PC
+        DATASELPROC_TPHD_ERASE_CONFIRM_OUT,
+        DATASELPROC_TPHD_ERASE_CONFIRM_IN,
+        DATASELPROC_TPHD_ERASE_CONFIRM_BACK,
+        #endif
     };
 
     enum MemCardCheckProc_e {
@@ -387,6 +398,18 @@ public:
     bool yesnoWakuAlpahAnm(u8);
 #if TARGET_PC
     void fileSelectWide();
+    // TPHD (Wii U) file select: 608 layout stretched to the TV, 'n_43' panes kept square, A/B
+    // captions at the top right (zelda_file_select_icon_parts_revo.blo) and the stamp album
+    // opened with + from the stamp box of the details window.
+    void fileSelectRevo();
+    void tphdIconScreenSet();
+    void tphdIconUpdate();
+    void tphdStampBoxSet(u8 i_dataNo);
+    bool tphdStampAlbumMove();
+    void tphdStampAlbumOpen();
+    void tphdStampAlbumClose();
+    #endif
+    #if TARGET_PC
     bool pointerDataSelect();
     bool pointerMenuSelect();
     bool pointerCopyDataToSelect();
@@ -711,6 +734,18 @@ public:
 
 #if PLATFORM_GCN
     /* 0x2378 */ J2DPicture* mpFadePict;
+    #endif
+#ifdef TARGET_PC
+    J2DScreen* mpTphdIconScr = NULL;
+    dMenu_Stamp_c* mpTphdStamp = NULL;
+    JKRExpHeap* mpTphdStampHeap = NULL;
+    u8 mTphdStampNum[3] = {0, 0, 0};
+    bool mTphdBackToTitle = false;
+    bool isTphdBackToTitle() const { return mTphdBackToTitle; }
+    void tphdEraseConfirmOut();
+    void tphdEraseConfirmIn();
+    void tphdEraseConfirmBack();
+    void clearTphdBackToTitle() { mTphdBackToTitle = false; }
 #endif
 
 #if PLATFORM_WII || PLATFORM_SHIELD

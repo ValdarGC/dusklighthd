@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "JSystem/JKernel/JKRMemArchive.h"
@@ -24,10 +26,38 @@
 #if TARGET_PC
 #include "dusk/game_clock.h"
 #include "dusk/interp/user_interface.h"
+#include "dusk/interp/frame_interpolation.h"
+#include "dusk/tphd/HdSubscreen.hpp"
 #include "dusk/menu_pointer.h"
 #include "dusk/mods/svc/save.hpp"
 #include "dusk/settings.h"
 #include "dusk/version.hpp"
+
+#if TARGET_PC
+namespace {
+// TPHD A / B captions (zelda_file_select_icon_parts_revo.blo of saveres.arc, Wii U
+// dDlst_MenuSaveIc_c).
+struct dDlst_MenuSaveTphdIcon_c : public dDlst_base_c {
+    J2DScreen* mpScr = NULL;
+    virtual void draw() { dusk::tphd::drawRevoIconScreen(mpScr, dComIfGp_getCurrentGrafPort()); }
+};
+dDlst_MenuSaveTphdIcon_c s_tphdSaveIcon;
+u16 s_tphdSaveIconA = 0xFFFF;
+u16 s_tphdSaveIconB = 0xFFFF;
+// Wii U save select: 5 entries (3 logs, 3 = Manual (not ported, hidden), 4 = Return to Title).
+bool s_tphdExitSel = false;
+bool s_tphdExitConfirm = false;
+u8 s_tphdExitPhase = 0;  // 1 opening the yes / no, 2 closing it
+CPaneMgr* s_tphdExitPane = NULL;
+void tphdSaveRelease();
+}  // namespace
+static void tphdExitVisible(bool visible, bool tick);
+static bool tphdCursorOn(dSelect_cursor_c* cur, J2DScreen* scr, int kind, int idx);
+namespace {
+// Wii U: w_go_g00..04 (selected glow) fade 0 <-> 255 (FUN_02a967f8), the others stay dark.
+f32 s_tphdGlow[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+}  // namespace
+#endif
 #endif
 
 static int SelStartFrameTbl[3] = {
@@ -236,6 +266,9 @@ void dMenu_save_c::screenSet() {
 
     for (int i = 0; i < 2; i++) {
 #if TARGET_PC
+        // Wii U screen set 0x02a033b4: DAT_1014b6af is the language (0 = Japanese, set at boot by
+        // 0x029096ec), Japanese -> w_no_t / w_yes_t (23 pt, char 3), others f_no_t / f_yes_t
+        // (21 pt, char 1): the same sets as the GC.
         if (dusk::version::isRegionJpn()) {
             mpNoYesTxt[i] = JKR_NEW CPaneMgr(mSaveSel.Scr, l_tagName000[i], 0, NULL);
             mSaveSel.Scr->search(l_tagName000U[i])->hide();
@@ -369,7 +402,25 @@ void dMenu_save_c::screenSet() {
     }
 
 #if TARGET_PC
-    if (dusk::version::isRegionJpn()) {
+    // TPHD (Wii U dMenu_save screen set 0x02a033b4): non-Japanese uses w_tabi_s / w_tabi_x with
+    // the sub font (27 pt), Japanese t_for / t_for1; the tmoyou ornaments stay for non-Japanese.
+    // Wii U 0x02a033b4: Japanese -> w_tabi_s / w_tabi_x (char 2), others t_for / t_for1 (char 0)
+    // with tmoyou00..09 hidden; both with the sub font (FUN_02addfbc) 27 / 27, line 20.
+    const bool tabiHeader = dusk::version::isRegionJpn();
+    const bool jpErrTags = tabiHeader;
+    if (dusk::tphd_active() && tabiHeader) {
+        mSaveSel.Scr->search(MULTI_CHAR('t_for'))->hide();
+        mSaveSel.Scr->search(MULTI_CHAR('t_for1'))->hide();
+        if (J2DPane* p = mSaveSel.Scr->search(MULTI_CHAR('w_tabi_1'))) {
+            p->hide();
+        }
+    } else if (dusk::tphd_active()) {
+        mSaveSel.Scr->search(MULTI_CHAR('w_tabi_s'))->hide();
+        mSaveSel.Scr->search(MULTI_CHAR('w_tabi_x'))->hide();
+        for (int i = 0; i < 10; i++) {
+            mSaveSel.Scr->search(l_tagName211[i])->hide();
+        }
+    } else if (dusk::version::isRegionJpn()) {
         mSaveSel.Scr->search(MULTI_CHAR('t_for'))->hide();
         mSaveSel.Scr->search(MULTI_CHAR('t_for1'))->hide();
     } else {
@@ -393,12 +444,18 @@ void dMenu_save_c::screenSet() {
 #endif
 
     for (int i = 0; i < 2; i++) {
-        mpHeaderTxtPane[i] = JKR_NEW CPaneMgrAlpha(mSaveSel.Scr, DUSK_IF_ELSE(dusk::version::isRegionJpn() ? l_tagName21_jpn[i] : l_tagName21[i], l_tagName21[i]), 0, NULL);
+        mpHeaderTxtPane[i] = JKR_NEW CPaneMgrAlpha(mSaveSel.Scr, DUSK_IF_ELSE(tabiHeader ? l_tagName21_jpn[i] : l_tagName21[i], l_tagName21[i]), 0, NULL);
 
         ((J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr())->setFont(mSaveSel.font[0]);
         ((J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr())->setString(0x100, "");
 #if TARGET_PC
-        if (dusk::version::isRegionJpn()) {
+        if (dusk::tphd_active()) {
+            J2DTextBox* tb = (J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr();
+            tb->setFont(mSaveSel.font[1]);
+            tb->setFontSize(27.0f, 27.0f);
+            tb->setLineSpace(20.0f);
+            tb->setCharSpace(tabiHeader ? 2.0f : 0.0f);
+        } else if (dusk::version::isRegionJpn()) {
             ((J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr())->setFontSize(21.0f, 21.0f);
             ((J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr())->setLineSpace(22.0f);
             ((J2DTextBox*)mpHeaderTxtPane[i]->getPanePtr())->setCharSpace(2.0f);
@@ -425,7 +482,7 @@ void dMenu_save_c::screenSet() {
 
     field_0xb4 = mSaveSel.Scr->search(MULTI_CHAR('w_er_n'));
 #if TARGET_PC
-    if (dusk::version::isRegionJpn()) {
+    if (jpErrTags) {
         mSaveSel.Scr->search(MULTI_CHAR('er_for0'))->hide();
         mSaveSel.Scr->search(MULTI_CHAR('er_for1'))->hide();
     } else {
@@ -442,7 +499,7 @@ void dMenu_save_c::screenSet() {
 
     for (int i = 0; i < 2; i++) {
 #if TARGET_PC
-        mpErrTxtPane[i] = JKR_NEW CPaneMgrAlpha(mSaveSel.Scr, DUSK_IF_ELSE(dusk::version::isRegionJpn() ? l_tagName20_jpn[i] : l_tagName20[i], l_tagName20[i]), 0, NULL);
+        mpErrTxtPane[i] = JKR_NEW CPaneMgrAlpha(mSaveSel.Scr, DUSK_IF_ELSE(jpErrTags ? l_tagName20_jpn[i] : l_tagName20[i], l_tagName20[i]), 0, NULL);
 #elif VERSION == VERSION_GCN_JPN
         mpErrTxtPane[i] = JKR_NEW CPaneMgrAlpha(mSaveSel.Scr, l_tagName20[i], 0, NULL);
 #else
@@ -453,6 +510,8 @@ void dMenu_save_c::screenSet() {
         ((J2DTextBox*)mpErrTxtPane[i]->getPanePtr())->setString(0x200, "");
 #if TARGET_PC
         if (dusk::version::isRegionJpn()) {
+            // Wii U 0x02a033b4 = GC: Japanese w_er_msg / w_er_msR 21 pt, line 22, char 2; others
+            // er_for0 / er_for1 resized 440 x 198, 21 pt, line 21, char 1.
             ((J2DTextBox*)mpErrTxtPane[i]->getPanePtr())->setFontSize(21.0f, 21.0f);
             ((J2DTextBox*)mpErrTxtPane[i]->getPanePtr())->setLineSpace(22.0f);
             ((J2DTextBox*)mpErrTxtPane[i]->getPanePtr())->setCharSpace(2.0f);
@@ -489,6 +548,9 @@ void dMenu_save_c::screenSet() {
     pos = mpSelData[mSelectedFile]->getGlobalVtxCenter(false, 0);
     mSelIcon->setPos(pos.x, pos.y, mpSelData[mSelectedFile]->getPanePtr(), true);
     mSelIcon->setAlphaRate(0.0f);
+#if TARGET_PC
+    tphdCursorOn(mSelIcon, mSaveSel.Scr, 0, mSelectedFile);
+#endif
 
     J2DPane* pane = mSaveSel.Scr->search(MULTI_CHAR('Nm_02'));
     pane->setAnimation(field_0x40);
@@ -509,6 +571,9 @@ void dMenu_save_c::screenSet() {
     }
 
     mWarning = JKR_NEW dFile_warning_c(mpArchive, 0);
+#if TARGET_PC
+    tphdSaveScreenSet();
+#endif
 }
 
 
@@ -722,6 +787,13 @@ void dMenu_save_c::_delete() {
     if (mSelIcon != NULL) {
         JKR_DELETE(mSelIcon);
     }
+#if TARGET_PC
+    if (s_tphdSaveIcon.mpScr != NULL) {
+        JKR_DELETE(s_tphdSaveIcon.mpScr);
+        s_tphdSaveIcon.mpScr = NULL;
+    }
+    tphdSaveRelease();
+#endif
 
     if (mWarning != NULL) {
         JKR_DELETE(mWarning);
@@ -1869,6 +1941,9 @@ void dMenu_save_c::openSaveSelect3() {
 void dMenu_save_c::saveSelect() {
     if (!mDoRst::isReset()) {
 #if TARGET_PC
+        if (tphdSaveSelect()) {
+            return;
+        }
         if (pointerSaveSelect()) {
             return;
         }
@@ -1895,6 +1970,16 @@ void dMenu_save_c::saveSelect() {
                 mSelectedFile++;
                 dataSelectAnmSet();
                 mMenuProc = PROC_SAVE_SELECT_MOVE_ANM;
+#if TARGET_PC
+            } else if (dusk::tphd_active() && s_tphdExitPane != NULL) {
+                // Wii U: below the last log is "Return to Title" (entry 4).
+                mDoAud_seStart(Z2SE_FILE_SELECT_CURSOR, NULL, 0, 0);
+                mLastSelFile = mSelectedFile;
+                mSelectedFile = 0xFF;
+                dataSelectAnmSet();
+                s_tphdExitSel = true;
+                mMenuProc = PROC_SAVE_SELECT_MOVE_ANM;
+#endif
             }
         }
     }
@@ -2153,6 +2238,19 @@ void dMenu_save_c::saveYesNoSelect() {
 void dMenu_save_c::yesnoSelectStart() {
 #if TARGET_PC
     dusk::menu_pointer::clear_deferred_activation(dusk::menu_pointer::Context::Save);
+    if (s_tphdExitConfirm) {
+        if (mYesNoCursor != CURSOR_NO) {
+            // "Return to title" confirmed: same ending as "Quit" after saving (gameContinue).
+            mDoAud_seStart(Z2SE_QUIT_GAME, NULL, 0, 0);
+            mSelIcon->setAlphaRate(0.0f);
+            s_tphdExitConfirm = false;
+            mWaitTimer = 30;
+            mMenuProc = PROC_GAME_CONTINUE2;
+        } else {
+            yesnoCancelAnmSet();
+        }
+        return;
+    }
 #endif
     if (mYesNoCursor != CURSOR_NO) {
         mDoAud_seStart(Z2SE_SY_CURSOR_OK, NULL, 0, 0);
@@ -2255,6 +2353,12 @@ void dMenu_save_c::yesNoCursorMoveAnm() {
 }
 
 void dMenu_save_c::yesnoCancelAnmSet() {
+#if TARGET_PC
+    if (s_tphdExitConfirm) {
+        tphdExitCancel();
+        return;
+    }
+#endif
     mDoAud_seStart(Z2SE_SY_CURSOR_CANCEL, NULL, 0, 0);
     mSelIcon->setAlphaRate(0.0f);
     headerTxtSet(0x4CA);
@@ -2809,6 +2913,9 @@ void dMenu_save_c::yesnoCursorShow() {
         mSelIcon->setAlphaRate(1.0f);
 
         mSelIcon->setParam(0.96f, 0.84f, 0.06f, 0.5f, 0.5f);
+#if TARGET_PC
+        tphdCursorOn(mSelIcon, mSaveSel.Scr, 2, mYesNoCursor);
+#endif
     }
 }
 
@@ -2960,6 +3067,9 @@ void dMenu_save_c::selFileCursorShow() {
     mSelIcon->setAlphaRate(1.0f);
 
     mSelIcon->setParam(0.96f, 0.94f, 0.03f, 0.7f, 0.7f);
+#if TARGET_PC
+    tphdCursorOn(mSelIcon, mSaveSel.Scr, 0, mSelectedFile);
+#endif
 }
 
 void dMenu_save_c::yesnoWakuAlpahAnmInit(u8 yesnoIdx, u8 startAlpha, u8 endAlpha, u8 anmTimer) {
@@ -3060,6 +3170,10 @@ void dMenu_save_c::_draw() {
 
 #if TARGET_PC
 void dMenu_save_c::menuSaveWide() {
+    if (dusk::tphd_active()) {
+        menuSaveRevo();
+        return;
+    }
     mSaveSel.Scr->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
     mSaveSel.Scr->translate(mDoGph_gInf_c::getSafeMinXF(), 0.0f);
 
@@ -3093,11 +3207,15 @@ void dMenu_save_c::menuSaveWide() {
     mSaveSel.Scr->search(MULTI_CHAR('w_uzu08'))->scale(mDoGph_gInf_c::hudAspectScaleDown, 1.0f);
     mSaveSel.Scr->search(MULTI_CHAR('w_uzu09'))->scale(mDoGph_gInf_c::hudAspectScaleDown, 1.0f);
     
-    #if TARGET_PC
     if (mSelIcon) {
         mSelIcon->refreshAspectScale(mDoGph_gInf_c::hudAspectScaleUp);
     }
-    #endif
+
+    if (dusk::tphd_active()) {
+        mSaveSel.Scr->search(MULTI_CHAR('w_sel_03'))->hide();
+        mSaveSel.Scr->search(MULTI_CHAR('w_sel_04'))->hide();
+        mSaveSel.Scr->search(MULTI_CHAR('w_btn_n'))->hide();
+    }
 }
 
 void dMenu_save_c::presentLayoutAnims() {
@@ -3184,6 +3302,9 @@ void dMenu_save_c::_draw2() {
                 mFileInfo[i]->_draw();
             }
             dComIfGd_set2DOpa(mSelIcon);
+#if TARGET_PC
+            tphdSaveUpdate();
+#endif
         }
 
         if (mWarning != NULL) {
@@ -3200,3 +3321,346 @@ void dDlst_MenuSaveExplain_c::draw() {
 void dDlst_MenuSave_c::draw() {
     Scr->draw(0.0f, 0.0f, dComIfGp_getCurrentGrafPort());
 }
+
+#if TARGET_PC
+// ---- TPHD (Wii U) save select ---------------------------------------------------------------
+// RPX dMenu_save_c: screen set 0x02a033b4, save select 0x02a0afb0 / move 0x02a0b75c. The Wii U
+// keeps the GC flow for the three quest logs and adds "Manual" (w_sel_03, electronic manual, not
+// ported: hidden) and "Return to Title" (w_sel_04, centred here since Manual is gone), the A / B
+// captions of zelda_file_select_icon_parts_revo.blo and the selected glow (w_go_g00..04).
+namespace {
+void tphdSaveRelease() {
+    if (s_tphdExitPane != NULL) {
+        JKR_DELETE(s_tphdExitPane);
+        s_tphdExitPane = NULL;
+    }
+    s_tphdExitSel = false;
+    s_tphdExitConfirm = false;
+    s_tphdExitPhase = 0;
+}
+}  // namespace
+
+void dMenu_save_c::tphdSaveScreenSet() {
+    s_tphdExitSel = false;
+    s_tphdExitConfirm = false;
+    s_tphdExitPhase = 0;
+    for (int i = 0; i < 5; i++) {
+        s_tphdGlow[i] = 0.0f;
+    }
+    if (!dusk::tphd_active()) {
+        return;
+    }
+    if (s_tphdExitPane != NULL) {
+        JKR_DELETE(s_tphdExitPane);
+        s_tphdExitPane = NULL;
+    }
+    if (mSaveSel.Scr->search(MULTI_CHAR('w_sel_04')) != NULL) {
+        s_tphdExitPane = JKR_NEW CPaneMgr(mSaveSel.Scr, MULTI_CHAR('w_sel_04'), 0, NULL);
+    }
+    // "Return to Title" caption (Wii U 0x02a033b4): w_exit_t (Japanese, 23 pt char 3) / f_exit_t
+    // (others, 21 pt char 1), message font, message 0x154.
+    const bool jp = dusk::version::isRegionJpn();
+    J2DPane* exitTxt = mSaveSel.Scr->search(jp ? MULTI_CHAR('w_exit_t') : MULTI_CHAR('f_exit_t'));
+    if (J2DPane* other = mSaveSel.Scr->search(jp ? MULTI_CHAR('f_exit_t') : MULTI_CHAR('w_exit_t'))) {
+        other->hide();
+    }
+    if (exitTxt != NULL && exitTxt->getTypeID() == 19) {
+        J2DTextBox* tb = static_cast<J2DTextBox*>(exitTxt);
+        tb->setFont(mSaveSel.font[0]);
+        char buf[64];
+        fopMsgM_messageGet(buf, 0x154);
+        tb->setString(64, "");
+        tb->setString(buf);
+    }
+    // Wii U: GC_btn_n hidden, the A / B bar of the GC layout is replaced by the icon parts.
+    for (u64 tag : {MULTI_CHAR('GC_btn_n'), MULTI_CHAR('w_btn_n')}) {
+        if (J2DPane* p = mSaveSel.Scr->search(tag)) {
+            p->hide();
+        }
+    }
+    if (s_tphdSaveIcon.mpScr == NULL &&
+        JKRGetNameResource("zelda_file_select_icon_parts_revo.blo", mpArchive) != NULL)
+    {
+        J2DScreen* scr = JKR_NEW J2DScreen();
+        scr->setPriority("zelda_file_select_icon_parts_revo.blo", 0x20000, mpArchive);
+        dusk::tphd::setupRevoButtonText(scr);
+        s_tphdSaveIcon.mpScr = scr;
+        s_tphdSaveIconA = 0xFFFF;
+        s_tphdSaveIconB = 0xFFFF;
+    }
+}
+
+void dMenu_save_c::menuSaveRevo() {
+    const f32 sx = dusk::tphd::subscreenScaleX();
+    const f32 invSx = dusk::tphd::wiiuTvN43();
+    const f32 minX = mDoGph_gInf_c::getMinXF();
+    mSaveSel.Scr->scale(sx, 1.0f);
+    mSaveSel.Scr->translate(minX, 0.0f);
+    dusk::tphd::applyN43(mSaveSel.Scr, invSx, false, true);
+    if (J2DPane* p = mSaveSel.Scr->search(MULTI_CHAR('w_sel_03'))) {
+        p->hide();
+    }
+    if (J2DPane* p = mSaveSel.Scr->search(MULTI_CHAR('w_btn_n'))) {
+        p->hide();
+    }
+    // Yes / No / Return to Title / Manual texts are 'n_43' in the HD blo: the Wii U J2DPane::draw
+    // keeps them 1:1 under the stretched screen (Wii U capture: "Return to Title" is 188 px wide
+    // at 1080p, 1 / sx of the stretched text). A pane scale does not reach the glyphs of these
+    // boxes here, so the glyph width and the character spacing are squeezed instead (once, from
+    // the blo values).
+    static const u64 l_n43Text[8] = {MULTI_CHAR('f_no_t'),   MULTI_CHAR('f_yes_t'),
+                                     MULTI_CHAR('w_no_t'),   MULTI_CHAR('w_yes_t'),
+                                     MULTI_CHAR('f_exit_t'), MULTI_CHAR('w_exit_t'),
+                                     MULTI_CHAR('f_eman_t'), MULTI_CHAR('w_eman_t')};
+    // The yes / no buttons (w_no_n / w_yes_n) are also scaled by their bck; the Wii U 'n_43' rule
+    // keeps the text 1:1 whatever the parents do, so their X scale is compensated too (per frame).
+    static J2DTextBox* s_squeezed[8] = {};
+    static f32 s_origW[8];
+    static f32 s_origSpace[8];
+    for (int i = 0; i < 8; i++) {
+        J2DPane* p = mSaveSel.Scr->search(l_n43Text[i]);
+        if (p == NULL || p->getTypeID() != 19) {
+            continue;
+        }
+        J2DTextBox* tb = static_cast<J2DTextBox*>(p);
+        tb->scale(1.0f, tb->getScaleY());
+        J2DTextBox::TFontSize size;
+        tb->getFontSize(size);
+        if (s_squeezed[i] != tb) {
+            s_squeezed[i] = tb;
+            s_origW[i] = size.mSizeX;
+            s_origSpace[i] = tb->getCharSpace();
+        }
+        // Glyph aspect on screen = fontW * glbScaleX / (fontH * glbScaleY). The Wii U keeps it at
+        // the layout aspect times invSx * sx (TV 'n_43' squeeze), whatever the parents and the
+        // root stretch do; the global matrix of the previous draw gives our current scales.
+        MtxP m = tb->getGlbMtx();
+        const f32 glbSx = std::sqrt(m[0][0] * m[0][0] + m[1][0] * m[1][0]);
+        const f32 glbSy = std::sqrt(m[0][1] * m[0][1] + m[1][1] * m[1][1]);
+        f32 k = invSx;  // first frame: only the root stretch is known
+        if (glbSx > 0.0001f && glbSy > 0.0001f) {
+            k = (invSx * sx) * glbSy / glbSx;
+        }
+        tb->setFontSize(s_origW[i] * k, size.mSizeY);
+        tb->setCharSpace(s_origSpace[i] * k);
+    }
+    // Only "Return to Title" is left on the bottom row (the electronic manual w_sel_03 is not
+    // ported). Its button art w_go_g04 (b=0, -66..104 around the 145 wide w_sel_04 in the HD blo)
+    // is not centred on the pane: the RPX places w_sel_04 only through the shared bck
+    // (0x02a06fb0), whose tracks we cannot read reliably. Estimate: centre the art horizontally
+    // on the layout centre (304), like the quest logs, from the vertices of the last draw.
+    J2DPane* exitBtn = mSaveSel.Scr->search(MULTI_CHAR('w_sel_04'));
+    J2DPane* exitArt = mSaveSel.Scr->search(MULTI_CHAR('w_go_g04'));
+    if (exitBtn != NULL && exitArt != NULL) {
+        exitBtn->show();
+        const Vec v0 = exitArt->getGlbVtx(0);
+        const Vec v3 = exitArt->getGlbVtx(3);
+        const f32 drawnCentre = (v0.x + v3.x) * 0.5f;
+        const f32 target = mDoGph_gInf_c::getMinXF() + 304.0f * sx;
+        if (v3.x > v0.x && std::fabs(drawnCentre - target) > 0.01f) {
+            exitBtn->translate(exitBtn->getTranslateX() + (target - drawnCentre) / sx,
+                               exitBtn->getTranslateY());
+        }
+    }
+    if (mSelIcon != NULL) {
+        mSelIcon->refreshAspectScale(1.0f);
+        mSelIcon->setRevoTrack(sx, minX);
+    }
+}
+
+void dMenu_save_c::tphdSaveUpdate() {
+    if (!dusk::tphd_active()) {
+        return;
+    }
+    const bool selecting = mMenuProc == PROC_SAVE_SELECT || mMenuProc == PROC_SAVE_SELECT_MOVE_ANM;
+    const bool yesNo = mMenuProc == PROC_SAVE_YES_NO_SELECT;
+    // Selected glow (w_go_g00..04): the current entry fades in, the others out.
+    int target = s_tphdExitSel ? 4 : (mSelectedFile < 3 ? mSelectedFile : -1);
+    static const u64 kGlow[5] = {MULTI_CHAR('w_go_g00'), MULTI_CHAR('w_go_g01'),
+                                 MULTI_CHAR('w_go_g02'), MULTI_CHAR('w_go_g03'),
+                                 MULTI_CHAR('w_go_g04')};
+    const bool tick = dusk::frame_interp::get_ui_tick_pending();
+    for (int i = 0; i < 5; i++) {
+        J2DPane* g = mSaveSel.Scr->search(kGlow[i]);
+        if (g == NULL) {
+            continue;
+        }
+        const f32 want = (i == target) ? 255.0f : 0.0f;
+        if (tick) {
+            const f32 step = 255.0f / 5.0f;
+            if (s_tphdGlow[i] < want) {
+                s_tphdGlow[i] = std::min(want, s_tphdGlow[i] + step);
+            } else if (s_tphdGlow[i] > want) {
+                s_tphdGlow[i] = std::max(want, s_tphdGlow[i] - step);
+            }
+        }
+        g->setAlpha(static_cast<u8>(s_tphdGlow[i]));
+    }
+    tphdExitVisible((mMenuProc == PROC_SAVE_SELECT || mMenuProc == PROC_SAVE_SELECT_MOVE_ANM ||
+                     mMenuProc == PROC_OPEN_SAVE_SELECT3) && !s_tphdExitConfirm &&
+                        s_tphdExitPhase != 1,
+                    tick);
+    // A / B captions (top right).
+    if (s_tphdSaveIcon.mpScr != NULL) {
+        // RPX: A / B captions (0x02a056a0, 0x02a0575c) are switched on with the log list and off
+        // only when the save starts (0x02a0c490) or an error box opens (0x02a0da24): moving
+        // between the logs or the yes / no buttons keeps them (no flicker).
+        const bool captions = selecting || yesNo || mMenuProc == PROC_OPEN_SAVE_SELECT3 ||
+                              mMenuProc == PROC_SELECT_DATA_OPEN_MOVE ||
+                              mMenuProc == PROC_YES_NO_CURSOR_MOVE_ANM ||
+                              mMenuProc == PROC_SAVE_YES_NO_CANCEL_MOVE;
+        const u16 aMsg = captions ? 0x40C : 0;
+        const u16 bMsg = captions ? 0x3F9 : 0;
+        if (aMsg != s_tphdSaveIconA) {
+            dusk::tphd::setRevoButtonText(s_tphdSaveIcon.mpScr, aMsg, true, true);
+            s_tphdSaveIconA = aMsg;
+        }
+        if (bMsg != s_tphdSaveIconB) {
+            dusk::tphd::setRevoButtonText(s_tphdSaveIcon.mpScr, bMsg, false, true);
+            s_tphdSaveIconB = bMsg;
+        }
+        dComIfGd_set2DOpaTop(&s_tphdSaveIcon);
+    }
+}
+
+// Wii U (0x02a06fb0 and friends) animates the five entries w_sel_00..04 with the same bck, so
+// "Return to Title" leaves together with the quest logs whenever the yes / no windows or the
+// open log are shown. Here it fades (the bck of that pane is not reproduced).
+static void tphdExitVisible(bool visible, bool tick) {
+    static f32 s_alpha = 0.0f;
+    if (s_tphdExitPane == NULL) {
+        return;
+    }
+    const f32 want = visible ? 255.0f : 0.0f;
+    if (tick) {
+        const f32 step = 255.0f / 5.0f;
+        if (s_alpha < want) {
+            s_alpha = std::min(want, s_alpha + step);
+        } else if (s_alpha > want) {
+            s_alpha = std::max(want, s_alpha - step);
+        }
+    }
+    J2DPane* pane = s_tphdExitPane->getPanePtr();
+    pane->setAlpha(static_cast<u8>(s_alpha));
+    // The children of w_sel_04 do not all inherit the alpha: hide the button once faded out.
+    if (s_alpha <= 0.0f) {
+        pane->hide();
+    } else {
+        pane->show();
+    }
+}
+
+// Wii U save cursor (0x02a07fbc slots / Return to Title, 0x02a07950 yes / no, screen set
+// 0x02a033b4): the corner box is put on the glow picture w_go_g00..04 (slots, Return to Title) or
+// on w_no_n / w_yes_n, at the pane centre + (-1.5, -1.5), with setParam
+//   slots  0.82 0.70 0.03 0.70 0.70   (DAT_10098104 / 10097fd0 / 10097fcc)
+//   exit   0.78 0.53 0.07 0.70 0.70   (DAT_10098108 / 1009810c / 10098100)
+//   yes/no 0.98 0.84 0.07 0.70 0.70   (DAT_100980f8 / 100980fc / 10098100)
+static bool tphdCursorOn(dSelect_cursor_c* cur, J2DScreen* scr, int kind, int idx) {
+    if (!dusk::tphd_active() || cur == NULL || scr == NULL || idx < 0) {
+        return false;
+    }
+    static const u64 kGlowTag[5] = {MULTI_CHAR('w_go_g00'), MULTI_CHAR('w_go_g01'),
+                                    MULTI_CHAR('w_go_g02'), MULTI_CHAR('w_go_g03'),
+                                    MULTI_CHAR('w_go_g04')};
+    J2DPane* pane = NULL;
+    if (kind == 2) {
+        if (idx > 1) {
+            return false;
+        }
+        pane = scr->search(idx == 0 ? MULTI_CHAR('w_no_n') : MULTI_CHAR('w_yes_n'));
+    } else if (idx < 5) {
+        pane = scr->search(kGlowTag[idx]);
+    }
+    if (pane == NULL) {
+        return false;
+    }
+    const Vec v0 = pane->getGlbVtx(0);
+    const Vec v3 = pane->getGlbVtx(3);
+    cur->setPos((v0.x + v3.x) * 0.5f, (v0.y + v3.y) * 0.5f, pane, true);
+    cur->setTrackOffset(-1.5f, -1.5f);
+    if (kind == 2) {
+        cur->setParam(0.98f, 0.84f, 0.07f, 0.70f, 0.70f);
+    } else if (kind == 1) {
+        cur->setParam(0.78f, 0.53f, 0.07f, 0.70f, 0.70f);
+    } else {
+        cur->setParam(0.82f, 0.70f, 0.03f, 0.70f, 0.70f);
+    }
+    return true;
+}
+
+static void tphdExitCursor(dSelect_cursor_c* cur, J2DScreen* scr) {
+    if (s_tphdExitPane == NULL || cur == NULL) {
+        return;
+    }
+    if (!tphdCursorOn(cur, scr, 1, 4)) {
+        Vec pos = s_tphdExitPane->getGlobalVtxCenter(false, 0);
+        cur->setPos(pos.x, pos.y, s_tphdExitPane->getPanePtr(), true);
+        cur->setParam(1.02f, 0.94f, 0.06f, 0.5f, 0.5f);
+    }
+    cur->setAlphaRate(1.0f);
+}
+
+// Wii U save select input (0x02a0afb0): down from the last log goes to "Return to Title", up
+// comes back; A there asks the question 0x494 with the yes / no window.
+bool dMenu_save_c::tphdSaveSelect() {
+    if (!dusk::tphd_active()) {
+        return false;
+    }
+    if (s_tphdExitPhase == 1) {
+        const bool hdr = headerTxtChangeAnm();
+        const bool yn = yesnoMenuMoveAnm();
+        if (hdr && yn) {
+            s_tphdExitPhase = 0;
+            yesnoCursorShow();
+            mMenuProc = PROC_SAVE_YES_NO_SELECT;
+        }
+        return true;
+    }
+    if (s_tphdExitPhase == 2) {
+        const bool hdr = headerTxtChangeAnm();
+        const bool yn = yesnoMenuMoveAnm();
+        if (hdr && yn) {
+            s_tphdExitPhase = 0;
+            tphdExitCursor(mSelIcon, mSaveSel.Scr);
+        }
+        return true;
+    }
+    if (!s_tphdExitSel) {
+        return false;  // the logs use the GC input (saveSelect), which also leads here
+    }
+    stick->checkTrigger();
+    tphdExitCursor(mSelIcon, mSaveSel.Scr);
+    if (mDoCPd_c::getTrigA(PAD_1)) {
+        mDoAud_seStart(Z2SE_SY_CURSOR_OK, NULL, 0, 0);
+        mSelIcon->setAlphaRate(0.0f);
+        s_tphdExitConfirm = true;
+        headerTxtSet(0x494);
+        yesnoMenuMoveAnmInitSet(2089, 2099, 0);
+        s_tphdExitPhase = 1;
+    } else if (mDoCPd_c::getTrigB(PAD_1)) {
+        s_tphdExitSel = false;
+        mSelectedFile = 2;
+        closeSelect();
+    } else if (stick->checkUpTrigger()) {
+        mDoAud_seStart(Z2SE_FILE_SELECT_CURSOR, NULL, 0, 0);
+        s_tphdExitSel = false;
+        mLastSelFile = 0xFF;
+        mSelectedFile = 2;
+        mSelIcon->setAlphaRate(0.0f);
+        dataSelectAnmSet();
+        mMenuProc = PROC_SAVE_SELECT_MOVE_ANM;
+    }
+    return true;
+}
+
+void dMenu_save_c::tphdExitCancel() {
+    mDoAud_seStart(Z2SE_SY_CURSOR_CANCEL, NULL, 0, 0);
+    mSelIcon->setAlphaRate(0.0f);
+    s_tphdExitConfirm = false;
+    headerTxtSet(0x4CA);  // Save to which quest log?
+    yesnoMenuMoveAnmInitSet(2099, 2089, 0);
+    s_tphdExitPhase = 2;
+    mMenuProc = PROC_SAVE_SELECT;
+}
+#endif

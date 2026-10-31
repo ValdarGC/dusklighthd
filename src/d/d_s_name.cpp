@@ -313,6 +313,16 @@ void dScnName_c::FileSelectMainNormal() {
     mShowTvSettingsScreen = !dusk::getSettings().game.hideTvSettingsScreen;
 #endif
 
+#if TARGET_PC
+    // TPHD: "Back" (B) on the quest log list returns to the title screen (Wii U file select).
+    if (dusk::tphd_active() && dFs_c->isTphdBackToTitle() && !fopOvlpM_IsPeek()) {
+        dFs_c->clearTphdBackToTitle();
+        dComIfG_changeOpeningScene(this, fpcNm_OPENING_SCENE_e);
+        mDoAud_bgmStop(30);
+        return;
+    }
+#endif
+
     switch(dFs_c->isSelectEnd()) {
     case 1:
         if (SHOW_TV_SETTINGS_SCREEN) {
