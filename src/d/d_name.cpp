@@ -231,6 +231,10 @@ void dName_c::_create() {
     stick->setFirstWaitTime(5);
     nameIn.font = mDoExt_getMesgFont();
     g_nmHIO.field_0x4 = -1;
+#if TARGET_PC
+    // Wii U dNm_HIO_c ctor (RPX 0x02a8a5d8): menu button scale 1.1 (GC 1.3), letter scale 1.4.
+    g_nmHIO.mMenuScale = dusk::tphd_active() ? 1.1f : 1.3f;
+#endif
     screenSet();
 
     mNextNameStr[0] = 0;
@@ -1597,6 +1601,19 @@ void dName_c::nameWide() {
         // squeezes back every 'n_43' pane: the letters m_xx_y, the typed name_0x and the
         // ABC / abc / END captions. The cursor follows the stretched panes like the file select one.
         dusk::tphd::applyN43(nameIn.NameInScr, dusk::tphd::wiiuTvN43(), false, true);
+        // Lit plate of the ABC / abc / END buttons (sselk12 / sselk11 / sselk6 / sselk01, table
+        // RPX 0x10125c90): screenSet sets them to alpha 0 and mojiListChange (0x02a8bd64) lights
+        // only the current character set while the cursor is on the letters; on the button row the
+        // plate follows the hovered button (Wii U capture: only END lit with the cursor on it).
+        static const u64 kMenuOn[4] = {MULTI_CHAR('sselk12'), MULTI_CHAR('sselk11'),
+                                       MULTI_CHAR('sselk6'), MULTI_CHAR('sselk01')};
+        const bool onMenu = mSelProc >= PROC_MENU_SELECT && mSelProc <= PROC_MENU_SEL_ANM3;
+        const int lit = onMenu ? mSelMenu : mMojiSet;
+        for (int i = 0; i < 4; i++) {
+            if (J2DPane* on = nameIn.NameInScr->search(kMenuOn[i])) {
+                on->setAlpha(i == lit ? 0xFF : 0);
+            }
+        }
         if (mSelIcon) {
             mSelIcon->refreshAspectScale(1.0f);
             mSelIcon->setRevoTrack(dusk::tphd::subscreenScaleX(), mDoGph_gInf_c::getMinXF());
@@ -2128,7 +2145,15 @@ void dDlst_NameIN_c::draw() {
         Mtx m;
         MtxP global_mtx = (MtxP)&field_0xc->getGlbMtx()[0][0];  // fake match?
 
-        MTXScale(m, (field_0xc->getWidth() / field_0x10->getWidth()),
+        f32 stretchX = 1.0f;
+#if TARGET_PC
+        // Wii U: the keyboard spans the TV like every Revo layout (608 -> TV width); its 'n_43'
+        // panes are squeezed back in dName_c::nameWide.
+        if (dusk::tphd_active()) {
+            stretchX = dusk::tphd::subscreenScaleX();
+        }
+#endif
+        MTXScale(m, (field_0xc->getWidth() / field_0x10->getWidth()) * stretchX,
                  (field_0xc->getHeight() / field_0x10->getHeight()), 1.0f);
         MTXConcat(global_mtx, m, global_mtx);
         field_0x10->setMtx(global_mtx);

@@ -4723,7 +4723,16 @@ void dFile_select_c::tphdIconUpdate() {
         break;
     }
     const u16 aMsg = aOn ? 0x40C : 0;
-    const u16 bMsg = bOn ? 0x3F9 : 0;
+    u16 bMsg = bOn ? 0x3F9 : 0;
+    // RPX 0x0293f784 (called by the name entry procs 0x02944d58 / 0x02945048 ...): while a name is
+    // typed, B reads "Clear" (0x3d5, it deletes a letter) once dName_c has letters (+0x2c5 =
+    // mCurPos), "Back" otherwise.
+    if (bMsg != 0 && mpName != NULL &&
+        (mDataSelProc == DATASELPROC_NAME_INPUT || mDataSelProc == DATASELPROC_NAME_INPUT2) &&
+        mpName->getCurPos() != 0)
+    {
+        bMsg = 0x3D5;
+    }
     if (aMsg != s_tphdIconA) {
         dusk::tphd::setRevoButtonText(mpTphdIconScr, aMsg, true, true);
         s_tphdIconA = aMsg;

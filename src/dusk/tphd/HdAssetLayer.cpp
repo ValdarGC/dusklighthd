@@ -112,6 +112,18 @@ const AuroraOverlayCallbacks* g_modOverlayCallbacks = nullptr;
 struct OverlaySource {
     bool mod;
     void* userData;
+    const std::vector<u8>* buffer = nullptr;  // merged message archive (served from memory)
+};
+
+// Message archives of text mods merged over the HD ones (see merge_message_arc).
+std::list<std::vector<u8>>& g_mergedOverlayBuffers() {
+    static auto* p = new std::list<std::vector<u8>>{};
+    return *p;
+}
+
+struct BufferHandle {
+    const std::vector<u8>* data;
+    size_t pos;
 };
 std::list<OverlaySource>& g_overlaySources() {
     static auto* p = new std::list<OverlaySource>{};
@@ -121,6 +133,7 @@ std::list<OverlaySource>& g_overlaySources() {
 struct OverlayHandle {
     bool mod;
     void* handle;
+    BufferHandle* buffer = nullptr;
 };
 
 void clear_hd_texture_registrations_locked() {
@@ -910,6 +923,9 @@ int64_t overlay_seek(void* handle, int64_t offset, int32_t whence) {
 
 void* mux_open(void* userData) {
     const auto* src = static_cast<const OverlaySource*>(userData);
+    if (src != nullptr && src->buffer != nullptr) {
+        return new OverlayHandle{false, nullptr, new BufferHandle{src->buffer, 0}};
+    }
     if (src == nullptr || (src->mod && g_modOverlayCallbacks == nullptr)) return nullptr;
     void* handle = src->mod ? g_modOverlayCallbacks->open(src->userData) : overlay_open(src->userData);
     return handle != nullptr ? new OverlayHandle{src->mod, handle} : nullptr;
@@ -918,7 +934,9 @@ void* mux_open(void* userData) {
 void mux_close(void* handle) {
     auto* h = static_cast<OverlayHandle*>(handle);
     if (h == nullptr) return;
-    if (h->mod) {
+    if (h->buffer != nullptr) {
+        delete h->buffer;
+    } else if (h->mod) {
         g_modOverlayCallbacks->close(h->handle);
     } else {
         overlay_close(h->handle);
@@ -929,12 +947,23 @@ void mux_close(void* handle) {
 int64_t mux_read(void* handle, uint8_t* buf, size_t len) {
     auto* h = static_cast<OverlayHandle*>(handle);
     if (h == nullptr) return -1;
+    if (BufferHandle* b = h->buffer) {
+        const size_t n = std::min(len, b->data->size() - std::min(b->pos, b->data->size()));
+        std::memcpy(buf, b->data->data() + b->pos, n);
+        b->pos += n;
+        return static_cast<int64_t>(n);
+    }
     return h->mod ? g_modOverlayCallbacks->read(h->handle, buf, len) : overlay_read(h->handle, buf, len);
 }
 
 int64_t mux_seek(void* handle, int64_t offset, int32_t whence) {
     auto* h = static_cast<OverlayHandle*>(handle);
     if (h == nullptr) return -1;
+    if (BufferHandle* b = h->buffer) {
+        const int64_t base = whence == 1 ? int64_t(b->pos) : whence == 2 ? int64_t(b->data->size()) : 0;
+        b->pos = size_t(std::clamp<int64_t>(base + offset, 0, int64_t(b->data->size())));
+        return int64_t(b->pos);
+    }
     return h->mod ? g_modOverlayCallbacks->seek(h->handle, offset, whence)
                   : overlay_seek(h->handle, offset, whence);
 }
@@ -1051,6 +1080,193 @@ void collect_hd_overlay_files_locked(std::vector<AuroraOverlayFile>& overlayFile
                overlayFiles.size(), g_contentPath.string(), modOverridden);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Text mods in TPHD mode. A mod made for the GameCube replaces the message archives
+// (res/Msg*/bmgres*.arc) with ones that lack the Wii U only messages (stamps, Ghost Lantern...).
+// Its archive is served merged: the HD archive is the base (message order, flows, attributes) and
+// every message the mod has with a non-empty text takes the mod text; the others keep the HD one.
+// ---------------------------------------------------------------------------------------------
+
+u32 rd32(const u8* p) { return (u32(p[0]) << 24) | (u32(p[1]) << 16) | (u32(p[2]) << 8) | u32(p[3]); }
+u16 rd16(const u8* p) { return u16((p[0] << 8) | p[1]); }
+void wr32(u8* p, u32 v) { p[0] = u8(v >> 24); p[1] = u8(v >> 16); p[2] = u8(v >> 8); p[3] = u8(v); }
+
+struct BmgView {
+    std::span<const u8> bytes;
+    const u8* inf = nullptr;  // INF1 section
+    const u8* dat = nullptr;  // DAT1 section
+    const u8* mid = nullptr;  // MID1 section
+    u32 datSize = 0;
+    u16 count = 0;
+    u16 entrySize = 0;
+};
+
+std::optional<BmgView> parse_bmg(std::span<const u8> b) {
+    // Single-byte (CP1252) message files only, like the GC and Wii U western bmgres.
+    if (b.size() < 0x20 || std::memcmp(b.data(), "MESGbmg1", 8) != 0 || b[0x10] != 1) return std::nullopt;
+    BmgView v{b};
+    size_t pos = 0x20;
+    for (u32 i = 0, n = rd32(b.data() + 0x0C); i < n && pos + 8 <= b.size(); ++i) {
+        const u8* s = b.data() + pos;
+        const u32 size = rd32(s + 4);
+        if (size < 8 || pos + size > b.size()) return std::nullopt;
+        if (std::memcmp(s, "INF1", 4) == 0) v.inf = s;
+        if (std::memcmp(s, "DAT1", 4) == 0) { v.dat = s; v.datSize = size - 8; }
+        if (std::memcmp(s, "MID1", 4) == 0) v.mid = s;
+        pos += size;
+    }
+    if (v.inf == nullptr || v.dat == nullptr || v.mid == nullptr) return std::nullopt;
+    v.count = rd16(v.inf + 8);
+    v.entrySize = rd16(v.inf + 10);
+    if (v.entrySize < 4 || rd16(v.mid + 8) != v.count) return std::nullopt;
+    return v;
+}
+
+// Text of message i (escape sequences 0x1A <len> ... may hold zero bytes), without terminator.
+std::span<const u8> bmg_text(const BmgView& v, u32 i) {
+    const u32 off = rd32(v.inf + 16 + size_t(i) * v.entrySize);
+    if (off >= v.datSize) return {};
+    const u8* t = v.dat + 8 + off;
+    const u32 max = v.datSize - off;
+    u32 p = 0;
+    while (p < max) {
+        if (t[p] == 0x1A) {
+            const u32 len = p + 1 < max ? t[p + 1] : 0;
+            if (len < 2) break;
+            p += len;
+            continue;
+        }
+        if (t[p] == 0) break;
+        ++p;
+    }
+    return {t, std::min(p, max)};
+}
+
+std::vector<u8> merge_bmg(std::span<const u8> hd, std::span<const u8> mod) {
+    const auto h = parse_bmg(hd);
+    const auto m = parse_bmg(mod);
+    if (!h || !m) return {};
+    std::unordered_map<u32, u32> modIndex;
+    for (u32 i = 0; i < m->count; ++i) modIndex.emplace(rd32(m->mid + 16 + size_t(i) * 4), i);
+
+    std::vector<u8> inf(h->inf, h->inf + rd32(h->inf + 4));
+    std::vector<u8> dat(8, 0);
+    std::memcpy(dat.data(), "DAT1", 4);
+    dat.push_back(0);  // offset 0: empty string
+    for (u32 i = 0; i < h->count; ++i) {
+        std::span<const u8> text = bmg_text(*h, i);
+        if (const auto it = modIndex.find(rd32(h->mid + 16 + size_t(i) * 4)); it != modIndex.end()) {
+            const auto modText = bmg_text(*m, it->second);
+            if (!modText.empty()) text = modText;
+        }
+        u32 off = 0;
+        if (!text.empty()) {
+            off = u32(dat.size() - 8);
+            dat.insert(dat.end(), text.begin(), text.end());
+            dat.push_back(0);
+        }
+        wr32(inf.data() + 16 + size_t(i) * h->entrySize, off);
+    }
+    dat.resize((dat.size() + 31) & ~size_t(31), 0);
+    wr32(dat.data() + 4, u32(dat.size()));
+
+    std::vector<u8> out(hd.begin(), hd.begin() + 0x20);
+    size_t pos = 0x20;
+    for (u32 i = 0, n = rd32(hd.data() + 0x0C); i < n; ++i) {
+        const u8* s = hd.data() + pos;
+        const u32 size = rd32(s + 4);
+        if (s == h->inf) out.insert(out.end(), inf.begin(), inf.end());
+        else if (s == h->dat) out.insert(out.end(), dat.begin(), dat.end());
+        else out.insert(out.end(), s, s + size);
+        pos += size;
+    }
+    wr32(out.data() + 0x08, u32(out.size()));
+    return out;
+}
+
+// Rebuilds the HD RARC with each .bmg merged with the mod's file of the same name. Returns an
+// empty vector when nothing could be merged (the mod archive is then used as it is).
+std::vector<u8> merge_message_arc(std::vector<u8> hd, std::vector<u8> mod) {
+    if (auto d = tryDecodeYaz0(hd)) hd = std::move(*d);
+    if (auto d = tryDecodeYaz0(mod)) mod = std::move(*d);
+    if (hd.size() < 0x40 || mod.size() < 0x40 || std::memcmp(hd.data(), "RARC", 4) != 0) return {};
+
+    std::unordered_map<std::string, std::span<const u8>> modFiles;
+    for (const auto& f : parseRarcFiles(mod)) {
+        if (!f.compressed && size_t(f.dataOffset) + f.dataSize <= mod.size()) {
+            modFiles.emplace(lower_path(f.path), std::span<const u8>(mod.data() + f.dataOffset, f.dataSize));
+        }
+    }
+
+    const u8* hdr = hd.data();
+    const u32 dataBase = 0x20 + rd32(hdr + 0x0C);
+    const u8* info = hdr + 0x20;
+    const u32 numFiles = rd32(info + 0x08);
+    const u32 fileTbl = 0x20 + rd32(info + 0x0C);
+    const u32 strTbl = 0x20 + rd32(info + 0x14);
+    if (dataBase > hd.size() || fileTbl + size_t(numFiles) * 0x14 > hd.size()) return {};
+
+    std::vector<u8> out(hd.begin(), hd.begin() + dataBase);
+    bool merged = false;
+    for (u32 i = 0; i < numFiles; ++i) {
+        u8* e = out.data() + fileTbl + size_t(i) * 0x14;
+        const u32 flagsName = rd32(e + 4);
+        if (((flagsName >> 24) & 0x03) != 0x01) continue;  // directories
+        const u32 off = rd32(e + 8);
+        const u32 size = rd32(e + 12);
+        if (dataBase + size_t(off) + size > hd.size()) return {};
+        std::vector<u8> data(hd.begin() + dataBase + off, hd.begin() + dataBase + off + size);
+        if (((flagsName >> 24) & 0x84) != 0) {  // per-file Yaz0
+            auto d = tryDecodeYaz0(data);
+            if (!d) return {};
+            data = std::move(*d);
+            wr32(e + 4, flagsName & ~(0x84u << 24));
+        }
+        const char* name = reinterpret_cast<const char*>(hdr + strTbl + (flagsName & 0xFFFFFF));
+        if (const auto it = modFiles.find(lower_path(name)); it != modFiles.end() && endsWithSuffixCI(name, ".bmg")) {
+            auto m = merge_bmg(data, it->second);
+            if (!m.empty()) {
+                data = std::move(m);
+                merged = true;
+            }
+        }
+        out.resize((out.size() + 31) & ~size_t(31), 0);
+        wr32(e + 8, u32(out.size() - dataBase));
+        wr32(e + 12, u32(data.size()));
+        out.insert(out.end(), data.begin(), data.end());
+    }
+    if (!merged) return {};
+    out.resize((out.size() + 31) & ~size_t(31), 0);
+    wr32(out.data() + 0x04, u32(out.size()));
+    wr32(out.data() + 0x10, u32(out.size() - dataBase));
+    wr32(out.data() + 0x14, u32(out.size() - dataBase));
+    wr32(out.data() + 0x18, 0);
+    wr32(out.data() + 0x1C, 0);
+    return out;
+}
+
+bool is_message_arc(std::string_view lowerPath) {
+    return lowerPath.starts_with("/res/msg") && lowerPath.find("/bmgres") != std::string_view::npos &&
+           lowerPath.ends_with(".arc");
+}
+
+std::vector<u8> read_mod_overlay_file(void* userData, size_t size) {
+    std::vector<u8> out;
+    if (g_modOverlayCallbacks == nullptr) return out;
+    void* h = g_modOverlayCallbacks->open(userData);
+    if (h == nullptr) return out;
+    out.resize(size);
+    size_t got = 0;
+    while (got < size) {
+        const int64_t n = g_modOverlayCallbacks->read(h, out.data() + got, size - got);
+        if (n <= 0) break;
+        got += size_t(n);
+    }
+    g_modOverlayCallbacks->close(h);
+    out.resize(got);
+    return out;
+}
+
 void rebuild_hd_overlay_locked() {
     std::unordered_set<std::string> modPaths;
     for (const auto& f : g_modOverlayFiles) {
@@ -1062,11 +1278,23 @@ void rebuild_hd_overlay_locked() {
     g_entryNumToOverlay().clear();
     collect_hd_overlay_files_locked(overlayFiles, overlayEntries, modPaths);
 
+    // Old merged buffers stay alive: a file opened from another thread may still read them.
     for (const auto& f : g_modOverlayFiles) {
+        const std::vector<u8>* merged = nullptr;
+        if (!g_contentPath.empty() && is_message_arc(lower_path(f.dvdPath))) {
+            auto hd = read_file(g_contentPath / f.dvdPath.substr(1));
+            if (hd) {
+                auto m = merge_message_arc(std::move(*hd), read_mod_overlay_file(f.userData, f.size));
+                if (!m.empty()) {
+                    merged = &g_mergedOverlayBuffers().emplace_back(std::move(m));
+                    HdLog.info("Text mod {} merged with the HD messages", f.dvdPath);
+                }
+            }
+        }
         overlayFiles.push_back({
             .fileName = f.dvdPath.c_str(),
-            .userData = &g_overlaySources().emplace_back(OverlaySource{true, f.userData}),
-            .size = f.size,
+            .userData = &g_overlaySources().emplace_back(OverlaySource{true, f.userData, merged}),
+            .size = merged != nullptr ? merged->size() : f.size,
         });
         overlayEntries.push_back(nullptr);
     }

@@ -45,6 +45,7 @@
 
 // Defined in d_s_logo.cpp: Wii U (Revo) HUD layout archive.
 extern JKRArchive* g_tphdMain2DRevoArchive;
+extern JKRArchive* g_tphdCollectRevoArchive;
 extern bool g_tphdItemScreenOpen;
 extern bool g_tphdItemExplainOpen;
 u16 g_hdUseButtonSnap = 0xFFFF;
@@ -1284,43 +1285,37 @@ void hdRevoFrame(J2DScreen* scr) {
         // scent the slot stays empty.
         const u8 curSmell = dComIfGs_getCollectSmell();
         const bool hasSmell = curSmell != dItemNo_NONE_e && curSmell != 0;
-        hdSetVisible(scr, "smell", wolf && hasSmell && (sense || g_tphdItemScreenOpen));
-        // TPHD dMeter2Draw_c keeps "smell" as the item pane of this slot (ctor 0x02a2892c stores it
-        // in the item-pane table), so the collected scent (dComIfGs_getCollectSmell) is drawn in
-        // it like an item icon; with no scent it keeps the blo's swirl texture.
-        {
-            static alignas(32) u8 s_smellTex[0xC00];
-            static J2DPane* s_smellPane = NULL;
-            static const ResTIMG* s_smellDefault = NULL;
-            static u8 s_smell = 0xFE;
-            J2DPane* sp = scr->search(hdTag("smell"));
-            if (sp != NULL && sp->getTypeID() == 18) {
+        // Wii U scent icons: ni_nioi_*.bti of the collection screen archive (clctresR), the same
+        // art as the collection screen (dMenu_Collect2D_c::setSmellType); the item icon table has
+        // no scent entries (it gave a rupee). The pumpkin scent has no icon.
+        const char* smellTex = NULL;
+        switch (curSmell) {
+        case dItemNo_SMELL_MEDICINE_e: smellTex = "ni_nioi_medicin.bti"; break;
+        case dItemNo_SMELL_CHILDREN_e: smellTex = "ni_nioi_child.bti"; break;
+        case dItemNo_SMELL_FISH_e: smellTex = "ni_nioi_fish.bti"; break;
+        case dItemNo_SMELL_YELIA_POUCH_e: smellTex = "ni_nioi_iria.bti"; break;
+        case dItemNo_SMELL_POH_e: smellTex = "ni_nioi_pou.bti"; break;
+        default: break;
+        }
+        const ResTIMG* smellImg = NULL;
+        if (smellTex != NULL) {
+            for (JKRArchive* arc : {g_tphdCollectRevoArchive, dComIfGp_getCollectResArchive(),
+                                    g_tphdMain2DRevoArchive}) {
+                if (arc != NULL) {
+                    smellImg = static_cast<const ResTIMG*>(JKRGetNameResource(smellTex, arc));
+                    if (smellImg != NULL) {
+                        break;
+                    }
+                }
+            }
+        }
+        (void)sense;
+        hdSetVisible(scr, "smell", wolf && hasSmell && smellImg != NULL);
+        if (smellImg != NULL) {
+            if (J2DPane* sp = scr->search(hdTag("smell")); sp != NULL && sp->getTypeID() == 18) {
                 J2DPicture* pic = static_cast<J2DPicture*>(sp);
-                if (sp != s_smellPane) {
-                    s_smellPane = sp;
-                    s_smell = 0xFE;
-                    s_smellDefault =
-                        pic->getTexture(0) != NULL ? pic->getTexture(0)->getTexInfo() : NULL;
-                }
-                const u8 smell = dComIfGs_getCollectSmell();
-                if (smell != s_smell) {
-                    s_smell = smell;
-                    if (smell != dItemNo_NONE_e && smell != 0) {
-                        dMeter2Info_readItemTexture(smell, s_smellTex, pic, NULL, NULL, NULL, NULL,
-                                                    NULL, NULL, -1);
-                    } else if (s_smellDefault != NULL) {
-                        pic->changeTexture(s_smellDefault, 0);
-                    }
-                    const ResTIMG* t = reinterpret_cast<const ResTIMG*>(s_smellTex);
-                }
-                // Something re-applies the blo texture (pane rebuilt by the Revo attach / HIO):
-                // keep the scent on it.
-                if (smell != dItemNo_NONE_e && smell != 0 && pic->getTexture(0) != NULL &&
-                    pic->getTexture(0)->getTexInfo() != reinterpret_cast<const ResTIMG*>(s_smellTex)) {
-                    static int s_warn = 0;
-                    if (s_warn++ < 3) {
-                    }
-                    pic->changeTexture(reinterpret_cast<const ResTIMG*>(s_smellTex), 0);
+                if (pic->getTexture(0) == NULL || pic->getTexture(0)->getTexInfo() != smellImg) {
+                    pic->changeTexture(smellImg, 0);
                 }
             }
         }
