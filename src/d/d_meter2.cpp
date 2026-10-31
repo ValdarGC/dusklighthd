@@ -330,7 +330,7 @@ int dMeter2_c::_execute() {
     {
         extern u16 g_hdUseButtonSnap;
         u16 snap = 0;
-        for (int b = 1; b <= 0x800; b <<= 1) {
+        for (int b = 1; b <= 0x8000; b <<= 1) {  // incl. METER2_USEBUTTON_TPHD_R (0x4000)
             if (dMeter2Info_isUseButton(b)) {
                 snap |= b;
             }
