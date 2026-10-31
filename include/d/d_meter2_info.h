@@ -43,6 +43,10 @@ enum dMeter2Info_UseButton {
     METER2_USEBUTTON_R = 0x40,
 
     METER2_USEBUTTON_Z = 0x800,
+#if TARGET_PC
+    // TPHD R item slot (select-item index 3): cleared when its item cannot be used right now.
+    METER2_USEBUTTON_TPHD_R = 0x4000,
+#endif
 };
 
 class dMeter2Info_c {

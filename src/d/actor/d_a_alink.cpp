@@ -18965,6 +18965,16 @@ int daAlink_c::execute() {
                 dMeter2Info_offUseButton(METER2_USEBUTTON_R);
             }
 
+#if TARGET_PC
+            // TPHD R item slot: its item checks mark BTN_Z (daAlink_slotBit(3)) like X / Y mark
+            // their own bit, so the HUD can dim the R icon when the item cannot be used.
+            if (daAlink_rSlotOn() && !(mUseButtonFlags & DUSK_SLOT_BIT(3)) &&
+                !(field_0x2faf & DUSK_SLOT_BIT(3)))
+            {
+                dMeter2Info_offUseButton(METER2_USEBUTTON_TPHD_R);
+            }
+#endif
+
             if (!(mUseButtonFlags & BTN_B) && !(field_0x2faf & BTN_B)) {
                 dMeter2Info_offUseButton(METER2_USEBUTTON_B);
 

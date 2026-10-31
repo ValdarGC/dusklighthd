@@ -1499,7 +1499,9 @@ void hdRevoFrame(J2DScreen* scr) {
         hdSetVisible(scr, "itmBtn_4", !wolf);
         const u8 ri = dComIfGp_getSelectItem(3);
         const bool rItem = ri != dItemNo_NONE_e && ri != 0;
-        const bool rUse = rItem && (hdUse(4) || hdUse(8));
+        // Same test as X / Y with the R slot's own use bit (set by daAlink_c from the item checks
+        // of select-item index 3): dim indoors, in water, while rolling... or with nothing set.
+        const bool rUse = rItem && hdUse(METER2_USEBUTTON_TPHD_R);
         setA("itmBtn_4", rUse ? 255 : dim);
         {
             static int s_dbg = 0;
