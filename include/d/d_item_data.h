@@ -58,7 +58,11 @@ struct dItem_data {
 
     static s16 getTexture(u8 index) { return item_resource[index].mTexture; }
 
-    static u8 getTexScale (u8 index) { return item_resource[index].mTexScale; }
+#if TARGET_PC
+    static u8 getTexScale(u8 index);
+#else
+    static u8 getTexScale(u8 index) { return item_resource[index].mTexScale; }
+#endif
 
     static const char* getFieldArc(u8 index) { return field_item_res[index].mFieldArc; }
 
@@ -329,7 +333,8 @@ enum {
     /* 0xE5 */ dItemNo_NOENTRY_229_e,
     /* 0xE6 */ dItemNo_NOENTRY_230_e,
     /* 0xE7 */ dItemNo_NOENTRY_231_e,
-    /* 0xE8 */ dItemNo_NOENTRY_232_e,
+    /* 0xE8 */ dItemNo_GHOST_KANTERA_e,
+    dItemNo_NOENTRY_232_e = dItemNo_GHOST_KANTERA_e,
     /* 0xE9 */ dItemNo_ANCIENT_DOCUMENT_e,
     /* 0xEA */ dItemNo_AIR_LETTER_e,
     /* 0xEB */ dItemNo_ANCIENT_DOCUMENT2_e,
@@ -354,5 +359,12 @@ enum {
     /* 0xFE */ dItemNo_KEY_OF_FILONE_e,
     /* 0xFF */ dItemNo_NONE_e,
 };
+
+#if TARGET_PC
+// HD item mappings
+enum {
+    dItemNo_WALLET_LV4_e = 0xDA,
+};
+#endif
 
 #endif /* D_D_ITEM_DATA_H */

@@ -61,6 +61,10 @@ Z2CreatureLink::Z2CreatureLink() {
 
     setSoundStarter(this);
     mKantera.setSoundStarter(this);
+#if TARGET_PC
+    mGhostKantera.setSoundStarter(this);
+    mGhostKanteraState = 0;
+#endif
 
     mLinkHp = 0;
     mLinkBootsType = 0;
@@ -85,6 +89,11 @@ void Z2CreatureLink::deleteObject() {
     if (mKantera.isAlive()) {
         deleteKantera();
     }
+#if TARGET_PC
+    if (mGhostKantera.isAlive()) {
+        deleteGhostKantera();
+    }
+#endif
 
     Z2Creature::deleteObject();
 }
@@ -130,6 +139,11 @@ void Z2CreatureLink::framework(u32 mapinfo, s8 reverb) {
     if (mKantera.isAlive()) {
         mKantera.framework(mapinfo, reverb);
     }
+#if TARGET_PC
+    if (mGhostKantera.isAlive()) {
+        mGhostKantera.framework(mapinfo, reverb);
+    }
+#endif
 
     if (field_0xc1 != 0xFF) {
         field_0xc1++;
@@ -655,6 +669,11 @@ bool Z2LinkSoundStarter::startSound(JAISoundID soundID, JAISoundHandle* handle,
             Z2GetLink()->startLinkSound(Z2SE_AL_IB_CHAIN_ADD, 0, fxMix * 127.0f);
         }
 
+#if TARGET_PC
+        if (Z2GetLink()->mGhostKanteraState != 0) {
+            Z2GetLink()->mGhostKantera.startSound(Z2SE_AL_KANTERA_SWING_ADD, 0, fxMix * 127.0f);
+        } else
+#endif
         if (Z2GetLink()->mKanteraState != 0) {
             Z2SoundHandlePool* handle =
                 Z2GetLink()->mKantera.startSound(Z2SE_AL_KANTERA_SWING_ADD, 0, fxMix * 127.0f);
@@ -735,6 +754,11 @@ bool Z2RideSoundStarter::startSound(JAISoundID soundID, JAISoundHandle* handle,
             Z2GetLink()->startLinkSound(Z2SE_AL_SWORD_SHIELD_ADD, 0, fxMix * 127.0f);
         }
 
+#if TARGET_PC
+        if (Z2GetLink()->mGhostKanteraState != 0) {
+            Z2GetLink()->mGhostKantera.startSound(Z2SE_AL_KANTERA_SWING_ADD, 0, fxMix * 127.0f);
+        } else
+#endif
         if (Z2GetLink()->mKanteraState != 0) {
             Z2SoundHandlePool* handle =
                 Z2GetLink()->mKantera.startSound(Z2SE_AL_KANTERA_SWING_ADD, 0, fxMix * 127.0f);

@@ -894,7 +894,66 @@ public:
 
 class dSv_reserve_c {
 public:
-    u8 unk[80];
+    void init();
+    // TPHD (Wii U 0x02aa7854 / 0x02aa78a0): the Miiverse stamps are a big-endian u64 bit field at
+    // dSv_save_c + 0x938 (reserve + 0x48), bit n = stamp n (0..49). GC never touches this area, so a
+    // GC save simply has no stamps and a TPHD-mode save stays readable by the GC build.
+    bool isStamp(int i_no) const {
+        if (i_no < 0 || i_no >= 64) return false;
+        return (getStampFlags() & ((u64)1 << i_no)) != 0;
+    }
+    void onStamp(int i_no, int i_val) {
+        if (i_no < 0 || i_no >= 64) return;
+        u64 flags = getStampFlags();
+        if (i_val) {
+            flags |= ((u64)1 << i_no);
+        } else {
+            flags &= ~((u64)1 << i_no);
+        }
+        for (int i = 0; i < 8; i++) {
+            mStampFlags[i] = (u8)(flags >> (56 - i * 8));
+        }
+    }
+    // TPHD "last location" (Wii U 0x02aa7484, written by memory_to_card 0x02aa8ecc): stage name
+    // [0..7], room s16 BE [0x10], layer [0x12], floor [0x13], point s16 BE [0x14], save table [0x16].
+    // The file select shows its area name (0x0294c620).
+    void setTphdLocation(const char* i_stage, s16 i_room, s8 i_layer, s8 i_floor, s16 i_point,
+                         s8 i_saveTbl) {
+        for (int i = 0; i < 0x18; i++) {
+            unk[i] = 0;
+        }
+        for (int i = 0; i < 7 && i_stage != NULL && i_stage[i] != 0; i++) {
+            unk[i] = (u8)i_stage[i];
+        }
+        unk[0x10] = (u8)(i_room >> 8);
+        unk[0x11] = (u8)i_room;
+        unk[0x12] = (u8)i_layer;
+        unk[0x13] = (u8)i_floor;
+        unk[0x14] = (u8)(i_point >> 8);
+        unk[0x15] = (u8)i_point;
+        unk[0x16] = (u8)i_saveTbl;
+    }
+    bool hasTphdLocation() const { return unk[0] != 0; }
+    void getTphdLocStage(char* o_name) const {
+        for (int i = 0; i < 8; i++) {
+            o_name[i] = (char)unk[i];
+        }
+        o_name[7] = 0;
+    }
+    s16 getTphdLocRoom() const { return (s16)((unk[0x10] << 8) | unk[0x11]); }
+    s8 getTphdLocLayer() const { return (s8)unk[0x12]; }
+    s8 getTphdLocSaveTbl() const { return (s8)unk[0x16]; }
+
+    u64 getStampFlags() const {
+        u64 flags = 0;
+        for (int i = 0; i < 8; i++) {
+            flags = (flags << 8) | mStampFlags[i];
+        }
+        return flags;
+    }
+
+    /* 0x00 */ u8 unk[0x48];
+    /* 0x48 */ u8 mStampFlags[8];  // big-endian u64 (kept as bytes: no alignment change)
 };
 
 class dSv_save_c {
@@ -915,6 +974,9 @@ public:
     }
     dSv_event_c& getEvent() { return mEvent; }
     dSv_MiniGame_c& getMiniGame() { return mMiniGame; }
+    dSv_reserve_c& getReserve() { return reserve; }
+    bool isStamp(int i_no) const { return reserve.isStamp(i_no); }
+    void onStamp(int i_no, int i_val) { reserve.onStamp(i_no, i_val); }
 
     static const int STAGE_MAX = 32;
     static const int STAGE2_MAX = 64;
@@ -974,6 +1036,9 @@ public:
     dSv_player_c& getPlayer() { return mSavedata.getPlayer(); }
     dSv_event_c& getEvent() { return mSavedata.getEvent(); }
     dSv_MiniGame_c& getMiniGame() { return mSavedata.getMiniGame(); }
+    dSv_reserve_c& getReserve() { return mSavedata.getReserve(); }
+    bool isStamp(int i_no) const { return mSavedata.isStamp(i_no); }
+    void onStamp(int i_no, int i_val) { mSavedata.onStamp(i_no, i_val); }
     dSv_memory_c& getMemory() { return mMemory; }
     void setMemory(dSv_memory_c& i_memory) { mMemory = i_memory; }
     dSv_danBit_c& getDan() { return mDan; }

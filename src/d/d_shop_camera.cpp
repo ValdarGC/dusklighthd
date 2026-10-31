@@ -140,8 +140,11 @@ void ShopCam_action_c::Save() {
 }
 
 void ShopCam_action_c::EventRecoverNotime() {
-    dComIfGp_getPlayer(0);
-    field_0xd8 = 2;
+    daPy_py_c* player = (daPy_py_c*)dComIfGp_getPlayer(0);
+    if (player != NULL) {
+        player->offPlayerNoDraw();
+    }
+    field_0xd8 = 0;
     dCam_getBody()->EventRecoverNotime();
     mCamAction = NULL;
 }

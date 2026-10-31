@@ -741,6 +741,12 @@ void daAlink_c::setDemoData() {
                         } else {
                             mDemo.setStick(1.0f);
                         }
+
+#if TARGET_PC
+                        if (dusk::tphd::is_los_active() && mLosStickValue > 0.0f) {
+                            mDemo.setStick(mLosStickValue);
+                        }
+#endif
                     }
 
                     if ((demo_mode == daPy_demo_c::DEMO_UNK_2_e || demo_mode == daPy_demo_c::DEMO_UNK_3_e) && prm1_p != NULL && *prm1_p == 1) {
@@ -2202,7 +2208,11 @@ void daAlink_c::setGetSubBgm(int i_itemNo) {
         /* dItemNo_NOENTRY_229_e       */ SETYPE_NONE,
         /* dItemNo_NOENTRY_230_e       */ SETYPE_NONE,
         /* dItemNo_NOENTRY_231_e       */ SETYPE_NONE,
+#if TARGET_PC
+        /* dItemNo_GHOST_KANTERA_e     */ SETYPE_ITEM_GET,
+#else
         /* dItemNo_NOENTRY_232_e       */ SETYPE_NONE,
+#endif
         /* dItemNo_ANCIENT_DOCUMENT_e  */ SETYPE_ITEM_GET_MINI,
         /* dItemNo_AIR_LETTER_e        */ SETYPE_ITEM_GET_MINI,
         /* dItemNo_ANCIENT_DOCUMENT2_e */ SETYPE_ITEM_GET,
@@ -2232,6 +2242,12 @@ void daAlink_c::setGetSubBgm(int i_itemNo) {
         Z2BGM_ITEM_GET_INSECT, Z2BGM_ITEM_GET_SMELL, Z2BGM_ITEM_GET_POU,  Z2BGM_ITEM_GET_ME_S,
     };
 
+#if TARGET_PC
+    if (dItem_tphdStampNo((u8)i_itemNo) >= 0) {
+        mDoAud_subBgmStart(Z2BGM_ITEM_GET_MINI);
+        return;
+    }
+#endif
     u32 se_type = getSeType[i_itemNo];
 
     if (se_type == SETYPE_ITEM_GET_ME && mProcVar4.field_0x3010 == 0) {

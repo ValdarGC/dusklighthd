@@ -300,6 +300,11 @@ void daAlink_c::changeWolf() {
     mAtSph.SetR(40.0f);
 
     mpKanteraModel = NULL;
+#if TARGET_PC
+    mpGhostKanteraModel = NULL;
+    mpGhostKanteraFlameModel = NULL;
+    mpGhostKanteraFlameBtk = NULL;
+#endif
     mpLinkHatModel = NULL;
     mpLinkFaceModel = NULL;
     mpLinkHandModel = NULL;
@@ -411,6 +416,26 @@ void daAlink_c::changeLink(int param_0) {
     mpKanteraGlowBtk->setFrame(0.0f);
     mpKanteraGlowBtk->searchUpdateMaterialID(modelData);
     modelData->entryTexMtxAnimator(mpKanteraGlowBtk);
+
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        mpGhostKanteraModel = initModelEnv(static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "ghost_lantern.bmd")), 0);
+        if (mpGhostKanteraModel != NULL) {
+            Vec scale = {0.75f, 0.75f, 0.75f};
+            mpGhostKanteraModel->setBaseScale(scale);
+            mpGhostKanteraModel->setUserArea((uintptr_t)this);
+            mpGhostKanteraModel->getModelData()->getJointNodePointer(1)->setCallBack(daAlink_ghostKandelaarModelCallBack);
+        }
+        modelData = static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "ef_ghost_lantern.bmd"));
+        mpGhostKanteraFlameModel = initModel(modelData, 0x200);
+        mpGhostKanteraFlameBtk = static_cast<J3DAnmTextureSRTKey*>(dComIfG_getObjectRes(mArcName, "ef_ghost_lantern.btk"));
+        if (mpGhostKanteraFlameBtk != NULL && modelData != NULL) {
+            mpGhostKanteraFlameBtk->setFrame(0.0f);
+            mpGhostKanteraFlameBtk->searchUpdateMaterialID(modelData);
+            modelData->entryTexMtxAnimator(mpGhostKanteraFlameBtk);
+        }
+    }
+#endif
 
     mWoodSwordModel = initModel(static_cast<J3DModelData*>(dComIfG_getObjectRes(mArcName, "al_SWB.bmd")), 0);
 

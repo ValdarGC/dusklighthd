@@ -5,51 +5,54 @@
 
 #include "d/dolzel.h" // IWYU pragma: keep
 
-#include "d/actor/d_a_alink.h"
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
+#include "JSystem/J3DGraphBase/J3DDrawBuffer.h"
 #include "JSystem/J3DGraphBase/J3DMaterial.h"
 #include "JSystem/J3DGraphLoader/J3DAnmLoader.h"
-#include "JSystem/J3DGraphBase/J3DDrawBuffer.h"
 #include "JSystem/JHostIO/JORServer.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "SSystem/SComponent/c_math.h"
-#include "d/d_item.h"
-#include "d/d_meter2_draw.h"
-#include "d/d_pane_class.h"
-#include "d/d_demo.h"
+#include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_b_mgn.h"
+#include "d/actor/d_a_canoe.h"
+#include "d/actor/d_a_cow.h"
 #include "d/actor/d_a_crod.h"
+#include "d/actor/d_a_horse.h"
+#include "d/actor/d_a_kytag05.h"
 #include "d/actor/d_a_mg_rod.h"
 #include "d/actor/d_a_midna.h"
 #include "d/actor/d_a_mirror.h"
-#include "d/actor/d_a_spinner.h"
-#include "d/actor/d_a_tbox.h"
-#include "d/actor/d_a_tag_Lv6Gate.h"
-#include "d/actor/d_a_tag_kmsg.h"
-#include "d/actor/d_a_tag_magne.h"
-#include "d/actor/d_a_tag_wljump.h"
-#include "d/actor/d_a_npc_tk.h"
-#include "d/actor/d_a_cow.h"
-#include "d/actor/d_a_obj_crope.h"
-#include "d/actor/d_a_obj_wchain.h"
-#include "d/actor/d_a_tag_hstop.h"
-#include "d/actor/d_a_scene_exit.h"
-#include "d/actor/d_a_tag_mhint.h"
-#include "d/actor/d_a_tag_mmsg.h"
-#include "d/actor/d_a_tag_lantern.h"
-#include "d/actor/d_a_horse.h"
-#include "m_Do/m_Do_controller_pad.h"
-#include "d/d_bomb.h"
-#include "d/d_meter2_info.h"
-#include "d/actor/d_a_kytag05.h"
-#include "d/actor/d_a_b_mgn.h"
+#include "d/actor/d_a_ni.h"
 #include "d/actor/d_a_npc_bou.h"
 #include "d/actor/d_a_npc_kolin.h"
-#include "f_op/f_op_kankyo_mng.h"
+#include "d/actor/d_a_npc_tk.h"
+#include "d/actor/d_a_obj_crope.h"
+#include "d/actor/d_a_obj_wchain.h"
+#include "d/actor/d_a_scene_exit.h"
+#include "d/actor/d_a_spinner.h"
+#include "d/actor/d_a_tag_Lv6Gate.h"
+#include "d/actor/d_a_tag_hstop.h"
+#include "d/actor/d_a_tag_kmsg.h"
+#include "d/actor/d_a_tag_lantern.h"
+#include "d/actor/d_a_tag_magne.h"
+#include "d/actor/d_a_tag_mhint.h"
+#include "d/actor/d_a_tag_mmsg.h"
 #include "d/actor/d_a_tag_mstop.h"
 #include "d/actor/d_a_tag_mwait.h"
-#include "d/actor/d_a_canoe.h"
-#include "d/actor/d_a_ni.h"
+#include "d/actor/d_a_tag_wljump.h"
+#include "d/actor/d_a_tbox.h"
+#include "d/d_bomb.h"
+#include "d/d_demo.h"
+#include "d/d_item.h"
+#include "d/d_meter2_draw.h"
+#include "d/d_meter2_info.h"
+#include "d/d_pane_class.h"
 #include "d/d_s_play.h"
+#include "dusk/tphd/LosTable.hpp"
+#include <borealis/log.hpp>
+#include "dusk/tphd/TphdPack.hpp"
+#include "f_op/f_op_kankyo_mng.h"
+#include "m_Do/m_Do_controller_pad.h"
 
 #if TARGET_PC
 #include "dusk/action_bindings.h"
@@ -6114,6 +6117,30 @@ void daAlink_c::setItemMatrix(int param_0) {
             modelCalc(mpKanteraGlowModel);
         }
 
+#if TARGET_PC
+        if (dusk::tphd_active() && (mEquipItem == dItemNo_GHOST_KANTERA_e || mKeepItem == dItemNo_GHOST_KANTERA_e)) {
+            if (mProcID != PROC_OPEN_TREASURE && !checkEndResetFlg1(ERFLG1_UNK_4) && (mProcID != PROC_GET_ITEM || mProcVar4.field_0x3010 == 0)) {
+                if (mEquipItem == dItemNo_GHOST_KANTERA_e) {
+                    mDoMtx_stack_c::copy(mpLinkModel->getAnmMtx(mLeftItemJntNo));
+                    mDoMtx_stack_c::transM(-2.0f, -0.1f, -0.7f);
+                    mDoMtx_stack_c::XYZrotM(0x471c, 0x69d, -0x7dde);
+                    if (mpGhostKanteraModel != NULL) mpGhostKanteraModel->setBaseTRMtx(mDoMtx_stack_c::get());
+                } else {
+                    mDoMtx_stack_c::copy(mpLinkModel->getAnmMtx(0x10));
+                    mDoMtx_stack_c::transM(-1.0f, 4.5f, 9.0f);
+                    mDoMtx_stack_c::XYZrotM(-0x3555, 0x2c16, 0x3f49);
+                    if (mpGhostKanteraModel != NULL) mpGhostKanteraModel->setBaseTRMtx(mDoMtx_stack_c::get());
+                }
+            }
+            if (mpGhostKanteraModel != NULL) modelCalc(mpGhostKanteraModel);
+            mDoMtx_stack_c::transS(mGhostKandelaarFlamePos);
+            if (mpGhostKanteraFlameModel != NULL) {
+                mpGhostKanteraFlameModel->setBaseTRMtx(mDoMtx_stack_c::get());
+                modelCalc(mpGhostKanteraFlameModel);
+            }
+        }
+#endif
+
         setSwordPos();
         simpleAnmPlay(m_mSwordBtk);
         simpleAnmPlay(m_mSwordBrk);
@@ -6934,7 +6961,11 @@ const daAlink_BckData* daAlink_c::getMainBckData(daAlink_c::daAlink_ANM i_anmID)
         {dRes_ID_ALANM_BCK_WAITHS_e, dRes_ID_ALANM_BCK_WAITHK_e},
     };
 
-    if (mEquipItem == dItemNo_KANTERA_e) {
+    if (mEquipItem == dItemNo_KANTERA_e
+#if TARGET_PC
+        || (dusk::tphd_active() && mEquipItem == dItemNo_GHOST_KANTERA_e)
+#endif
+    ) {
         if (i_anmID == ANM_WAIT) {
             return &kandelaarAnm[0];
         }
@@ -9348,6 +9379,27 @@ BOOL daAlink_c::checkDebugMoveInput() {
 }
 #endif
 
+#if TARGET_PC
+// TPHD (Wii U Pro Controller) third item slot on R. It lives in select-item index 3 (index 2 is the
+// wolf ability) and uses the BTN_Z item bit, which the GC code only reads for the Midna call.
+static bool daAlink_rSlotOn() {
+    return dusk::tphd_active();
+}
+static u8 daAlink_slotBit(int i_idx) {
+    return i_idx == 3 ? (u8)daAlink_c::BTN_Z : (u8)(1 << i_idx);
+}
+static int daAlink_slotNum() {
+    return daAlink_rSlotOn() ? 3 : 2;
+}
+static int daAlink_slotIdx(int i_n) {
+    return i_n == 2 ? 3 : i_n;
+}
+static bool s_tphdMidnaTrig = false;
+#define DUSK_SLOT_BIT(i) daAlink_slotBit(i)
+#else
+#define DUSK_SLOT_BIT(i) (1 << (i))
+#endif
+
 BOOL daAlink_c::itemTriggerCheck(u8 i_btnFlag) {
     mUseButtonFlags |= i_btnFlag;
     return mItemTrigger & i_btnFlag;
@@ -9359,11 +9411,11 @@ BOOL daAlink_c::itemButtonCheck(u8 i_btnFlag) {
 }
 
 BOOL daAlink_c::itemButton() {
-    return itemButtonCheck(1 << mSelectItemId);
+    return itemButtonCheck(DUSK_SLOT_BIT(mSelectItemId));
 }
 
 BOOL daAlink_c::itemTrigger() {
-    return itemTriggerCheck(1 << mSelectItemId);
+    return itemTriggerCheck(DUSK_SLOT_BIT(mSelectItemId));
 }
 
 BOOL daAlink_c::spActionButton() {
@@ -9379,6 +9431,9 @@ BOOL daAlink_c::midnaTalkTrigger() const {
     // If we have a custom bind for Midna, check that instead
     if (dusk::isActionBound(dusk::ActionBinds::CALL_MIDNA, 0)) {
         return dusk::getActionBindTrig(dusk::ActionBinds::CALL_MIDNA, 0);
+    }
+    if (daAlink_rSlotOn()) {
+        return s_tphdMidnaTrig;  // BTN_Z belongs to the R item slot
     }
 #endif
     return mItemTrigger & BTN_Z;
@@ -9503,9 +9558,17 @@ void daAlink_c::setStickData() {
         if (mDoCPd_c::getTrigY(PAD_1)) {
             mItemTrigger |= (daAlink_ITEM_BTN)BTN_Y;
         }
+#if TARGET_PC
+        s_tphdMidnaTrig = mDoCPd_c::getTrigZ(PAD_1);
+        if (daAlink_rSlotOn() ? dusk::getActionBindTrig(dusk::ActionBinds::USE_ITEM_R, 0)
+                              : mDoCPd_c::getTrigZ(PAD_1)) {
+            mItemTrigger |= (daAlink_ITEM_BTN)BTN_Z;
+        }
+#else
         if (mDoCPd_c::getTrigZ(PAD_1)) {
             mItemTrigger |= (daAlink_ITEM_BTN)BTN_Z;
         }
+#endif
         if (mDoCPd_c::getTrigL(PAD_1)) {
             mItemTrigger |= (daAlink_ITEM_BTN)BTN_L;
         }
@@ -9525,9 +9588,17 @@ void daAlink_c::setStickData() {
         if (mDoCPd_c::getHoldY(PAD_1)) {
             mItemButton |= (daAlink_ITEM_BTN)BTN_Y;
         }
+#if TARGET_PC
+        if (daAlink_rSlotOn() ? (dusk::getActionBindHold(dusk::ActionBinds::USE_ITEM_R, 0) ||
+                                 dusk::getActionBindTrig(dusk::ActionBinds::USE_ITEM_R, 0))
+                              : mDoCPd_c::getHoldZ(PAD_1)) {
+            mItemButton |= (daAlink_ITEM_BTN)BTN_Z;
+        }
+#else
         if (mDoCPd_c::getHoldZ(PAD_1)) {
             mItemButton |= (daAlink_ITEM_BTN)BTN_Z;
         }
+#endif
         if (mDoCPd_c::getHoldL(PAD_1)) {
             mItemButton |= (daAlink_ITEM_BTN)BTN_L;
         }
@@ -11305,6 +11376,22 @@ BOOL daAlink_c::checkUpperItemActionFly() {
 
 void daAlink_c::checkItemButtonChange() {
     if (mProcID != PROC_CANOE_PADDLE_PUT && mEquipItem != dItemNo_NONE_e && !checkEquipAnime()) {
+#if TARGET_PC
+        if (daAlink_rSlotOn()) {
+            // Keep the current slot when the equipped item is also on it; otherwise follow the
+            // first slot holding it (X, Y, R).
+            if (mSelectItemId > 3 || mEquipItem != dComIfGp_getSelectItem(mSelectItemId)) {
+                for (int n = 0; n < daAlink_slotNum(); n++) {
+                    const int i = daAlink_slotIdx(n);
+                    if (mEquipItem == dComIfGp_getSelectItem(i)) {
+                        mSelectItemId = i;
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+#endif
         u8 temp_r0;
         for (u8 i = 0; i < 2; i++) {
             temp_r0 = (i + 1) % 2;
@@ -11484,6 +11571,15 @@ int daAlink_c::orderTalk(int i_checkZTalk) {
                 return 1;
             }
         }
+#if TARGET_PC
+        // TPHD R slot (select-item index 3): the Wii/Shield/Wii U event code shows the item of
+        // index 3 for talk event type 9 (dEvt_control_c::talkXyCheck, mTalkXyType 4).
+        if (daAlink_rSlotOn() && checkTradeItem(dComIfGp_getSelectItem(3)) &&
+            itemTriggerCheck(DUSK_SLOT_BIT(3))) {
+            fopAcM_orderTalkItemBtnEvent(9, this, field_0x27f8, 0, 0);
+            return 1;
+        }
+#endif
     }
 
     if (i_checkZTalk) {
@@ -12077,6 +12173,9 @@ void daAlink_c::itemUnequip(u16 i_itemID, f32 i_playSpeed) {
     const daAlinkHIO_anm_c* anm_data;
 
     if (i_itemID == dItemNo_BOOMERANG_e || i_itemID == dItemNo_COPY_ROD_e || i_itemID == dItemNo_KANTERA_e ||
+#if TARGET_PC
+        (dusk::tphd_active() && i_itemID == dItemNo_GHOST_KANTERA_e) ||
+#endif
         i_itemID == dItemNo_HOOKSHOT_e || checkBottleItem(i_itemID))
     {
         anm_id = dRes_ID_ALANM_BCK_TAKEL_e;
@@ -12116,7 +12215,8 @@ void daAlink_c::allUnequip(BOOL param_0) {
     if (checkNoResetFlg2(FLG2_UNK_1) && param_0 && !checkCanoeRide() &&
         mEquipItem != dItemNo_KANTERA_e)
     {
-        for (u8 i = 0; i < 2; i++) {
+        for (u8 n = 0; n < DUSK_IF_ELSE(daAlink_slotNum(), 2); n++) {
+            const u8 i = DUSK_IF_ELSE(daAlink_slotIdx(n), n);
             if (dComIfGp_getSelectItem(i) == dItemNo_KANTERA_e) {
                 mSelectItemId = i;
             }
@@ -12168,9 +12268,10 @@ BOOL daAlink_c::checkItemChangeFromButton() {
             itemEquip(0x105);
         } else {
             u8 i;
-            for (i = 0; i < 2; i++) {
+            for (u8 n = 0; n < DUSK_IF_ELSE(daAlink_slotNum(), 2); n++) {
+                i = DUSK_IF_ELSE(daAlink_slotIdx(n), n);
                 int proc_type = checkNewItemChange(i);
-                if (proc_type != 0 && itemTriggerCheck(1 << i)) {
+                if (proc_type != 0 && itemTriggerCheck(DUSK_SLOT_BIT(i))) {
                     BOOL var_r27 = changeItemTriggerKeepProc(i, proc_type);
                     return var_r27;
                 }
@@ -12189,9 +12290,10 @@ BOOL daAlink_c::checkItemChangeFromButton() {
             } else if (mEquipItem == dItemNo_NONE_e && mThrowBoomerangAcKeep.getActor() == NULL &&
                        !checkCanoeRide() && checkNoUpperAnime() && checkNoResetFlg2(FLG2_UNK_1))
             {
-                for (i = 0; i < 2; i++) {
-                    if (dComIfGp_getSelectItem(i) == dItemNo_KANTERA_e) {
-                        mSelectItemId = i;
+                for (u8 n = 0; n < DUSK_IF_ELSE(daAlink_slotNum(), 2); n++) {
+                    const u8 si = DUSK_IF_ELSE(daAlink_slotIdx(n), n);
+                    if (dComIfGp_getSelectItem(si) == dItemNo_KANTERA_e) {
+                        mSelectItemId = si;
                     }
                 }
 
@@ -14182,6 +14284,12 @@ BOOL daAlink_c::setItemModel() {
         setKandelaarModel();
         return 1;
     }
+#if TARGET_PC
+    if (dusk::tphd_active() && mEquipItem == dItemNo_GHOST_KANTERA_e) {
+        setGhostKandelaarModel();
+        return 1;
+    }
+#endif
 
     if (mEquipItem == dItemNo_EMPTY_BOTTLE_e) {
         setBottleModel(mEquipItem);
@@ -14407,8 +14515,9 @@ BOOL daAlink_c::checkGroupItem(int i_itemNo, int i_selItem) const {
 }
 
 int daAlink_c::checkSetItemTrigger(int i_itemNo) {
-    for (u8 i = 0; i < 2; i++) {
-        if (checkGroupItem(i_itemNo, dComIfGp_getSelectItem(i)) && itemTriggerCheck(1 << i)) {
+    for (u8 n = 0; n < DUSK_IF_ELSE(daAlink_slotNum(), 2); n++) {
+        const u8 i = DUSK_IF_ELSE(daAlink_slotIdx(n), n);
+        if (checkGroupItem(i_itemNo, dComIfGp_getSelectItem(i)) && itemTriggerCheck(DUSK_SLOT_BIT(i))) {
             if (i_itemNo != dItemNo_HVY_BOOTS_e) {
                 mSelectItemId = i;
             }
@@ -14420,7 +14529,10 @@ int daAlink_c::checkSetItemTrigger(int i_itemNo) {
 }
 
 int daAlink_c::checkItemSetButton(int i_itemNo) {
-    for (u8 i = 0; i < 2; i++) {
+    // Returns the select-item index holding the item, or 2 for none (index 2 is never an item
+    // slot for Link: it is the wolf ability, the TPHD R slot is index 3).
+    for (u8 n = 0; n < DUSK_IF_ELSE(daAlink_slotNum(), 2); n++) {
+        const u8 i = DUSK_IF_ELSE(daAlink_slotIdx(n), n);
         if (checkGroupItem(i_itemNo, dComIfGp_getSelectItem(i))) {
             return i;
         }
@@ -14731,8 +14843,17 @@ int daAlink_c::checkNewItemChange(u8 i_selItemIdx) {
 void daAlink_c::deleteEquipItem(BOOL i_isPlaySound, BOOL i_isDeleteKantera) {
     if (i_isDeleteKantera || mProcID == PROC_UNEQUIP) {
         offKandelaarModel();
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            mZ2Link.setGhostKanteraState(0);
+        }
+#endif
     } else if (mEquipItem == dItemNo_KANTERA_e && checkNoResetFlg2(FLG2_UNK_1)) {
         mZ2Link.setKanteraState(2);
+#if TARGET_PC
+    } else if (dusk::tphd_active() && mEquipItem == dItemNo_GHOST_KANTERA_e) {
+        mZ2Link.setGhostKanteraState(0);
+#endif
     }
 
     if (mEquipItem == dItemNo_NONE_e || mEquipItem == 0x10B) {
@@ -14914,6 +15035,48 @@ void daAlink_c::setLight() {
         }
     }
 
+#if TARGET_PC
+    // Wii U daAlink_c::setLight (RPX 0x0207f0bc), Ghost Lantern part (in hand or on the belt):
+    // the Poe check is redone when the room changes; the blue flame (ef_ghost_lantern) grows to 1
+    // only while a Poe is left in the area and the flame is not hidden; the fire particle 0x2BC is
+    // tinted (0x10, 0x80, 0xff) and the light (0x28, 0x50, 0xa0) at the flame only shows then.
+    bool ghostLight = false;
+    if (dusk::tphd_active() && !checkWolf() &&
+        (mEquipItem == dItemNo_GHOST_KANTERA_e || mKeepItem == dItemNo_GHOST_KANTERA_e))
+    {
+        if (fopAcM_GetRoomNo(this) != mGhostPoeRoom) {
+            mGhostPoeRoom = fopAcM_GetRoomNo(this);
+            mGhostPoeExist = checkPoeExist();
+        }
+        f32 flameTarget = 1.0f;
+        if ((f32)field_ghost_0x3348 < mGhostFlameDepth || !mGhostPoeExist) {
+            flameTarget = 0.0f;
+        }
+        cLib_addCalc(&mGhostFlameScale, flameTarget, 0.5f, 0.3f, 0.1f);
+        if (mpGhostKanteraFlameModel != NULL) {
+            Vec flameScale = {mGhostFlameScale, mGhostFlameScale, mGhostFlameScale};
+            mpGhostKanteraFlameModel->setBaseScale(flameScale);
+        }
+        if (mGhostPoeExist) {
+            mGhostFlameEmitter = dComIfGp_particle_set(mGhostFlameEmitter, ID_ZI_J_KANTERA_FIRE,
+                                                       &mGhostKandelaarFlamePos, &tevStr,
+                                                       &shape_angle, NULL, 0xFF, NULL, -1, NULL,
+                                                       NULL, NULL);
+            JPABaseEmitter* emitter = dComIfGp_particle_getEmitter(mGhostFlameEmitter);
+            if (emitter != NULL) {
+                emitter->setGlobalPrmColor(0x10, 0x80, 0xff);
+                emitter->setGlobalEnvColor(0x10, 0x80, 0xff);
+                emitter->playDrawParticle();
+            }
+            ghostLight = !checkNoResetFlg1(FLG1_UNK_80);
+        } else {
+            stopDrawParticle(mGhostFlameEmitter);
+        }
+    } else {
+        stopDrawParticle(mGhostFlameEmitter);
+    }
+#endif
+
     f32 var_f31;
     if (var_r28) {
         if (mCutType == 0) {
@@ -14927,6 +15090,11 @@ void daAlink_c::setLight() {
         } else {
             var_f31 = 0.0f;
         }
+#if TARGET_PC
+        if (ghostLight) {
+            var_f31 = light_m->mPower;
+        }
+#endif
     }
 
     f32 var_f30 = 1.0f;
@@ -14972,6 +15140,14 @@ void daAlink_c::setLight() {
             } else {
                 spB8 = mKandelaarFlamePos;
             }
+#if TARGET_PC
+            if (ghostLight) {
+                spB8 = mGhostKandelaarFlamePos;
+                sp30.r = 0x28;
+                sp30.g = 0x50;
+                sp30.b = 0xa0;
+            }
+#endif
 
             var_f27 = 0.0f;
             var_f26 = cM_sht2d(-shape_angle.y);
@@ -17468,7 +17644,7 @@ int daAlink_c::procCoMetamorphoseInit() {
             mProcVar2.field_0x300c = shape_angle.x;
 
             daMidna_c* midna = (daMidna_c*)getMidnaActor();
-            if (checkMidnaRide() && daMidna_c::checkMidnaRealBody() && midna->checkDemoTypeNone())
+            if (checkMidnaRide() && (daMidna_c::checkMidnaRealBody() IF_DUSK(|| dusk::tphd::is_los_active())) && midna->checkDemoTypeNone())
             {
                 midna->changeOriginalDemo();
                 midna->changeDemoMode(daPy_demo_c::DEMO_UNK_15_e);
@@ -18246,7 +18422,9 @@ int daAlink_c::execute() {
                     setHeavyBoots(0);
                 }
             } else {
-                dMeter2Info_onDirectUseItem(itemButton);
+                if (itemButton < 2) {
+                    dMeter2Info_onDirectUseItem(itemButton);
+                }
             }
         }
 
@@ -18291,7 +18469,11 @@ int daAlink_c::execute() {
                 resetUpperAnime(UPPER_2, 5.0f);
             }
 
-            if (mEquipItem == dItemNo_KANTERA_e && checkNoUpperAnime() && !checkKandelaarEquipAnime() &&
+            if ((mEquipItem == dItemNo_KANTERA_e
+#if TARGET_PC
+                 || (dusk::tphd_active() && mEquipItem == dItemNo_GHOST_KANTERA_e)
+#endif
+                ) && checkNoUpperAnime() && !checkKandelaarEquipAnime() &&
                 (checkModeFlg(MODE_UNK_1000) || mProcID == PROC_CROUCH))
             {
                 if (checkReinRide()) {
@@ -19828,6 +20010,14 @@ int daAlink_c::draw() {
             preKandelaarDraw();
             basicModelDraw(mpKanteraGlowModel);
         }
+
+#if TARGET_PC
+        if (dusk::tphd_active() && (mEquipItem == dItemNo_GHOST_KANTERA_e || mKeepItem == dItemNo_GHOST_KANTERA_e)) {
+            if (mpGhostKanteraModel != NULL) modelDraw(mpGhostKanteraModel, isPlayerNoDraw);
+            preGhostKandelaarDraw();
+            if (mpGhostKanteraFlameModel != NULL) modelDraw(mpGhostKanteraFlameModel, isPlayerNoDraw);
+        }
+#endif
 
         if (checkEquipHeavyBoots()) {
             GXColorS10 color = tevStr.TevColor;

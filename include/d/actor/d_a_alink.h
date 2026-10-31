@@ -2665,6 +2665,14 @@ public:
     BOOL checkKandelaarEquipAnime() const;
     void preKandelaarDraw();
     void setKandelaarModel();
+#if TARGET_PC
+    int ghostKandelaarModelCallBack();
+    void preGhostKandelaarDraw();
+    void setGhostKandelaarModel();
+    bool checkPoeExist();
+    static bool checkPoeExistStage(const char* i_stageName);
+    static bool checkPoeExistRoom(const char* i_stageName, int i_roomNo, int i_layerNo);
+#endif
     void resetOilBottleModel();
     void commonKandelaarPourInit();
     int commonKandelaarPour(int);
@@ -4560,7 +4568,28 @@ public:
     bool checkAimContext();
     bool checkAimInputContext();
 
+    f32 mLosStickValue;
+
     bool mIsRollstab = false;
+
+    J3DModel* mpGhostKanteraModel = nullptr;
+    J3DModel* mpGhostKanteraFlameModel = nullptr;
+    J3DAnmTextureSRTKey* mpGhostKanteraFlameBtk = nullptr;
+    cXyz mGhostKandelaarFlamePos;
+    LIGHT_INFLUENCE mGhostKanteraLight;
+    s16 mGhostKandelaarAngleY = 0;
+    s16 mGhostKandelaarAngleX = 0;
+    s16 mGhostKandelaarAngleZ = 0;
+    u32 field_ghost_0x3348 = 0;          // Wii U +0x3348: peekZ at the flame
+    cXyz mGhostKandelaarPos0;            // Wii U +0x3728: bob position of the previous frame
+    cXyz mGhostKandelaarPos1;            // Wii U +0x3734: bob position two frames ago
+    cXyz mGhostKandelaarPos2;            // Wii U +0x3710: pendulum bob (joint * (0, -33, 0))
+    cXyz mGhostKandelaarPos3;            // Wii U +0x371c: bob velocity
+    f32 mGhostFlameScale = 0.0f;         // Wii U +0x3510
+    f32 mGhostFlameDepth = -1.0f;        // Wii U +0x3514: projected z of the flame
+    u8 mGhostPoeExist = 0;               // Wii U +0x334c: an uncollected Poe is in this area
+    s8 mGhostPoeRoom = -1;               // room checked last (Wii U compares +0x4ce / +0x4e2)
+    u32 mGhostFlameEmitter = 0;          // Wii U +0x3240: blue fire particle
 #endif
 };  // Size: 0x385C
 

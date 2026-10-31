@@ -6,6 +6,10 @@
 #include "d/d_path.h"
 #include "SSystem/SComponent/c_math.h"
 
+#if TARGET_PC
+#include "dusk/logging.h"
+#endif
+
 static bool data_80450680 = true;
 
 DUSK_GAME_DATA dTres_c::typeGroupData_c* dTres_c::mTypeGroupData;
@@ -25,7 +29,7 @@ void dTres_c::remove() {
     data_80450680 = true;
 }
 
-DUSK_GAME_DATA dTres_c::type_group_list dTres_c::mTypeGroupListAll[17];
+DUSK_GAME_DATA dTres_c::type_group_list dTres_c::mTypeGroupListAll[TYPE_GROUP_ENUM_NUMBER];
 
 DUSK_GAME_DATA u16 dTres_c::mNum;
 
@@ -34,7 +38,7 @@ void dTres_c::reset() {
         mNum = 0;
         data_80450680 = false;
 
-        for (int i = 0; i < 17; i++) {
+        for (int i = 0; i < TYPE_GROUP_ENUM_NUMBER; i++) {
             mTypeGroupListAll[i].field_0x0 = NULL;
             mTypeGroupListAll[i].field_0x4 = NULL;
             mTypeGroupListAll[i].mNumber = 0;
@@ -49,11 +53,25 @@ void dTres_c::addData(dTres_c::list_class* p_list, s8 roomNo) {
         data_s* listData = p_list->field_0x4->getDataPointer();
         typeGroupData_c* groupData = &mTypeGroupData[mNum];
         for (int i = 0; i < p_list->field_0x0; i++, listData++, groupData++) {
+#if TARGET_PC
+            if (mNum >= 0x40) {
+                DuskLog.warn("dTres_c::addData: treasure data overflow, skipping remaining entries");
+                break;
+            }
+#endif
             *(data_s*)groupData = *listData;
             groupData->mRoomNo = roomNo;
             groupData->mStatus = 0;
 
             u32 typeGroupNo = getTypeToTypeGroupNo(groupData->mType);
+#if TARGET_PC
+            // Skip TPHD entries for now
+            if (typeGroupNo >= TYPE_GROUP_ENUM_NUMBER) {
+                DuskLog.warn("dTres_c::addData: unknown treasure type 0x{:02x}, skipping", groupData->mType);
+                mNum++;
+                continue;
+            }
+#endif
             groupData->setNextDataPointer(NULL);
             groupData->setTypeGroupNo(typeGroupNo);
 
@@ -229,20 +247,32 @@ void dTres_c::setPosition(int dataNo, u8 listIdx, Vec const* i_pos, int i_roomNo
     }
 }
 
-DUSK_GAME_DATA u8 const dTres_c::typeToTypeGroup[17][2] = {
+DUSK_GAME_DATA u8 const dTres_c::typeToTypeGroup[TYPE_GROUP_ENUM_NUMBER][2] = {
     {0xFF, 0x00}, {0x00, 0x01}, {0x01, 0x02}, {0x02, 0x03}, {0x03, 0x04}, {0x04, 0x05},
-    {0x05, 0x06}, {0x06, 0x07}, {0x07, 0x08}, {0x80, 0x09}, {0x81, 0x0A}, {0x82, 0x0B},
+    {0x05, 0x06}, {0x06, 0x07}, {0x07, 0x08},
+#if TARGET_PC
+    {0x08, 0x11}, {0x09, 0x12}, {0x0A, 0x13},
+#endif
+    {0x80, 0x09}, {0x81, 0x0A}, {0x82, 0x0B},
     {0x83, 0x0C}, {0x84, 0x0D}, {0x85, 0x0E}, {0x87, 0x0F}, {0x88, 0x10},
 };
 
 u8 dTres_c::getTypeGroupNoToType(u8 i_typeGroupNo) {
     JUT_ASSERT(651, i_typeGroupNo < TYPE_GROUP_ENUM_NUMBER);
+#if TARGET_PC
+    // The TPHD rows are inserted in type order, so the row index is no longer the group.
+    for (int i = 0; i < TYPE_GROUP_ENUM_NUMBER; i++) {
+        if (typeToTypeGroup[i][1] == i_typeGroupNo) {
+            return typeToTypeGroup[i][0];
+        }
+    }
+#endif
     return typeToTypeGroup[i_typeGroupNo][0];
 }
 
 u8 dTres_c::getTypeToTypeGroupNo(u8 i_type) {
-    int rt = 17;
-    for (int i = 0; i < 17; i++) {
+    int rt = TYPE_GROUP_ENUM_NUMBER;
+    for (int i = 0; i < TYPE_GROUP_ENUM_NUMBER; i++) {
         if (i_type == typeToTypeGroup[i][0]) {
             rt = typeToTypeGroup[i][1];
             break;

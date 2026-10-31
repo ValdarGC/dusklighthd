@@ -15,7 +15,7 @@ cXyz* daShopItem_c::getPosP() {
     return &current.pos;
 }
 
-DUSK_GAME_DATA ResourceData const daShopItem_c::mData[23] = {
+DUSK_GAME_DATA ResourceData const daShopItem_c::mData[DUSK_IF_ELSE(24, 23)] = {
     {"B_mD_sold", 3, -1, -1, -1, -1, -1, -1, 0.0f, 1.0f, 0, {0, -0x8000, 0}, 0, 0, 0, 0, -1, -1},
     {"B_mD_oil", 3, -1, -1, -1, -1, -1, -1, 0.0f, 1.0f, 0, {0, 0, 0}, 0, 0, 0, 0, -1, -1},
     {"O_mD_red", 3, -1, -1, -1, -1, -1, -11, 0.0f, 1.0f, 0, {0, 0, 0}, 0, 0, 0, 0, -1, -1},
@@ -39,6 +39,9 @@ DUSK_GAME_DATA ResourceData const daShopItem_c::mData[23] = {
     {"O_mD_marm", 4, -1, -1, -1, -1, -1, -1, 0.0f, 1.0f, 0, {0, 0, 0}, 0, 0, 0, 0, -1, -1},
     {"O_mD_gren", 3, -1, -1, -1, -1, -1, -1, 0.0f, 1.0f, 0, {0, 0, 0}, 0, 0, 0, 0, -1, -1},
     {"O_mD_bott", 6, 12, -1, -1, -1, 9, 15, 0.0f, 1.0f, 0, {0, 0, 0}, 4, 0, 0, 0, 12, 0},
+#if TARGET_PC
+    {"Obj_Stamp", 4, -1, -1, -1, -1, -1, -1, 10.0f, 1.0f, 0, {0, 0, 0}, 0, 0, 0, 0, -1, -1},
+#endif
 };
 
 int CheckShopItemCreateHeap(fopAc_ac_c* i_this) {

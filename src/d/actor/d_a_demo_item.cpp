@@ -516,6 +516,11 @@ int daDitem_c::execute() {
 
     if (chkDraw()) {
         f32 target_scale_x = 1.0f;
+#if TARGET_PC
+        if (dusk::tphd_active() && m_itemNo == dItemNo_GHOST_KANTERA_e && mMaxScale == 0.0f) {
+            mMaxScale = 0.6f;
+        }
+#endif
         if (mMaxScale != 0.0f) {
             target_scale_x = mMaxScale;
         }
@@ -537,6 +542,11 @@ int daDitem_c::execute() {
     } else if (m_itemNo == dItemNo_WALLET_LV3_e || m_itemNo == dItemNo_CHUCHU_RARE_e) {
         field_0x99c = current.pos;
         field_0x99c.y += 15.0f;
+#if TARGET_PC
+    } else if (dusk::tphd_active() && m_itemNo == dItemNo_GHOST_KANTERA_e) {
+        field_0x99c = current.pos;
+        field_0x99c.y += 5.0f;
+#endif
     } else if (m_itemNo == dItemNo_FAIRY_DROP_e || m_itemNo == dItemNo_DROP_BOTTLE_e) {
         field_0x99c = current.pos;
     }

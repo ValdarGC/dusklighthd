@@ -402,4 +402,16 @@ BOOL isBottleItem(u8 item_no);
 u8 check_itemno(int i_itemNo);
 BOOL isInsect(u8 i_itemNo);
 
+#if TARGET_PC
+void item_func_WALLET_LV4();
+
+// TPHD stamps (Wii U item tables 0x1011ea6c): 50 item numbers that are "noentry" in the GC game
+// give stamp 0..49 (item func 0x0296266c + 0x170 * n, getcheck 0x02967ebc + 0x10 * n).
+extern const u8 dItem_tphdStampItemNo[50];
+// Stamp number of an item number in TPHD mode, -1 otherwise.
+int dItem_tphdStampNo(u8 i_itemNo);
+// TPHD: puts the stamp entries of item_resource / field_item_res / item_info in place (once).
+void dItem_tphdInitStampData();
+#endif
+
 #endif /* D_D_ITEM_H */

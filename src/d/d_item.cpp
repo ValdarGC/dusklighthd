@@ -8,7 +8,25 @@
 #include "d/d_item.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_meter2_info.h"
+#if TARGET_PC
+#include "dusk/settings.h"
+#endif
 #include <cstring>
+
+#if TARGET_PC
+static void item_func_GHOST_KANTERA() {
+    if (dusk::tphd_active()) {
+        dComIfGs_setItem(SLOT_7, dItemNo_GHOST_KANTERA_e);
+    }
+}
+
+static int item_getcheck_func_GHOST_KANTERA() {
+    if (dusk::tphd_active()) {
+        return dComIfGs_getItem(SLOT_7, true) == dItemNo_GHOST_KANTERA_e ? TRUE : FALSE;
+    }
+    return -1;
+}
+#endif
 
 static void (*item_func_ptr[256])() = {
     item_func_HEART,
@@ -229,7 +247,7 @@ static void (*item_func_ptr[256])() = {
     item_func_F_MAYFLY,
     item_func_noentry,
     item_func_noentry,
-    item_func_noentry,
+    DUSK_IF_ELSE(item_func_WALLET_LV4, item_func_noentry),
     item_func_noentry,
     item_func_noentry,
     item_func_noentry,
@@ -266,14 +284,61 @@ static void (*item_func_ptr[256])() = {
     item_func_KEY_OF_CARAVAN,
     item_func_LV2_BOSS_KEY,
     item_func_KEY_OF_FILONE,
+#if TARGET_PC
+    item_func_GHOST_KANTERA,
+#else
     item_func_noentry,
+#endif
 };
+
+#if TARGET_PC
+const u8 dItem_tphdStampItemNo[50] = {
+    0x13, 0x14, 0x15, 0x3B, 0x3C, 0x4D, 0x4E, 0x52, 0x57, 0x85, 0x86, 0x87, 0x88,
+    0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+    0x98, 0x99, 0x9A, 0x9B, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB6,
+    0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xD8, 0xD9,
+};
+
+int dItem_tphdStampNo(u8 i_itemNo) {
+    if (!dusk::tphd_active()) {
+        return -1;
+    }
+    for (int i = 0; i < 50; i++) {
+        if (dItem_tphdStampItemNo[i] == i_itemNo) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Wii U item_func_STAMP_n (0x0296266c + 0x170 * n): give the stamp, then the 50th one once the
+// other 49 are owned.
+static void item_func_tphdStamp(int i_stampNo) {
+    dComIfGs_onStamp(i_stampNo, 1);
+    int num = 0;
+    for (int i = 0; i < 50; i++) {
+        if (dComIfGs_isStamp(i)) {
+            num++;
+        }
+    }
+    if (num >= 49) {
+        dComIfGs_onStamp(49, 1);
+    }
+}
+#endif
 
 #if !TARGET_PC
 inline
 #endif
 void getItemFunc(u8 i_itemNo) {
     dComIfGs_onItemFirstBit(i_itemNo);
+#if TARGET_PC
+    const int stampNo = dItem_tphdStampNo(i_itemNo);
+    if (stampNo >= 0) {
+        item_func_tphdStamp(stampNo);
+        return;
+    }
+#endif
     item_func_ptr[i_itemNo]();
 }
 
@@ -538,10 +603,21 @@ static int (*item_getcheck_func_ptr[256])() = {
     item_getcheck_func_KEY_OF_CARAVAN,
     item_getcheck_func_LV2_BOSS_KEY,
     item_getcheck_func_KEY_OF_FILONE,
+#if TARGET_PC
+    item_getcheck_func_GHOST_KANTERA,
+#else
     item_getcheck_func_noentry,
+#endif
 };
 
 inline int getCheckItemFunc(u8 i_itemNo) {
+#if TARGET_PC
+    // Wii U item_getcheck_func_STAMP_n (0x02967ebc + 0x10 * n).
+    const int stampNo = dItem_tphdStampNo(i_itemNo);
+    if (stampNo >= 0) {
+        return dComIfGs_isStamp(stampNo) ? 1 : 0;
+    }
+#endif
     return item_getcheck_func_ptr[i_itemNo]();
 }
 
@@ -2206,5 +2282,12 @@ int addBombCount(u8 i_bombType, u8 i_addNum) {
 
     return i_addNum;
 }
+
+#if TARGET_PC
+// HD item functions
+void item_func_WALLET_LV4() {
+    dComIfGs_setWalletSize(3);
+}
+#endif
 
 DUSK_GAME_DATA u8* dEnemyItem_c::mData;

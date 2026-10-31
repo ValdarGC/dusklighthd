@@ -18,6 +18,9 @@
 #include "m_Do/m_Do_lib.h"
 #include "d/actor/d_a_tag_shop_item.h"
 #include <cstring>
+#if TARGET_PC
+#include "dusk/settings.h"
+#endif
 
 #if TARGET_PC
 #include "dusk/interp/lerp.h"
@@ -57,9 +60,15 @@ static int dShopSystem_searchItemActor(void* i_actor, void* param_1) {
                 if ((sw == 0xFF || !dComIfGs_isSaveSwitch(sw)) &&
                     (sw2 == 0xFF || dComIfGs_isSaveSwitch(sw2)))
                 {
+#if TARGET_PC
+                    if (sw != 0xFF && (item_no == dItemNo_HYLIA_SHIELD_e || (dusk::tphd_active() && dItem_tphdStampNo(item_no) >= 0)) && checkItemGet(item_no, true)) {
+                        dComIfGs_onSaveSwitch(sw);
+                    } else {
+#else
                     if (sw != 0xFF && item_no == dItemNo_HYLIA_SHIELD_e && checkItemGet(item_no, true)) {
                         dComIfGs_onSaveSwitch(sw);
                     } else {
+#endif
                         if (i_posID == 0) {
                             data_80451060 = 1;
                             dShopSystem_itemActor[dShopSystem_item_count] =
@@ -1228,13 +1237,24 @@ int dShopSystem_c::seq_choose(fopAc_ac_c* actor, dMsgFlow_c* i_flow) {
 }
 
 int dShopSystem_c::seq_decide_yes(fopAc_ac_c* actor, dMsgFlow_c* i_flow) {
+#if TARGET_PC
+    int itemNo;
+    const bool isEvent1 = mFlow.getEventId(&itemNo) == 1;
+    if (dMsgObject_getMessageID() == 0x1B82 || (dusk::tphd_active() && isEvent1)) {
+        mShopCamAction.SetSelectIdx(0);
+        field_0xf76 = 1;
+    }
+#else
     if (dMsgObject_getMessageID() == 0x1B82) {
         mShopCamAction.SetSelectIdx(0);
         field_0xf76 = 1;
     }
 
     int itemNo;
-    if (mFlow.getEventId(&itemNo) == 1) {
+    const bool isEvent1 = mFlow.getEventId(&itemNo) == 1;
+#endif
+
+    if (isEvent1) {
         if (i_flow->doFlow(actor, NULL, 0)) {
             if (mItemPartnerId == fpcM_ERROR_PROCESS_ID_e) {
 #if TARGET_PC
@@ -1385,35 +1405,28 @@ void dShopSystem_c::setSoldOutFlag() {
 void dShopSystem_c::setSoldOut() {
     if (mSoldOutFlag != 0xFF) {
         if (field_0xf60 < 0) {
-            u8 sw = (u8)dShopSystem_itemActor[mSoldOutFlag]->home.angle.z & 0xFF;
-            if (sw != 0xFF && !dComIfGs_isSaveSwitch(sw)) {
-                dComIfGs_onSaveSwitch(sw);
+            if (mSoldOutFlag < 7 && dShopSystem_itemActor[mSoldOutFlag] != NULL) {
+                u8 sw = (u8)dShopSystem_itemActor[mSoldOutFlag]->home.angle.z & 0xFF;
+                if (sw != 0xFF && !dComIfGs_isSaveSwitch(sw)) {
+                    dComIfGs_onSaveSwitch(sw);
+                }
             }
         }
 
         int index = mSoldOutFlag;
-        mSoldOutFlag = -1;
+        mSoldOutFlag = 0xFF;
         if (field_0xf60 >= 0) {
             fopAcM_delete(mItemCtrl.getItemIndex(index));
             mItemCtrl.setItemIndex(index, -1);
             onFlag(index);
             return;
-        } else if (index == 0) {
-            dShopSystem_itemActor[0] = NULL;
-            dShopSystem_itemNo[0] = dItemNo_NONE_e;
-            dShopSystem_item_count = 2;
-        } else if (index == 1) {
-            dShopSystem_itemActor[1] = NULL;
-            dShopSystem_itemNo[1] = dItemNo_NONE_e;
-            dShopSystem_item_count = 2;
-        } else if (index == 2) {
-            dShopSystem_itemActor[2] = NULL;
-            dShopSystem_itemNo[2] = dItemNo_NONE_e;
-            dShopSystem_item_count = 2;
-        } else if (index == 6) {
-            dShopSystem_itemActor[6] = NULL;
-            dShopSystem_itemNo[6] = dItemNo_NONE_e;
-            dShopSystem_item_count = 6;
+        } else if (index >= 0 && index < 7) {
+            dShopSystem_itemActor[index] = NULL;
+            dShopSystem_itemNo[index] = dItemNo_NONE_e;
+            mItemCtrl.setItemIndex(index, -1);
+            dShopSystem_item_count = -1;
+            onFlag(index);
+            onSoldOutItemFlag(index);
         }
 
         if (field_0xf76 != 0) {

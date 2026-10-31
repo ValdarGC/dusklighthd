@@ -77,7 +77,7 @@ public:
     s16 getAngleY() const { return mAngleY; }
     void setAngleY(s16 angle) { mAngleY = angle;}
 
-    static DUSK_GAME_DATA ResourceData const mData[23];
+    static DUSK_GAME_DATA ResourceData const mData[DUSK_IF_ELSE(24, 23)];
     static DUSK_GAME_DATA f32 const m_cullfar_max;
 
     enum {
@@ -104,6 +104,9 @@ public:
         SHOP_ITEMNO_ARMOR_SOLD,
         SHOP_ITEMNO_GREEN,
         SHOP_ITEMNO_DROP,
+#if TARGET_PC
+        SHOP_ITEMNO_STAMP,  // TPHD: Malo Mart stamp (Wii U mData[0x17] 0x10083f20)
+#endif
         SHOP_ITEMNO_MAX,
     };
 

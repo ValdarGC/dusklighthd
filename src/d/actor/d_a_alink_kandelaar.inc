@@ -421,3 +421,251 @@ int daAlink_c::procKandelaarPour() {
     commonKandelaarPour(0);
     return 1;
 }
+
+#if TARGET_PC
+static int daAlink_ghostKandelaarModelCallBack(J3DJoint* i_joint, int i_timing) {
+    UNUSED(i_joint);
+    if (i_timing == 0) {
+        daAlink_c* link = (daAlink_c*)j3dSys.getModel()->getUserArea();
+        if (link != NULL) {
+            link->ghostKandelaarModelCallBack();
+        }
+    }
+    return 1;
+}
+
+// Wii U daAlink_c::ghostKandelaarModelCallBack (RPX 0x02015c70). Same pendulum as the oil lantern,
+// but the bob (+0x3710) and the flame (+0x3704) are kept apart: the flame is joint * (45, 0, 0) of
+// the swung matrix, the bob joint * (0, -33, 0); the velocity (+0x371c) is (bob - previous) * 0.9.
+int daAlink_c::ghostKandelaarModelCallBack() {
+    cXyz jointPos;
+    mDoMtx_multVecZero(J3DSys::mCurrentMtx, &jointPos);
+
+    mGhostKandelaarPos1 = mGhostKandelaarPos0;
+    mGhostKandelaarPos0 = mGhostKandelaarPos2;
+
+    cXyz swing = (mGhostKandelaarPos2 - jointPos) + mGhostKandelaarPos3;
+    swing.y -= 3.0f;
+
+    cXyz dirZ;
+    mDoMtx_multVec(J3DSys::mCurrentMtx, &cXyz::BaseZ, &dirZ);
+    s16 yaw = dirZ.atan2sX_Z();
+    mDoMtx_stack_c::YrotS(-yaw);
+    mDoMtx_stack_c::multVec(&swing, &swing);
+
+    s16 angleX = cLib_minMaxLimit<s16>(cM_atan2s(-swing.z, -swing.y), -0x1800, 0x1800);
+    s16 angleZ = cLib_minMaxLimit<s16>(
+        cM_atan2s(swing.x, JMAFastSqrt(SQUARE(swing.y) + SQUARE(swing.z))), -0x1800, 0x1800);
+
+    mDoMtx_stack_c::transS(jointPos);
+    if (mProcID != PROC_OPEN_TREASURE && (mProcID != PROC_GET_ITEM || mProcVar4.field_0x3010 == 0)) {
+        mDoMtx_stack_c::ZXYrotM(angleX, yaw, angleZ);
+    }
+    static Vec const bobOffset = {0.0f, -33.0f, 0.0f};  // 0x10006ab8
+    mDoMtx_stack_c::multVec(&bobOffset, &mGhostKandelaarPos2);
+    mGhostKandelaarPos3 = (mGhostKandelaarPos2 - mGhostKandelaarPos0) * 0.9f;  // 0x1000702c
+
+    f32 scale = JMAFastSqrt(SQUARE(J3DSys::mCurrentMtx[0][0]) + SQUARE(J3DSys::mCurrentMtx[1][0]) +
+                            SQUARE(J3DSys::mCurrentMtx[2][0]));
+    mDoMtx_stack_c::transS(J3DSys::mCurrentMtx[0][3], J3DSys::mCurrentMtx[1][3], J3DSys::mCurrentMtx[2][3]);
+    mDoMtx_stack_c::ZXYrotM(angleX, (s16)(yaw - 0x4000), (s16)(angleZ - 0x4000));
+    mDoMtx_stack_c::scaleM(scale, scale, scale);
+
+    mGhostKandelaarAngleY = yaw;
+    mGhostKandelaarAngleX = angleX;
+    mGhostKandelaarAngleZ = angleZ;
+
+    if (mpGhostKanteraModel != NULL) {
+        mpGhostKanteraModel->setAnmMtx(1, mDoMtx_stack_c::get());
+        cMtx_copy(mDoMtx_stack_c::get(), J3DSys::mCurrentMtx);
+    }
+
+    static Vec const flameOffset = {45.0f, 0.0f, 0.0f};  // 0x10006ac4
+    mDoMtx_stack_c::multVec(&flameOffset, &mGhostKandelaarFlamePos);
+    return 1;
+}
+
+
+// Wii U Poe soul table (RPX 0x1001e8d8, 60 entries of 0x18 bytes): stage, room, layer (-1 = any),
+// map region (unused here), save table of the switch, switch bit.
+struct GhostPoeEntry {
+    const char* stage;
+    s32 room;
+    s32 layer;
+    s32 region;
+    s32 saveTbl;
+    s32 bit;
+};
+
+static const GhostPoeEntry l_ghostPoeTable[60] = {
+    {"D_MN06", 2, -1, -1, 21, 25},   {"D_MN06", 5, -1, -1, 21, 24},
+    {"D_MN07", 12, -1, -1, 22, 84},  {"D_MN07", 13, -1, -1, 22, 85},
+    {"D_MN10", 2, -1, -1, 19, 30},   {"D_MN10", 3, -1, -1, 19, 31},
+    {"D_MN10", 5, -1, -1, 19, 32},   {"D_MN10", 8, -1, -1, 19, 33},
+    {"D_MN11", 0, -1, -1, 20, 114},  {"D_MN11", 0, -1, -1, 20, 21},
+    {"D_MN11", 6, -1, -1, 20, 127},  {"D_SB01", 16, -1, 4, 25, 69},
+    {"D_SB01", 32, -1, 4, 25, 70},   {"D_SB01", 43, -1, 4, 25, 71},
+    {"D_SB02", 0, -1, 2, 25, 96},    {"D_SB03", 0, -1, 3, 26, 94},
+    {"D_SB03", 0, -1, 3, 26, 95},    {"D_SB03", 0, -1, 3, 26, 93},
+    {"D_SB05", 0, 3, 3, 27, 10},     {"D_SB05", 0, 3, 3, 27, 11},
+    {"D_SB07", 2, 0, 4, 27, 15},     {"D_SB07", 2, 0, 4, 27, 16},
+    {"F_SP108", 5, -1, 1, 2, 93},    {"F_SP109", 0, -1, 2, 3, 94},
+    {"F_SP109", 0, -1, 2, 3, 95},    {"F_SP110", 0, -1, 2, 3, 89},
+    {"F_SP111", 0, -1, 2, 3, 87},    {"F_SP111", 0, -1, 2, 3, 88},
+    {"F_SP113", 1, -1, 3, 4, 73},    {"F_SP113", 1, -1, 3, 4, 74},
+    {"F_SP114", 0, -1, 5, 8, 124},   {"F_SP114", 0, -1, 5, 8, 125},
+    {"F_SP114", 0, -1, 5, 8, 123},   {"F_SP114", 1, -1, 5, 8, 126},
+    {"F_SP114", 2, -1, 5, 8, 127},   {"F_SP115", 0, -1, 3, 4, 70},
+    {"F_SP115", 0, -1, 3, 4, 71},    {"F_SP115", 0, -1, 3, 4, 75},
+    {"F_SP115", 0, -1, 3, 4, 76},    {"F_SP115", 0, -1, 3, 4, 77},
+    {"F_SP117", 1, -1, 1, 7, 15},    {"F_SP117", 2, -1, 1, 7, 30},
+    {"F_SP117", 3, -1, 1, 7, 16},    {"F_SP117", 3, -1, 1, 7, 17},
+    {"F_SP118", 1, -1, 4, 10, 120},  {"F_SP118", 3, -1, 4, 10, 90},
+    {"F_SP121", 3, -1, 2, 6, 58},    {"F_SP121", 6, -1, 1, 6, 57},
+    {"F_SP121", 10, -1, 3, 6, 51},   {"F_SP121", 13, -1, 3, 6, 59},
+    {"F_SP122", 8, -1, 3, 6, 73},    {"F_SP122", 16, -1, 3, 6, 48},
+    {"F_SP122", 17, -1, 3, 6, 71},   {"F_SP124", 0, -1, 4, 10, 91},
+    {"F_SP124", 0, -1, 4, 10, 92},   {"F_SP124", 0, -1, 4, 10, 93},
+    {"F_SP124", 0, -1, 4, 10, 51},   {"F_SP126", 0, -1, 3, 4, 72},
+    {"F_SP128", 0, -1, 2, 3, 64},    {"R_SP160", 5, -1, 3, 9, 31},
+};
+
+// RPX 0x0227d3c0: the switch is read from the live memory bits when the entry belongs to the
+// current save table, otherwise from the saved stage memory.
+static bool ghostPoeCollected(const GhostPoeEntry& i_entry) {
+    if (dStage_stagInfo_GetSaveTbl(dComIfGp_getStage()->getStagInfo()) == i_entry.saveTbl) {
+        return dComIfGs_isSaveSwitch(i_entry.bit);
+    }
+    return dComIfGs_isSaveSwitch(i_entry.saveTbl, i_entry.bit);
+}
+
+// RPX 0x0227d69c: any uncollected Poe anywhere in the stage (dungeon-like stages).
+bool daAlink_c::checkPoeExistStage(const char* i_stageName) {
+    for (const GhostPoeEntry& e : l_ghostPoeTable) {
+        if (strcmp(i_stageName, e.stage) == 0 && !ghostPoeCollected(e)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// RPX 0x0227d7d8: uncollected Poe in the current room (and layer). F_SP128 only counts once the
+// events 0x2320 and 0x5f80 are set. The Poes of D_SB05 / D_SB07 / D_SB01 are also announced from
+// F_SP121 room 10, F_SP124 room 0 and D_SB01 room 0.
+bool daAlink_c::checkPoeExistRoom(const char* i_stageName, int i_roomNo, int i_layerNo) {
+    for (const GhostPoeEntry& e : l_ghostPoeTable) {
+        if (ghostPoeCollected(e)) {
+            continue;
+        }
+        if (e.room == i_roomNo && strcmp(i_stageName, e.stage) == 0) {
+            if (strcmp(i_stageName, "F_SP128") != 0 ||
+                (dComIfGs_isEventBit(0x2320) && dComIfGs_isEventBit(0x5f80)))
+            {
+                if (e.layer < 0 || e.layer == i_layerNo) {
+                    return true;
+                }
+            }
+            continue;
+        }
+        if (strncmp(e.stage, "D_SB", 3) == 0) {
+            if (strcmp(e.stage + 4, "05") == 0) {
+                if (strcmp(i_stageName, "F_SP121") == 0 && i_roomNo == 10) {
+                    return true;
+                }
+            } else if (strcmp(e.stage + 4, "07") == 0) {
+                if (strcmp(i_stageName, "F_SP124") == 0 && i_roomNo == 0) {
+                    return true;
+                }
+            } else if (strcmp(e.stage + 4, "01") == 0) {
+                if (strcmp(i_stageName, "D_SB01") == 0 && i_roomNo == 0) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// RPX 0x0201baa8: dungeon-like stages (stag info +0xa & 7 == 1 or 7) check the whole stage, the
+// others the current room and layer. The result is kept in +0x334c.
+bool daAlink_c::checkPoeExist() {
+    const char* stageName = dComIfGp_getStartStageName();
+    const u32 type = dComIfGp_getStage()->getStagInfo()->field_0x0a & 7;
+    if (type == 1 || type == 7) {
+        return checkPoeExistStage(stageName);
+    }
+    return checkPoeExistRoom(stageName, fopAcM_GetRoomNo(this), dComIfG_play_c::getLayerNo(0));
+}
+
+void daAlink_c::preGhostKandelaarDraw() {
+    if (mpGhostKanteraFlameModel == NULL) return;
+    J3DMaterial* mat_p = mpGhostKanteraFlameModel->getModelData()->getMaterialNodePointer(0);
+    if (mat_p == NULL) return;
+
+    J3DGXColorS10 color;
+    color.r = 20;
+    color.g = 40;
+    color.b = 80;
+    color.a = 255;
+    mat_p->setTevColor(1, &color);
+
+    color.r = 10;
+    color.g = 30;
+    color.b = 40;
+    color.a = 255;
+    mat_p->setTevColor(2, &color);
+
+    // Same depth test as the oil lantern (preKandelaarDraw): peekZ at the flame (+0x3348) against
+    // its projected depth (+0x3514); the flame shrinks away when something covers it.
+    cXyz proj;
+    mDoLib_project(&mGhostKandelaarFlamePos, &proj);
+
+    camera_process_class* camera_p = dComIfGp_getCamera(0);
+    f32 trimHeight = (camera_p != NULL) ? camera_p->mCamera.TrimHeight() : 0.0f;
+
+    if (proj.x > 0.0f && proj.x < FB_WIDTH && proj.y > trimHeight && proj.y < FB_HEIGHT - trimHeight) {
+        dComIfGd_peekZ(proj.x, proj.y, &field_ghost_0x3348);
+    } else {
+        field_ghost_0x3348 = 0;
+    }
+
+    f32 near_ = dComIfGd_getView()->near_;
+    f32 far_ = dComIfGd_getView()->far_;
+
+    mDoLib_pos2camera(&mGhostKandelaarFlamePos, &proj);
+    proj.z += 30.0f;
+    if (proj.z > -0.01f) {
+        proj.z = -0.01f;
+    }
+    mGhostFlameDepth = ((near_ + (far_ * near_) / proj.z) / (far_ - near_) + 1.0f) * 1.6777215E7f;
+
+    if (mpGhostKanteraFlameBtk != NULL) {
+        mpGhostKanteraFlameModel->getModelData()->entryTexMtxAnimator(mpGhostKanteraFlameBtk);
+    }
+}
+
+// Wii U daAlink_c::setGhostKandelaarModel (RPX 0x0201bb3c).
+void daAlink_c::setGhostKandelaarModel() {
+    field_0x2f94 = 0;
+
+    static Vec const bobOffset = {0.0f, -33.0f, 0.0f};
+    mDoMtx_stack_c::copy(mpLinkModel->getAnmMtx(mLeftItemJntNo));
+    mDoMtx_stack_c::multVec(&bobOffset, &mGhostKandelaarPos2);
+    mGhostKandelaarPos0 = mGhostKandelaarPos2;
+    mGhostKandelaarPos1 = mGhostKandelaarPos2;
+    mGhostKandelaarFlamePos = mGhostKandelaarPos2;
+    mGhostKandelaarPos3 = cXyz::Zero;
+
+    field_ghost_0x3348 = 0;
+    mGhostFlameScale = 0.0f;
+    mGhostFlameDepth = -1.0f;
+    mGhostPoeExist = checkPoeExist();
+    mGhostPoeRoom = fopAcM_GetRoomNo(this);
+
+    if (mpGhostKanteraFlameModel != NULL) {
+        mpGhostKanteraFlameModel->setBaseScale(cXyz::Zero);
+    }
+
+    mZ2Link.setGhostKanteraState(1);
+}
+#endif

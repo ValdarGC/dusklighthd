@@ -9,7 +9,13 @@
 
 class dTres_c {
 public:
+#if TARGET_PC
+    // TPHD (RPX table 0x100a2ff8) adds the treasure types 0x08 / 0x09 / 0x0A as the type groups
+    // 17 / 18 / 19 (field map grass / game / destination icons).
+    static const int TYPE_GROUP_ENUM_NUMBER = 20;
+#else
     static const int TYPE_GROUP_ENUM_NUMBER = 17;
+#endif
 
     struct data_s {
         /* 0x00 */ u8 mNo;
@@ -116,8 +122,8 @@ public:
         return mTypeGroupData;
     }
 
-    static DUSK_GAME_DATA u8 const typeToTypeGroup[17][2];
-    static DUSK_GAME_DATA type_group_list mTypeGroupListAll[17];
+    static DUSK_GAME_DATA u8 const typeToTypeGroup[TYPE_GROUP_ENUM_NUMBER][2];
+    static DUSK_GAME_DATA type_group_list mTypeGroupListAll[TYPE_GROUP_ENUM_NUMBER];
     static DUSK_GAME_DATA typeGroupData_c* mTypeGroupData;
     static DUSK_GAME_DATA u16 mNum;
 

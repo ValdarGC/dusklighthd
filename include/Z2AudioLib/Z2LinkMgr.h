@@ -30,6 +30,20 @@ public:
     void initKantera(Vec* posPtr);
     void deleteKantera();
     void setKanteraState(u8 state);
+#if TARGET_PC
+    void initGhostKantera(Vec* posPtr) {
+        mGhostKanteraState = 0;
+        mGhostKantera.init(posPtr, 2);
+    }
+    void deleteGhostKantera() {
+        mGhostKanteraState = 0;
+        mGhostKantera.deleteObject();
+    }
+    void setGhostKanteraState(u8 state) {
+        mGhostKanteraState = state;
+    }
+    Z2SoundObjSimple& getGhostKantera() { return mGhostKantera; }
+#endif
     virtual void framework(u32 mapinfo, s8 reverb);
     void setSinkDepth(s8 sinkDepth);
     void setRiding(bool isRiding);
@@ -65,6 +79,10 @@ public:
 
     /* 0x90 Z2LinkSoundStarter */
     /* 0x94 */ Z2SoundObjSimple mKantera;
+#if TARGET_PC
+    /* 0xB4 */ Z2SoundObjSimple mGhostKantera;
+    u8 mGhostKanteraState;
+#endif
     /* 0xB4 */ Vec field_0xb4;
     /* 0xC0 */ u8 mLinkState;
     /* 0xC1 */ u8 field_0xc1;

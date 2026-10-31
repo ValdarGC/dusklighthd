@@ -10,6 +10,9 @@
 #include "d/d_com_inf_game.h"
 #include "m_Do/m_Do_lib.h"
 #include <cstring>
+#if TARGET_PC
+#include "dusk/settings.h"
+#endif
 
 #if TARGET_PC
 #include "d/d_item_data.h"
@@ -98,6 +101,14 @@ const char* daShopItem_c::getShopArcname() {
     case dItemNo_ARMOR_e:
         mShopItemID = SHOP_ITEMNO_ARMOR;
         break;
+#if TARGET_PC
+    case 0xBE:  // TPHD (Wii U 0x02889c40): Malo Mart stamp (stamp 46)
+        if (!dusk::tphd_active()) {
+            return NULL;
+        }
+        mShopItemID = SHOP_ITEMNO_STAMP;
+        break;
+#endif
     default:
         return NULL;
     }
@@ -137,6 +148,9 @@ u16 daShopItem_c::getHeapSize() {
         0x0810, 0x0810, 0x0810, 0x0810, 0x0810, 0x0810, 0x0810, 0x0810,
         0x0EB0, 0x0810, 0x0EB0, 0x3990, 0x3990, 0x8000, 0x0810, 0x1540,
         0x0810, 0x0810, 0x0810, 0x43A0, 0x2280, 0x0810, 0x0810,
+#if TARGET_PC
+        0x1000,
+#endif
     };
 
     u8 a_ShopItemID = getShopItemID();

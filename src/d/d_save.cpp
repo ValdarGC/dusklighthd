@@ -27,6 +27,7 @@
 
 #if TARGET_PC
 #include "dusk/game_mode.hpp"
+#include "d/d_item_data.h"
 #include "dusk/settings.h"
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
@@ -117,7 +118,7 @@ u8 dSv_player_status_a_c::getMixItemIndex(int i_no) const {
 }
 
 u16 dSv_player_status_a_c::getRupeeMax() const {
-    if (mWalletSize < 3) {  // if you make this a default, it wont match. Compiler, pls.
+    if (mWalletSize < 3 IF_DUSK(|| (dusk::tphd_active() && mWalletSize < 4))) {  // if you make this a default, it wont match. Compiler, pls.
         switch (mWalletSize) {
         case WALLET:
             #if TARGET_PC
@@ -137,6 +138,10 @@ u16 dSv_player_status_a_c::getRupeeMax() const {
             #else
             return 1000;
             #endif
+        #if TARGET_PC
+        case 3:  // colossal wallet
+            return 9999;
+        #endif
         }
     }
 
@@ -345,17 +350,34 @@ void dSv_player_item_c::setItem(int i_slotNo, u8 i_itemNo) {
         setLineUpItem();
     }
 
+#if TARGET_PC
+    const int maxSelect = dusk::tphd_active() ? MAX_SELECT_ITEM : (MAX_SELECT_ITEM - 1);
+    for (int i = DEFAULT_SELECT_ITEM_INDEX; i < maxSelect; i++) {
+        if (i_slotNo == dComIfGs_getSelectItemIndex(i)) {
+            dComIfGp_setSelectItem(i);
+        }
+    }
+#else
     for (int i = DEFAULT_SELECT_ITEM_INDEX; i < MAX_SELECT_ITEM - 1; i++) {
         if (i_slotNo == dComIfGs_getSelectItemIndex(i)) {
             dComIfGp_setSelectItem(i);
         }
     }
+#endif
 }
 
 u8 dSv_player_item_c::getItem(int i_slotNo, bool i_checkCombo) const {
     if (i_slotNo < MAX_ITEM_SLOTS) {
         if (i_checkCombo) {
+#if TARGET_PC
+            // TPHD: the R item slot (select index 3) can hold a combo too.
+            for (int i = 0; i < 4; i++) {
+                if (i >= SELECT_ITEM_NUM && i != 3) {
+                    continue;
+                }
+#else
             for (int i = 0; i < SELECT_ITEM_NUM; i++) {
+#endif
                 if ((i_slotNo == dComIfGs_getSelectItemIndex(i) || i_slotNo == dComIfGs_getMixItemIndex(i)) &&
                     dComIfGs_getMixItemIndex(i) != dItemNo_NONE_e)
                 {
@@ -429,6 +451,14 @@ u8 dSv_player_item_c::getItem(int i_slotNo, bool i_checkCombo) const {
 }
 
 void dSv_player_item_c::setLineUpItem() {
+#if TARGET_PC
+    static u8 i_item_lst_hd[24] = {
+        10, 8,  6,  2,  9,  4,  3,
+        0,  1,  23, 20, 5,  15, 16,
+        17, 11, 12, 13, 14, 19, 18,
+        22, 21, 7
+    };
+#endif
     static u8 i_item_lst[23] = {
         10, 8,  6,  2,  9,  4,  3,
         0,  1,  23, 20, 5,  15, 16,
@@ -442,6 +472,17 @@ void dSv_player_item_c::setLineUpItem() {
         mItemSlots[i] = dItemNo_NONE_e;
     }
 
+#if TARGET_PC
+    const u8* lst = dusk::tphd_active() ? i_item_lst_hd : i_item_lst;
+    const int count = dusk::tphd_active() ? 24 : 23;
+    for (int i = 0; i < count; i++) {
+        u8 current = lst[i];
+        if (mItems[current] != dItemNo_NONE_e) {
+            mItemSlots[slot_idx] = current;
+            slot_idx++;
+        }
+    }
+#else
     for (int i = 0; i < 23; i++) {
         u8 current = i_item_lst[i];
         if (mItems[current] != dItemNo_NONE_e) {
@@ -449,6 +490,7 @@ void dSv_player_item_c::setLineUpItem() {
             slot_idx++;
         }
     }
+#endif
 }
 
 u8 dSv_player_item_c::getLineUpItem(int i_slotNo) const {
@@ -1249,6 +1291,10 @@ u8 dSv_event_c::getEventReg(u16 i_reg) const {
     return (u8)i_reg & mEvent[i_reg >> 8];
 }
 
+void dSv_reserve_c::init() {
+    memset(this, 0, sizeof(dSv_reserve_c));
+}
+
 void dSv_MiniGame_c::init() {
     for (int i = 0; i < 1; i++) {
         unk0[i][0] = 0;
@@ -1535,6 +1581,10 @@ void dSv_save_c::init() {
 
     mEvent.init();
     mMiniGame.init();
+#if TARGET_PC
+    // TPHD stamps live in the reserve area: clear it so a new file does not inherit them.
+    reserve.init();
+#endif
 }
 
 dSv_memory2_c* dSv_save_c::getSave2(int i_stage2No) {
@@ -1829,6 +1879,18 @@ int dSv_info_c::memory_to_card(char* card_ptr, int dataNum) {
 
     savedata->getPlayer().getPlayerStatusB().setDateIpl(DUSK_IF_ELSE(OSGetSystemTime(), OSGetTime()));
 
+#if TARGET_PC
+    // TPHD (Wii U memory_to_card 0x02aa8ecc -> 0x02aa7484): remember where the game was saved so
+    // the file select can show the area name. Stored in the reserve area (ignored by GC).
+    if (dusk::tphd_active() && daPy_getPlayerActorClass() != NULL) {
+        stage_stag_info_class* stag = dComIfGp_getStageStagInfo();
+        savedata->getReserve().setTphdLocation(
+            dComIfGp_getStartStageName(), fopAcM_GetRoomNo(daPy_getPlayerActorClass()),
+            dComIfGp_getStartStageLayer(), 0, dComIfGp_getStartStagePoint(),
+            stag != NULL ? (s8)dStage_stagInfo_GetSaveTbl(stag) : 0);
+    }
+#endif
+
     memcpy(card_ptr, savedata, sizeof(dSv_save_c));
     card_ptr += 0x958;
     OS_REPORT("(dSv_player_c) size %d\n", sizeof(dSv_player_c));
@@ -1900,6 +1962,22 @@ int dSv_info_c::card_to_memory(char* i_cardPtr, int i_dataNum) {
     if (dComIfGs_getItem(SLOT_9, true) == dItemNo_HOOKSHOT_e && dComIfGs_getItem(SLOT_10, true) == dItemNo_W_HOOKSHOT_e) {
         dComIfGs_setItem(SLOT_9, dItemNo_NONE_e);
     }
+
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // GC save backwards-compatibility: if the player already talked to Jovani after collecting
+        // 20+ Poe souls (event bit 0x2B6) or 60 souls (0x1CA), but does not have the Ghost Lantern
+        // in SLOT_7, grant it automatically upon loading.
+        if (dComIfGs_getItem(SLOT_7, true) == dItemNo_NONE_e) {
+            if (dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x2B6]) ||
+                dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x1CA]))
+            {
+                dComIfGs_setItem(SLOT_7, dItemNo_GHOST_KANTERA_e);
+                dComIfGs_onItemFirstBit(dItemNo_GHOST_KANTERA_e);
+            }
+        }
+    }
+#endif
 
     dComIfGs_setLineUpItem();
     dComIfGp_setNowVibration(savedata->getPlayer().getConfig().getVibration());
