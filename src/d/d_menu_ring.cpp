@@ -1358,7 +1358,11 @@ void dMenu_Ring_c::setActiveCursor() {
     }
 #endif
     if (mStatus == STATUS_WAIT && mOldStatus != STATUS_EXPLAIN_FORCE && mOldStatus != STATUS_EXPLAIN && mpItemExplain->getStatus() == 0) {
-        if (mDoCPd_c::getTrigR(PAD_1) && !mPlayerIsWolf && item != dItemNo_NONE_e) {
+        // TPHD: combining is on ZL (below) and R assigns the R item slot, so the GC R trigger does
+        // nothing here (a profile that also maps R1 to GC R would combine instead of equipping).
+        if (!DUSK_IF_ELSE(dusk::tphd_active(), false) && mDoCPd_c::getTrigR(PAD_1) && !mPlayerIsWolf &&
+            item != dItemNo_NONE_e)
+        {
             for (int i = 0; i < MAX_SELECT_ITEM; i++) {
                 setSelectItemForce(i);
             }

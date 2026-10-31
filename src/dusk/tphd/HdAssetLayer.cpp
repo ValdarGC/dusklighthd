@@ -1116,9 +1116,9 @@ std::optional<BmgView> parse_bmg(std::span<const u8> b) {
         pos += size;
     }
     if (v.inf == nullptr || v.dat == nullptr || v.mid == nullptr) return std::nullopt;
-    v.count = rd16(v.inf + 8);
+    v.count = std::min(rd16(v.inf + 8), rd16(v.mid + 8));
     v.entrySize = rd16(v.inf + 10);
-    if (v.entrySize < 4 || rd16(v.mid + 8) != v.count) return std::nullopt;
+    if (v.entrySize < 4 || 16 + size_t(rd16(v.inf + 8)) * v.entrySize > rd32(v.inf + 4)) return std::nullopt;
     return v;
 }
 
@@ -1145,7 +1145,10 @@ std::span<const u8> bmg_text(const BmgView& v, u32 i) {
 std::vector<u8> merge_bmg(std::span<const u8> hd, std::span<const u8> mod) {
     const auto h = parse_bmg(hd);
     const auto m = parse_bmg(mod);
-    if (!h || !m) return {};
+    if (!h || !m || h->count != rd16(h->inf + 8)) {
+        HdLog.warn("Text mod: unsupported message file (hd {}, mod {})", h.has_value(), m.has_value());
+        return {};
+    }
     std::unordered_map<u32, u32> modIndex;
     for (u32 i = 0; i < m->count; ++i) modIndex.emplace(rd32(m->mid + 16 + size_t(i) * 4), i);
 
@@ -1191,11 +1194,26 @@ std::vector<u8> merge_message_arc(std::vector<u8> hd, std::vector<u8> mod) {
     if (auto d = tryDecodeYaz0(mod)) mod = std::move(*d);
     if (hd.size() < 0x40 || mod.size() < 0x40 || std::memcmp(hd.data(), "RARC", 4) != 0) return {};
 
-    std::unordered_map<std::string, std::span<const u8>> modFiles;
+    // Files of the mod archive by name; Yaz0 compressed entries are decoded.
+    std::unordered_map<std::string, std::vector<u8>> modFiles;
     for (const auto& f : parseRarcFiles(mod)) {
-        if (!f.compressed && size_t(f.dataOffset) + f.dataSize <= mod.size()) {
-            modFiles.emplace(lower_path(f.path), std::span<const u8>(mod.data() + f.dataOffset, f.dataSize));
+        if (size_t(f.dataOffset) + f.dataSize > mod.size()) continue;
+        std::span<const u8> data(mod.data() + f.dataOffset, f.dataSize);
+        std::vector<u8> bytes;
+        if (auto d = tryDecodeYaz0(data)) {
+            bytes = std::move(*d);
+        } else if (f.compressed) {
+            continue;  // Yay0 or unknown
+        } else {
+            bytes.assign(data.begin(), data.end());
         }
+        std::string name = lower_path(f.path);
+        if (const auto slash = name.rfind('/'); slash != std::string::npos) name = name.substr(slash + 1);
+        modFiles.emplace(std::move(name), std::move(bytes));
+    }
+    if (modFiles.empty()) {
+        HdLog.warn("Text mod: no readable file in the mod archive");
+        return {};
     }
 
     const u8* hdr = hd.data();
@@ -1216,12 +1234,12 @@ std::vector<u8> merge_message_arc(std::vector<u8> hd, std::vector<u8> mod) {
         const u32 size = rd32(e + 12);
         if (dataBase + size_t(off) + size > hd.size()) return {};
         std::vector<u8> data(hd.begin() + dataBase + off, hd.begin() + dataBase + off + size);
-        if (((flagsName >> 24) & 0x84) != 0) {  // per-file Yaz0
-            auto d = tryDecodeYaz0(data);
-            if (!d) return {};
+        if (auto d = tryDecodeYaz0(data)) {  // per-file Yaz0
             data = std::move(*d);
-            wr32(e + 4, flagsName & ~(0x84u << 24));
+        } else if (((flagsName >> 24) & 0x04) != 0) {
+            return {};
         }
+        wr32(e + 4, flagsName & ~(0x84u << 24));
         const char* name = reinterpret_cast<const char*>(hdr + strTbl + (flagsName & 0xFFFFFF));
         if (const auto it = modFiles.find(lower_path(name)); it != modFiles.end() && endsWithSuffixCI(name, ".bmg")) {
             auto m = merge_bmg(data, it->second);
@@ -1250,6 +1268,23 @@ bool is_message_arc(std::string_view lowerPath) {
            lowerPath.ends_with(".arc");
 }
 
+// A GC text mod made for one region still fixes the other region's folder of the Wii U content
+// (US English / French / Spanish <-> UK English / PAL French / PAL Spanish).
+std::string alias_message_path(std::string_view path) {
+    static const std::pair<std::string_view, std::string_view> kAlias[] = {
+        {"/res/msguk/", "/res/Msgus/"},   {"/res/msgus/", "/res/Msguk/"},
+        {"/res/msgfr/", "/res/Msgusfr/"}, {"/res/msgusfr/", "/res/Msgfr/"},
+        {"/res/msgsp/", "/res/Msgussp/"}, {"/res/msgussp/", "/res/Msgsp/"},
+    };
+    const std::string lower = lower_path(path);
+    for (const auto& [from, to] : kAlias) {
+        if (lower.starts_with(from)) {
+            return std::string(to) + std::string(path.substr(from.size()));
+        }
+    }
+    return {};
+}
+
 std::vector<u8> read_mod_overlay_file(void* userData, size_t size) {
     std::vector<u8> out;
     if (g_modOverlayCallbacks == nullptr) return out;
@@ -1273,24 +1308,59 @@ void rebuild_hd_overlay_locked() {
         modPaths.insert(lower_path(f.dvdPath));
     }
 
+    // Message archives of text mods merged with the HD ones, also under the other region's folder
+    // when the mod does not provide it.
+    struct MergedMsg {
+        std::string path;
+        const std::vector<u8>* buffer;
+    };
+    std::vector<MergedMsg> extraMsgs;
+    std::unordered_map<std::string, const std::vector<u8>*> mergedByPath;
+    if (!g_contentPath.empty()) {
+        for (const auto& f : g_modOverlayFiles) {
+            if (!is_message_arc(lower_path(f.dvdPath))) continue;
+            const auto modData = read_mod_overlay_file(f.userData, f.size);
+            for (const std::string& target : {f.dvdPath, alias_message_path(f.dvdPath)}) {
+                if (target.empty() || (target != f.dvdPath && modPaths.contains(lower_path(target)))) continue;
+                auto hd = read_file(g_contentPath / target.substr(1));
+                if (!hd) continue;
+                auto m = merge_message_arc(std::move(*hd), modData);
+                if (m.empty()) {
+                    HdLog.warn("Text mod {}: could not merge with the HD messages", target);
+                    continue;
+                }
+                const auto* buf = &g_mergedOverlayBuffers().emplace_back(std::move(m));
+                HdLog.info("Text mod {} merged with the HD messages{}", target,
+                           target != f.dvdPath ? fmt::format(" (from {})", f.dvdPath) : "");
+                if (target == f.dvdPath) {
+                    mergedByPath[target] = buf;
+                } else {
+                    extraMsgs.push_back({target, buf});
+                    modPaths.insert(lower_path(target));
+                }
+            }
+        }
+    }
+
     std::vector<AuroraOverlayFile> overlayFiles;
     std::vector<HdOverlayEntry*> overlayEntries;  // nullptr for mod files
     g_entryNumToOverlay().clear();
     collect_hd_overlay_files_locked(overlayFiles, overlayEntries, modPaths);
 
+    static std::list<std::string> s_extraPaths;  // stable c_str for aurora
+    for (const auto& x : extraMsgs) {
+        overlayFiles.push_back({
+            .fileName = s_extraPaths.emplace_back(x.path).c_str(),
+            .userData = &g_overlaySources().emplace_back(OverlaySource{false, nullptr, x.buffer}),
+            .size = x.buffer->size(),
+        });
+        overlayEntries.push_back(nullptr);
+    }
+
     // Old merged buffers stay alive: a file opened from another thread may still read them.
     for (const auto& f : g_modOverlayFiles) {
-        const std::vector<u8>* merged = nullptr;
-        if (!g_contentPath.empty() && is_message_arc(lower_path(f.dvdPath))) {
-            auto hd = read_file(g_contentPath / f.dvdPath.substr(1));
-            if (hd) {
-                auto m = merge_message_arc(std::move(*hd), read_mod_overlay_file(f.userData, f.size));
-                if (!m.empty()) {
-                    merged = &g_mergedOverlayBuffers().emplace_back(std::move(m));
-                    HdLog.info("Text mod {} merged with the HD messages", f.dvdPath);
-                }
-            }
-        }
+        const auto mergedIt = mergedByPath.find(f.dvdPath);
+        const std::vector<u8>* merged = mergedIt != mergedByPath.end() ? mergedIt->second : nullptr;
         overlayFiles.push_back({
             .fileName = f.dvdPath.c_str(),
             .userData = &g_overlaySources().emplace_back(OverlaySource{true, f.userData, merged}),

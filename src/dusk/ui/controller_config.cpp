@@ -18,9 +18,36 @@
 #include "dusk/action_bindings.h"
 #include "dusk/config.hpp"
 #include "dusk/gamepad_color.h"
+#include "dusk/settings.h"
 
 namespace dusk::ui {
 namespace {
+
+// TPHD mode: the game buttons as the Wii U Pro Controller names them (Wii U L = GC Z, ZL / ZR =
+// GC L / R, + = Start). The Wii U R item slot is the "Extra Item Button (R)" action binding.
+const char* game_button_name(PADButton button) {
+    if (dusk::tphd_active()) {
+        switch (button) {
+        case PAD_TRIGGER_Z: return "L";
+        case PAD_TRIGGER_L: return "ZL";
+        case PAD_TRIGGER_R: return "ZR";
+        case PAD_BUTTON_START: return "+";
+        default: break;
+        }
+    }
+    return PADGetButtonName(button);
+}
+
+const char* game_axis_name(PADAxis axis) {
+    if (dusk::tphd_active()) {
+        switch (axis) {
+        case PAD_AXIS_TRIGGER_L: return "Trigger ZL";
+        case PAD_AXIS_TRIGGER_R: return "Trigger ZR";
+        default: break;
+        }
+    }
+    return PADGetAxisName(axis);
+}
 
 bool keyboard_active(int port) {
     u32 count = 0;
@@ -452,7 +479,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
             auto addKeyButton = [&](PADButton button) {
                 pane.add_select_button(
                         {
-                            .key = PADGetButtonName(button),
+                            .key = game_button_name(button),
                             .getValue =
                                 [this, port, button] {
                                     if (mPendingKeyButton == static_cast<int>(button)) {
@@ -513,7 +540,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
             }
 
             pane.add_select_button({
-                                       .key = PADGetButtonName(mapping.padButton),
+                                       .key = game_button_name(mapping.padButton),
                                        .getValue =
                                            [this, &mapping, gamepad] {
                                                if (mPendingButtonMapping == &mapping) {
@@ -540,7 +567,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
             }
 
             pane.add_select_button({
-                                       .key = PADGetButtonName(mapping.padButton),
+                                       .key = game_button_name(mapping.padButton),
                                        .getValue =
                                            [this, &mapping, gamepad] {
                                                if (mPendingButtonMapping == &mapping) {
@@ -565,7 +592,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
             auto addKeyButton = [&](PADButton button) {
                 pane.add_select_button(
                         {
-                            .key = PADGetButtonName(button),
+                            .key = game_button_name(button),
                             .getValue =
                                 [this, port, button] {
                                     if (mPendingKeyButton == static_cast<int>(button)) {
@@ -597,7 +624,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
             auto addKeyAxis = [&](PADAxis axis) {
                 pane.add_select_button(
                         {
-                            .key = PADGetAxisName(axis),
+                            .key = game_axis_name(axis),
                             .getValue =
                                 [this, port, axis] {
                                     if (mPendingKeyAxis == static_cast<int>(axis)) {
@@ -655,7 +682,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
                 }
                 PADAxisMapping& mapping = axes[axis];
                 pane.add_select_button({
-                                           .key = PADGetAxisName(mapping.padAxis),
+                                           .key = game_axis_name(mapping.padAxis),
                                            .getValue =
                                                [this, &mapping, gamepad] {
                                                    if (mPendingAxisMapping == &mapping) {
@@ -683,7 +710,7 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
                         continue;
                     }
                     pane.add_select_button({
-                                               .key = PADGetButtonName(mapping.padButton),
+                                               .key = game_button_name(mapping.padButton),
                                                .getValue =
                                                    [this, &mapping, gamepad] {
                                                        if (mPendingButtonMapping == &mapping) {
