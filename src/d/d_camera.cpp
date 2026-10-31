@@ -321,6 +321,14 @@ static int specialType[42];
 
 static int Stage;
 
+#if TARGET_PC
+// TPHD "Aim: 3rd Person" option (RPX FUN_028d9eb8: save config +0xa bit 4). The Wii U camera
+// reads it in nextMode, nextType, Run, bumpCheck and subjectCamera.
+static bool camAimThirdPerson() {
+    return dusk::getSettings().game.aimThirdPerson.getValue();
+}
+#endif
+
 #if WIDESCREEN_SUPPORT
 static f32 WideTurnSaving = 0.86f + OREG_F(1);
 #endif
@@ -1256,6 +1264,12 @@ bool dCamera_c::Run() {
             mBumpCheckFlags = 0x2000;
         }
 #endif
+#if TARGET_PC
+        // RPX dCamera_c::Run: over the shoulder aim only does the short shoulder bump check.
+        if (camAimThirdPerson() && mCurMode == 7 && !dComIfGp_checkPlayerStatus0(mPadID, 0x200000)) {
+            mBumpCheckFlags = 0x2000;
+        }
+#endif
     }
 
     mFovy = mViewCache.mFovy;
@@ -1757,7 +1771,16 @@ s32 dCamera_c::nextMode(s32 i_curMode) {
             next_mode = 2;
         } else if (check_owner_action(mPadID, 0x200000)) {
 #else
+#if TARGET_PC
+        } else if (check_owner_action(mPadID, 0x200000) && camAimThirdPerson() &&
+                   attn->LockonTruth()) {
+            // RPX 0x028dae5c: 3rd person aim, subjective while locked on -> lock-on camera.
+            next_mode = 2;
+        } else if (check_owner_action(mPadID, 0x200000) &&
+                   (camAimThirdPerson() || !attn->Lockon())) {
+#else
         } else if (check_owner_action(mPadID, 0x200000) && !attn->Lockon()) {
+#endif
 #endif
             if (check_owner_action(mPadID, 0x25040)) {
                 next_mode = 7;
@@ -1797,9 +1820,11 @@ s32 dCamera_c::nextMode(s32 i_curMode) {
             next_mode = 2;
         } else if (check_owner_action(mPadID, 0x12000)) {
             next_mode = 4;
-        } else if (check_owner_action(mPadID, 0x25040) && !attn->Lockon()) {
+        } else if (check_owner_action(mPadID, 0x25040) &&
+                   (IF_DUSK(camAimThirdPerson() ||) !attn->Lockon())) {
             next_mode = 7;
-        } else if ((check_owner_action(mPadID, 0x80480) && !attn->Lockon())
+        } else if ((check_owner_action(mPadID, 0x80480) &&
+                    (IF_DUSK(camAimThirdPerson() ||) !attn->Lockon()))
                                                         || link->checkHawkWait()) {
             next_mode = 8;
         } else if (check_owner_action(mPadID, 0x4000000) || link->checkChainBlockPushPull()) {
@@ -1811,13 +1836,14 @@ s32 dCamera_c::nextMode(s32 i_curMode) {
                             && !check_owner_action(mPadID, 0x36A02311) && mFastShotState == 0
                             && !check_owner_action1(mPadID, 0x11)) {
             mpLockonTarget = get_boomerang_actor(mpPlayerActor);
-            next_mode = 2;
+            // RPX 0x028dae5c: 3rd person aim keeps the aiming camera (8) instead of the lock-on one.
+            next_mode = DUSK_IF_ELSE(camAimThirdPerson() ? 8 : 2, 2);
             mLockOnActorID = -1;
             mFastShotState = 1;
         } else if ((link->checkCopyRodThrowAfter() || link->checkCopyRodAtnKeep())
                                     && link->getCopyRodCameraActor() == NULL) {
             mpLockonTarget = link->getCopyRodActor();
-            next_mode = 2;
+            next_mode = DUSK_IF_ELSE(camAimThirdPerson() ? 8 : 2, 2);
             mLockOnActorID = -1;
             mFastShotState = 1;
         } else if (link->checkSpinnerRideWait()) {
@@ -1958,7 +1984,12 @@ s32 dCamera_c::nextType(s32 i_curType) {
             }
 
             if (check_owner_action(mPadID, 0x200000) && ChangeModeOK(4)
+#if TARGET_PC
+                && !(camAimThirdPerson() ? dComIfGp_getAttention()->LockonTruth()
+                                         : dComIfGp_getAttention()->Lockon())) {
+#else
                                                      && !dComIfGp_getAttention()->Lockon()) {
+#endif
                 next_type = specialType[CAM_TYPE_SCOPE];
                 var_r28 = 0x6f;
             } else if (iVar14 != 0xff && !(mTagCamTool.mFlags & 0x10)) {
@@ -2975,6 +3006,22 @@ bool dCamera_c::bumpCheck(u32 i_flags) {
     cXyz vec = eye + norm_dir_vec * gaze_back_margin;
     bool var_r26 = false;
 
+#if TARGET_PC
+    if (camAimThirdPerson() && (i_flags & 0x2000)) {
+        // RPX bumpCheck 0x028dd6f4, over the shoulder branch: probe 20 units behind the eye,
+        // pull in to 70 when blocked and ease the distance by 25% per frame.
+        f32 radius = direction.R();
+        cXyz probe = center + norm_dir_vec * 20.0f;
+        if (lineBGCheck(&center, &probe, 0x40b7)) {
+            setFlag(0x80);
+            if (radius > 70.0f) {
+                radius = 70.0f;
+            }
+        }
+        direction.R((radius - mDirection.R()) * 0.25f + mDirection.R());
+        eye = center + direction.Xyz();
+    } else
+#endif
     if (i_flags & 0xb7) {
         if (lineBGCheck(&center, &vec, &lin_chk1, i_flags)) {
 #if DEBUG
@@ -6901,6 +6948,11 @@ bool dCamera_c::SaveZoomRatio() {
 }
 
 bool dCamera_c::subjectCamera(s32 param_0) {
+#if TARGET_PC
+    if (camAimThirdPerson()) {
+        return subjectCameraTphd(param_0);
+    }
+#endif
     f32 val0 = mCamParam.Val(param_0, 0);
     f32 val2 = mCamParam.Val(param_0, 2);
     f32 val1 = mCamParam.Val(param_0, 1);
@@ -7273,6 +7325,492 @@ bool dCamera_c::subjectCamera(s32 param_0) {
 
     return true;
 }
+
+#if TARGET_PC
+// RPX dCamera_c::subjectCamera 0x028ea950 with "Aim: 3rd Person" on (FUN_028d9eb8 == 1 folded):
+// over the shoulder aiming that follows the side Link faces, swaps shoulder against walls, keeps
+// the camera aim while locked on (and shifts it with Link's movement), and frames the thrown
+// boomerang / Dominion Rod statue. Non-TV parts (DRC display, GamePad pointer) are left out.
+bool dCamera_c::subjectCameraTphd(s32 param_0) {
+    struct SubjectDataTphd {
+        SubjectData base;        // 0x00
+        f32 field_0x50;          // 0x50
+        f32 field_0x54;          // 0x54
+        u8 field_0x58[0x78 - 0x58];
+        cXyz mEyeStart;          // 0x78: player eye position when the style started
+        bool mEyeBlocked;        // 0x84: center -> eye line blocked
+    };
+    static_assert(sizeof(SubjectDataTphd) <= sizeof(mWork), "subject work");
+
+    f32 val0 = mCamParam.Val(param_0, 0);
+    f32 val1 = mCamParam.Val(param_0, 1);
+    f32 val2 = mCamParam.Val(param_0, 2);
+    f32 val4 = mCamParam.Val(param_0, 4);
+    f32 val7 = mCamParam.Val(param_0, 7);
+    f32 val10 = mCamParam.Val(param_0, 10);
+    f32 val16 = mCamParam.Val(param_0, 16);
+    f32 val17 = mCamParam.Val(param_0, 17);
+    f32 val18 = mCamParam.Val(param_0, 18);
+    f32 val19 = mCamParam.Val(param_0, 19);
+    f32 val20 = mCamParam.Val(param_0, 20);
+    f32 val21 = mCamParam.Val(param_0, 21);
+    f32 val22 = mCamParam.Val(param_0, 22);
+    f32 val25 = mCamParam.Val(param_0, 25);
+    f32 val26 = mCamParam.Val(param_0, 26);
+
+    daAlink_c* player = (daAlink_c*)mpPlayerActor;
+    SubjectDataTphd* sub = (SubjectDataTphd*)mWork;
+    SubjectData* subject = &sub->base;
+
+    const bool sp14 = check_owner_action(mPadID, 0x1040) != 0;
+    const bool sp13 = check_owner_action(mPadID, 0x4000) != 0;
+    const bool sp12 = check_owner_action(mPadID, 0x400) != 0;
+    const bool sp0F = check_owner_action(mPadID, 0x40) != 0;
+    const bool throwAim = check_owner_action(mPadID, 0x400000) != 0;
+    const bool copyRodAfter = player->checkCopyRodThrowAfter() != 0;
+    const bool magne_boots_on = player->checkMagneBootsOn() != 0;
+    const bool subjective = check_owner_action(mPadID, 0x200000) != 0;
+
+    if (sp14 || sp13) {
+        val1 = -10.0f;
+    }
+    if (check_owner_action(mPadID, 0x80080) || throwAim) {
+        val2 = 50.0f;
+    }
+    if (mIsWolf == 1 && val1 > -20.0f) {
+        val1 = -20.0f;
+    }
+
+    if (mCurCamStyleTimer == 0) {
+        subject->field_0x0 = 'SUBN';
+        subject->field_0x2a.Val(mViewCache.mDirection.U().Inv());
+        subject->field_0x28 = mViewCache.mDirection.V();
+        subject->field_0x14 = check_owner_action1(mPadID, 0x2000000) ? 2 : 7;
+        subject->field_0x10 = 0;
+        subject->mZoomRatio = mZoomRatio;
+        subject->field_0x1c = false;
+        subject->field_0x1d = false;
+        mZoomRatio = 0.0f;
+        subject->field_0x20 = 0.0f;
+        sub->field_0x50 = 0.0f;
+        sub->field_0x54 = 0.0f;
+        subject->field_0x18 = param_0;
+        if (sp14 || sp12 || sp13) {
+            // Shoulder on the side Link faces (GC: hookshot hand for the hookshot).
+            subject->field_0x1d = directionOf(mpPlayerActor) - mViewCache.mDirection.U() > cSAngle::_0;
+        }
+    }
+    if (subject->field_0x1d) {
+        val0 = -val0;
+    }
+
+    cXyz up_vec;
+    MtxP mtx;
+    MtxP inv_mtx;
+    if (magne_boots_on) {
+        up_vec = *player->getMagneBootsTopVec();
+        mtx = player->getMagneBootsMtx();
+        inv_mtx = player->getMagneBootsInvMtx();
+    } else {
+        up_vec = cXyz::BaseY;
+        mtx = mDoMtx_getIdentity();
+        inv_mtx = mDoMtx_getIdentity();
+    }
+
+    cSAngle angle_x = player->getCameraAngleX();
+    cSAngle angle_y = player->getCameraAngleY();
+    s16 bow_angle_x, bow_angle_y;
+    cXyz* bow_pos = player->checkBowCameraArrowPosP(&bow_angle_x, &bow_angle_y);
+    cXyz base_pos;
+
+    if (subjective && bow_pos != NULL) {
+        base_pos = *bow_pos;
+        angle_x.Val(bow_angle_x);
+        angle_y.Val(bow_angle_y);
+        subject->field_0x2e = angle_x;
+        subject->field_0x2c = angle_y;
+    } else if (throwAim || copyRodAfter) {
+        // Thrown boomerang / Dominion Rod: look partly toward it (more when far, up to 1000).
+        base_pos = *player->getSubjectEyePos();
+        fopAc_ac_c* target = throwAim ? get_boomerang_actor(mpPlayerActor) : player->getCopyRodActor();
+        mpLockonTarget = target;
+        if (target != NULL) {
+            cSGlobe globe(base_pos - attentionPos(target));
+            f32 rate = globe.R() > 1000.0f ? 0.8f : (globe.R() / 1000.0f) * 0.7f + 0.1f;
+            angle_x = subject->field_0x2e + (globe.V() - subject->field_0x2e) * rate;
+            angle_y = subject->field_0x2c + (cSAngle(globe.U().Inv()) - subject->field_0x2c) * rate;
+        } else {
+            angle_x = subject->field_0x2e;
+            angle_y = subject->field_0x2c;
+        }
+    } else if (player->checkIronBallThrowReturnMode()) {
+        base_pos = attentionPos(mpPlayerActor);
+        cXyz* iron_ball_pos = player->getIronBallCenterPos();
+        cSGlobe globe = base_pos - *iron_ball_pos;
+        if (cXyz(*iron_ball_pos - base_pos).abs() > 200.0f) {
+            angle_x = globe.V();
+            angle_y = globe.U().Inv();
+        } else {
+            angle_x = subject->field_0x28;
+            angle_y = subject->field_0x2a;
+        }
+        angle_x += cSAngle(5.0f);
+        subject->field_0x2e = angle_x;
+        subject->field_0x2c = angle_y;
+    } else if (sp12) {
+        base_pos = attentionPos(mpPlayerActor);
+        subject->field_0x28 = angle_x;
+        subject->field_0x2a = angle_y;
+        angle_x += cSAngle(5.0f);
+        subject->field_0x2e = angle_x;
+        subject->field_0x2c = angle_y;
+    } else {
+        base_pos = *player->getSubjectEyePos();
+        subject->field_0x2e = angle_x;
+        subject->field_0x2c = angle_y;
+    }
+
+    if (magne_boots_on) {
+        cXyz player_pos = positionOf(mpPlayerActor);
+        subject->field_0x4 = mViewCache.mCenter - player_pos;
+        subject->field_0x30 = mViewCache.mEye - player_pos;
+        mDoMtx_multVecSR(inv_mtx, &subject->field_0x4, &subject->field_0x4);
+        mDoMtx_multVecSR(inv_mtx, &subject->field_0x30, &subject->field_0x30);
+        subject->field_0x4 += player_pos;
+        subject->field_0x30 += player_pos;
+        subject->field_0x48.Val(subject->field_0x30 - subject->field_0x4);
+    }
+
+    if (mCurCamStyleTimer == 0) {
+        sub->mEyeStart = mpPlayerActor->eyePos;
+        subject->field_0x4 = mViewCache.mCenter;
+        subject->field_0x30 = mViewCache.mEye;
+        subject->field_0x48 = mViewCache.mDirection;
+        subject->field_0x3c = mUp;
+        field_0x738 = val16;
+    }
+
+    // Gear / style values (RPX 0x028eb4f8 .. 0x028ebbd0).
+    const bool gear_free = mGear == -1 || (check_owner_action1(mPadID, 0x2000000) && mCurMode != 4);
+    bool canoe = false;
+    f32 horse_ratio = 1.0f;
+    if (!gear_free) {
+        if (player->checkHorseRide()) {
+            f32 r = fabsf(cSAngle(player->getBodyAngleY()).Degree() / 110.0f);
+            if (r <= 1.0f) {
+                horse_ratio = r;
+            }
+        } else if (player->checkCanoeRide()) {
+            canoe = true;
+        }
+    }
+
+    bool lock_fixed = false;  // RPX bVar5
+    if (mCurType == specialType[CAM_TYPE_SCOPE]) {
+        mGear = 0;
+        clrFlag(0x100);
+        mCamParam.SetFlag(0x10);
+        mCamParam.SetFlag(4);
+    } else if (mCurMode == 4) {
+        if (-mCamSetup.mCStick.SwTHH() <= mPadInfo.mCStick.mLastPosY) {
+            mGear = -1;
+            mCStickYState = 0;
+        } else if (mCStickYState == -1) {
+            mGear = -1;
+            mCStickYState = -1;
+        } else {
+            mGear = 0;
+            setComStat(0x2000);
+            mCStickYState = -1;
+        }
+    } else if (sp12 || player->checkIronBallThrowReturnMode()) {
+        val0 = 0.0f;
+        val2 = 40.0f;
+        val1 = 50.0f;
+        val7 = 270.0f;
+        val17 = 70.0f;
+    } else if (sp13 || sp14) {
+        if (check_owner_action1(mPadID, 0x2000000) && mCurMode != 4) {
+            val19 = 10.0f;
+            val20 = -15.0f;
+            val21 = 10.0f;
+            lock_fixed = true;
+        }
+        if (sp13 && mCurMode == 7) {
+            val21 += 3.5f;
+        }
+        if (gear_free) {
+            subject->field_0x20 += (1.0f - subject->field_0x20) * 0.3f;
+        } else {
+            subject->field_0x20 -= subject->field_0x20 * 0.3f;
+        }
+        const f32 rate = subject->field_0x20;
+        if (!sp13) {
+            if (sp0F) {
+                val2 -= val2 * rate;
+                val1 += (val26 - val1) * rate;
+                val7 += (val10 - val7) * rate;
+                val0 += (19.0f - val0) * rate;
+            } else if (!sp14) {
+                val0 -= val0 * rate;
+                val2 -= val2 * rate;
+                val1 -= val1 * rate;
+                val7 += (20.0f - val7) * rate;
+            } else {
+                val2 += (val4 - val2) * rate;
+                val7 += (val10 - val7) * rate;
+                val1 += (val26 - val1) * rate;
+                val0 += (val25 - val0) * rate;
+            }
+        } else if (player->getHookshotLeft()) {
+            val2 += (val19 - val2) * rate;
+            val7 += (val10 - val7) * rate;
+            val1 += (val21 - val1) * rate;
+            val0 += (val20 - val0) * rate;
+        } else {
+            val2 += (val19 - val2) * rate;
+            val0 += (-val20 - val0) * rate;
+            val1 += (val21 - val1) * rate;
+            val7 += (val10 - val7) * rate;
+        }
+    }
+
+    // Aiming camera distance (RPX 0x028eb964 .. 0x028ebbd0).
+    bool aim_mode = false;  // RPX bVar6
+    bool check_hawk = true;
+    bool check_mode4 = true;
+    if (mCurMode == 7 || mCurMode == 8) {
+        check_mode4 = false;
+        if (!subjective) {
+            aim_mode = true;
+            if (gear_free || !canoe) {
+                check_mode4 = true;
+                if (!player->checkHorseRide()) {
+                    if (check_owner_action1(mPadID, 0x2000000)) {
+                        // nothing
+                    } else if (mCurMode == 8) {
+                        check_mode4 = false;
+                    } else {
+                        const f32 lim = (Stage == 0x6B && angle_x.Val() < 0) ? 40.0f : 90.0f;
+                        f32 d = fabsf(angle_x.Degree());
+                        if (d > 40.0f) {
+                            d = 40.0f;
+                        }
+                        if (lim < val7) {
+                            val7 += (lim - val7) * (d / 40.0f);
+                        }
+                    }
+                } else {
+                    const f32 lim = mCurMode == 8 ? 140.0f : 80.0f;
+                    if (horse_ratio > 0.8f) {
+                        setComStat(0x40);
+                    }
+                    if (lim < val7) {
+                        val7 += (lim - val7) * horse_ratio;
+                    }
+                    const f32 lim2 = angle_x.Val() < 0 ? (mCurMode == 8 ? 120.0f : 70.0f) : val7;
+                    f32 d = fabsf(angle_x.Degree());
+                    if (d > 40.0f) {
+                        d = 40.0f;
+                    }
+                    val7 += (lim2 - val7) * (d / 40.0f);
+                }
+            } else {
+                val7 = 80.0f;
+            }
+        }
+    }
+    if (check_mode4 && mCurMode == 4 && getComStat(0x800)) {
+        val2 = 50.0f;
+        check_hawk = false;
+    }
+    if (check_hawk && player->checkHawkWait()) {
+        val7 = 150.0f;
+        val2 = 20.0f;
+    }
+
+    if (mCamParam.Flag(param_0, 0x4000)) {
+        setFlag(0x800);
+    }
+    if (lock_fixed && mCamParam.Flag(param_0, 0x20)) {
+        setFlag(0x10000000);
+    }
+
+    cXyz center_ofs(val0, val2, val1);
+    if (aim_mode && mHoldLockL && !mDoCPd_c::getHoldB(mPadID) && !player->checkHorseRide() &&
+        !player->checkCanoeRide())
+    {
+        // Locked on while aiming: the shoulder offset follows Link's step and jump.
+        center_ofs.x -= mMonitor.field_0x14.field_0x0.x * 0.2f;
+        center_ofs.z -= mMonitor.field_0x14.field_0x0.z * 0.2f;
+        f32 dy = (sub->mEyeStart.y - mpPlayerActor->eyePos.y) * 0.5f;
+        if (dy < -5.0f) {
+            dy = -5.0f;
+        } else if (dy > 5.0f) {
+            dy = 5.0f;
+        }
+        if (mMonitor.field_0xc < 10.0f) {
+            dy *= mMonitor.field_0xc / 10.0f;
+        }
+        center_ofs.y -= dy;
+    }
+
+    cXyz tmp = dCamMath::xyzRotateX(center_ofs, angle_x);
+    center_ofs = dCamMath::xyzRotateY(tmp, angle_y);
+    cXyz eye_ofs(0.0f, sp12 ? 40.0f : 0.0f, -val7);
+    tmp = dCamMath::xyzRotateX(eye_ofs, angle_x);
+    eye_ofs = dCamMath::xyzRotateY(tmp, angle_y);
+    if (magne_boots_on) {
+        mDoMtx_multVecSR(mtx, &center_ofs, &center_ofs);
+        mDoMtx_multVecSR(mtx, &eye_ofs, &eye_ofs);
+    }
+
+    f32 center_rate = 1.0f;
+    f32 eye_rate = 1.0f;
+    if (player->checkIronBallThrowReturnMode()) {
+        center_rate = eye_rate = 0.1f;
+    } else if (throwAim || copyRodAfter) {
+        // Pull the eye back while the thrown object leaves the middle of the screen.
+        if (mpLockonTarget != NULL) {
+            scissor_class* scissor = get_window(field_0x0)->getScissor();
+            const f32 hw = scissor->width * 0.5f;
+            const f32 hh = scissor->height * 0.5f;
+            cXyz target_pos = attentionPos(mpLockonTarget);
+            cXyz proj;
+            mDoLib_project(&target_pos, &proj);
+            f32 ex = fabsf((proj.x - hw) / hw);
+            f32 ey = fabsf((proj.y - hh) / hh);
+            if (ey < ex) {
+                ey = ex;
+            }
+            eye_rate = dCamMath::rationalBezierRatio(ey, 0.5f) * 0.2f;
+        } else {
+            eye_rate = 0.0f;
+        }
+        if (mMonitor.field_0xc > 5.0f) {
+            eye_rate = 1.0f;
+        }
+    }
+
+    cXyz center = base_pos + center_ofs;
+    dBgS_CamLinChk lin_chk;
+    if (mIsWolf == 1) {
+        cXyz pos = positionOf(mpPlayerActor);
+        pos.y = base_pos.y;
+        if (lineBGCheck(&pos, &center, &lin_chk, 0x40b7)) {
+            cM3dGPla plane;
+            dComIfG_Bgsp().GetTriPla(lin_chk, &plane);
+            center = lin_chk.GetCross();
+            center += *plane.GetNP() * 5.0f;
+        }
+    } else if (mCurMode == 7 && lineBGCheck(&base_pos, &center, &lin_chk, 0x40b7)) {
+        // The shoulder is in a wall: if the other one is free, swap and settle again.
+        cXyz alt(-val0, val2, val1);
+        tmp = dCamMath::xyzRotateX(alt, angle_x);
+        alt = dCamMath::xyzRotateY(tmp, angle_y);
+        if (magne_boots_on) {
+            mDoMtx_multVecSR(mtx, &alt, &alt);
+        }
+        cXyz alt_center = base_pos + alt;
+        if (!lineBGCheck(&base_pos, &alt_center, &lin_chk, 0x40b7)) {
+            subject->field_0x10 = 0;
+            subject->field_0x1d = !subject->field_0x1d;
+            mStyleSettle.mFinished = false;
+        }
+    }
+
+    center = mViewCache.mCenter + (center - mViewCache.mCenter) * center_rate;
+    cXyz eye = center + eye_ofs;
+    eye = mViewCache.mEye + (eye - mViewCache.mEye) * eye_rate;
+
+    cXyz up;
+    if (magne_boots_on) {
+        setFlag(0x10);
+        up = up_vec;
+    } else {
+        up = cXyz::BaseY;
+    }
+
+    if ((mCurMode == 7 || mCurMode == 8) && !subjective) {
+        sub->mEyeBlocked = lineBGCheck(&center, &eye, 0x40b7);
+    }
+
+    if (!mStyleSettle.mFinished) {
+        cSGlobe globe = eye - center;
+        f32 t = 1.0f / (subject->field_0x14 - subject->field_0x10);
+        mViewCache.mCenter += (center - mViewCache.mCenter) * t;
+        mViewCache.mDirection.R(mViewCache.mDirection.R() + (globe.R() - mViewCache.mDirection.R()) * t);
+        mViewCache.mDirection.V(mViewCache.mDirection.V() + (globe.V() - mViewCache.mDirection.V()) * t);
+        mViewCache.mDirection.U(mViewCache.mDirection.U() + (globe.U() - mViewCache.mDirection.U()) * t);
+        mViewCache.mEye = mViewCache.mCenter + mViewCache.mDirection.Xyz();
+        mViewCache.mFovy += (val17 - mViewCache.mFovy) * t;
+        subject->field_0x3c += (up - subject->field_0x3c) * t;
+        up = subject->field_0x3c.norm();
+
+        if (subject->field_0x10 == subject->field_0x14 - 1) {
+            mStyleSettle.mFinished = true;
+        }
+        subject->field_0x10++;
+
+        if (magne_boots_on) {
+            mUpOverride.field_0x0 = mViewCache.mCenter;
+            mUpOverride.field_0xc = mViewCache.mEye;
+            mUpOverride.field_0x24 = mViewCache.mDirection;
+            mUpOverride.field_0x18 = up;
+        }
+        return true;
+    }
+
+    mViewCache.mCenter = center;
+    mViewCache.mEye = eye;
+    mViewCache.mDirection.Val(mViewCache.mEye - mViewCache.mCenter);
+    mUpOverride.field_0x0 = mViewCache.mCenter;
+    mUpOverride.field_0xc = mViewCache.mEye;
+    mUpOverride.field_0x24 = mViewCache.mDirection;
+    mUpOverride.field_0x18 = up;
+
+    if (mCamParam.Flag(param_0, 0x400)) {
+        f32 zoom_in = 0.0f;
+        f32 zoom_out = 0.0f;
+        int zoom_dir = 0;
+        if (mPadInfo.mCStick.mLastPosY > 0.01f) {
+            zoom_in = dCamMath::rationalBezierRatio(mPadInfo.mCStick.mLastPosY, mCamSetup.CurveWeight());
+            zoom_dir = -1;
+        } else if (mPadInfo.mCStick.mLastPosY < -0.01f) {
+            zoom_out = dCamMath::rationalBezierRatio(-mPadInfo.mCStick.mLastPosY, mCamSetup.CurveWeight());
+            zoom_dir = 1;
+        }
+        f32 ratio = subject->mZoomRatio + val18 * (zoom_in - zoom_out) * 0.1f;
+        if (ratio < 0.0f) {
+            subject->mZoomRatio = 0.0f;
+        } else if (ratio > 1.0f) {
+            subject->mZoomRatio = 1.0f;
+        } else {
+            subject->mZoomRatio = ratio;
+            if (zoom_dir == -1) {
+                mDoAud_seStartLevel(Z2SE_AL_HAWK_EYE_ZOOMIN, NULL, 0, 0);
+            } else if (zoom_dir == 1) {
+                mDoAud_seStartLevel(Z2SE_AL_HAWK_EYE_ZOOMOUT, NULL, 0, 0);
+            }
+        }
+        if (subject->mZoomRatio == 0.0f || subject->mZoomRatio == 0.5f || subject->mZoomRatio == 1.0f) {
+            zoom_in = zoom_out = 0.0f;
+        }
+        f32 scale = subject->mZoomRatio * 8.0f + 1.0f;
+        f32 zoom_fovy = dCamMath::zoomFovy(val17 * 0.5f, scale) * 2.0f;
+        mViewCache.mFovy += (zoom_fovy - mViewCache.mFovy) * val22;
+        setComZoomScale(scale);
+        setComZoomForcus(1.0f - fabsf(zoom_in - zoom_out) * -511.0f);
+        if (subjective) {
+            setComStat(8);
+        }
+    } else {
+        mViewCache.mFovy = val17;
+    }
+
+    return true;
+}
+#endif
 
 bool dCamera_c::magneCamera(s32 param_0) {
     f32 val5 = mCamParam.Val(param_0, 5);

@@ -19,6 +19,9 @@
 #include "c/c_damagereaction.h"
 #include "Z2AudioLib/Z2Instances.h"
 #include <cstring>
+#if TARGET_PC
+#include "dusk/settings.h"
+#endif
 
 #if TARGET_PC
 #include "dusk/interp/frame_interpolation.h"
@@ -2877,6 +2880,20 @@ static void demo_camera(npc_ne_class* i_this) {
     }
 }
 
+#if TARGET_PC
+namespace {
+// TPHD (Wii U message() 0x025d6d7c, extra fields +0xcc8 / +0xccc): Jovani's cat (Gengle) gives its
+// rupees through a flow "item" event (item 7) and, while the "Rupee" stamp (stamp 26) is not owned,
+// chains flow 0x479 that gives it (item 0x98). Kept out of npc_ne_class (one cat at a time).
+struct NeTphd {
+    fpc_ProcID owner;
+    int pendingFlow;         // +0xcc8
+    fpc_ProcID itemPartner;  // +0xccc
+};
+NeTphd s_neTphd = {fpcM_ERROR_PROCESS_ID_e, 0, fpcM_ERROR_PROCESS_ID_e};
+}  // namespace
+#endif
+
 static int message(npc_ne_class* i_this) {
     // See comment in daNpc_Ne_Draw
 #if AVOID_UB
@@ -2889,11 +2906,52 @@ static int message(npc_ne_class* i_this) {
         }
     }
 
+#if TARGET_PC
+    const bool tphdCat = dusk::tphd_active() && i_this->mIsGengle == 1;
+    if (tphdCat) {
+        if (s_neTphd.owner != fopAcM_GetID(i_this)) {
+            s_neTphd.owner = fopAcM_GetID(i_this);
+            s_neTphd.pendingFlow = 0;
+            s_neTphd.itemPartner = fpcM_ERROR_PROCESS_ID_e;
+        }
+        if (s_neTphd.pendingFlow != 0 && !dComIfGp_event_runCheck()) {
+            fopAcM_orderTalkEvent(dComIfGp_getPlayer(0), i_this, 0, 0);
+        }
+        if (s_neTphd.itemPartner != fpcM_ERROR_PROCESS_ID_e && dComIfGp_event_runCheck() &&
+            strcmp(dComIfGp_getEventManager().getRunEventName(), "DEFAULT_GETITEM") == 0)
+        {
+            dComIfGp_event_setTalkPartner(NULL);
+            dComIfGp_event_setItemPartnerId(s_neTphd.itemPartner);
+            s_neTphd.itemPartner = fpcM_ERROR_PROCESS_ID_e;
+        }
+    }
+#endif
+
     if (i_this->mIsTalking) {
         i_this->mCcDisableTimer = 10;
         if (i_this->mMsgFlow.doFlow(i_this, NULL, 0)) {
             dComIfGp_event_reset();
             i_this->mIsTalking = 0;
+#if TARGET_PC
+            if (tphdCat) {
+                int itemNo = 0;
+                const u16 eventId = i_this->mMsgFlow.getEventId(&itemNo);
+                if (eventId == 1 && (itemNo == dItemNo_SILVER_RUPEE_e || itemNo == 0x98)) {
+                    const fpc_ProcID id = fopAcM_createItemForPresentDemo(
+                        &i_this->current.pos, itemNo, 0, -1, -1, NULL, NULL);
+                    if (id != fpcM_ERROR_PROCESS_ID_e) {
+                        s_neTphd.itemPartner = id;
+                        const s16 evIdx = dComIfGp_getEventManager().getEventIdx(
+                            i_this, "DEFAULT_GETITEM", 0xff);
+                        fopAcM_orderChangeEventId(i_this, evIdx, 1, 0xffff);
+                    }
+                    if (itemNo == dItemNo_SILVER_RUPEE_e && !dComIfGs_isStamp(26)) {
+                        s_neTphd.pendingFlow = 0x479;
+                    }
+                    return 1;
+                }
+            }
+#endif
             if (i_this->mIsGengle == 1 && (i_this->mMsgFlow.getNowMsgNo() == 0x18a1 ||
                                            i_this->mMsgFlow.getNowMsgNo() == 0x18a2)) {
                 fopAcM_createItem(&dComIfGp_getPlayer(0)->eyePos, dItemNo_SILVER_RUPEE_e, -1,
@@ -2903,6 +2961,12 @@ static int message(npc_ne_class* i_this) {
         return 1;
     } else {
         if (dComIfGp_event_runCheck() && i_this->eventInfo.checkCommandTalk()) {
+#if TARGET_PC
+            if (tphdCat && s_neTphd.pendingFlow > 0) {
+                i_this->mMsgFlow.init(i_this, s_neTphd.pendingFlow, 0, NULL);
+                s_neTphd.pendingFlow = 0;
+            } else
+#endif
             i_this->mMsgFlow.init(i_this, i_this->mFlowID, 0, NULL);
             i_this->mIsTalking = 1;
         }

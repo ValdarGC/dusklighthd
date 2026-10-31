@@ -291,6 +291,12 @@ int dEvt_control_c::talkXyCheck(dEvt_order_c* order) {
         mTalkXyType = 2;
         itemIndex = SELECT_ITEM_Y;
         break;
+    #if TARGET_PC && !(PLATFORM_WII || PLATFORM_SHIELD)
+    case 9:  // TPHD R item slot (select-item index 3), same as the Wii/Shield/Wii U code
+        mTalkXyType = 4;
+        itemIndex = 3;
+        break;
+    #endif
     #if PLATFORM_WII || PLATFORM_SHIELD
     case 8:
         mTalkXyType = 3;
@@ -665,6 +671,9 @@ int dEvt_control_c::entry() {
                 break;
             case dEvt_type_SHOWITEM_X_e:
             case dEvt_type_SHOWITEM_Y_e:
+#if TARGET_PC && !(PLATFORM_WII || PLATFORM_SHIELD)
+            case 9:
+#endif
                 if (dComIfGs_getLife() != 0 && talkXyCheck(order)) {
                     return 1;
                 }

@@ -2699,6 +2699,14 @@ inline bool dComIfGs_isCollectMirror(u8 i_item) {
     return g_dComIfG_gameInfo.info.getPlayer().getCollect().isCollectMirror(i_item);
 }
 
+inline bool dComIfGs_isStamp(int i_no) {
+    return g_dComIfG_gameInfo.info.isStamp(i_no);
+}
+
+inline void dComIfGs_onStamp(int i_no, int i_val) {
+    g_dComIfG_gameInfo.info.onStamp(i_no, i_val);
+}
+
 inline void dComIfGs_setLightDropNum(u8 i_level, u8 i_num) {
     g_dComIfG_gameInfo.info.getPlayer().getLightDrop().setLightDropNum(i_level, i_num);
 }

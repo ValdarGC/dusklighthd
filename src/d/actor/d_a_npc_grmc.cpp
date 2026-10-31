@@ -322,6 +322,12 @@ int daNpc_grMC_c::CreateHeap() {
 }
 
 int daNpc_grMC_c::Delete() {
+#if TARGET_PC
+    daPy_py_c* player = daPy_getPlayerActorClass();
+    if (player != NULL) {
+        player->offPlayerNoDraw();
+    }
+#endif
     this->~daNpc_grMC_c();
     return 1;
 }
@@ -331,7 +337,7 @@ int daNpc_grMC_c::Execute() {
         initShopSystem();
         setSellItemMax(getMaxNumItem());
         field_0xf60 = -1;
-        setMasterType(5);
+        setMasterType(8);
         mShopCamAction.setCamDataIdx(0);
         mShopCamAction.setCamAction(NULL);
         field_0x10dd = 1;
@@ -422,6 +428,12 @@ void daNpc_grMC_c::setParam() {
             mShopCamAction.Reset();
         } else {
             mShopCamAction.EventRecoverNotime();
+#if TARGET_PC
+            daPy_py_c* player = daPy_getPlayerActorClass();
+            if (player != NULL) {
+                player->offPlayerNoDraw();
+            }
+#endif
         }
 
         field_0x10dc = 0;
@@ -487,6 +499,9 @@ void daNpc_grMC_c::srchActors() {
 BOOL daNpc_grMC_c::evtTalk() {
     if (field_0x10dd != 0) {
         if (chkAction(&daNpc_grMC_c::shop)) {
+            if (field_0x10d8 == 2) {
+                mShopCamAction.shop_cam_action_init();
+            }
             (this->*mAction)(NULL);
         } else if (dComIfGp_event_chkTalkXY() == 0 || dComIfGp_evmng_ChkPresentEnd()) {
             mShopCamAction.shop_cam_action_init();
@@ -666,6 +681,14 @@ int daNpc_grMC_c::tend(void* param_1) {
                 mSpeakEvent = true;
                 field_0xe33 = true;
             }
+#if TARGET_PC
+            else {
+                daPy_py_c* player = daPy_getPlayerActorClass();
+                if (player != NULL) {
+                    player->offPlayerNoDraw();
+                }
+            }
+#endif
 
             if (srchPlayerActor()) {
                 mJntAnm.lookPlayer(0);
@@ -730,6 +753,7 @@ int daNpc_grMC_c::shop(void* param_1) {
         case 0:
         case 1:
             if (field_0x10d8 == 2) {
+                mShopCamAction.shop_cam_action_init();
                 shop_init(true);
             } else {
                 mShopCamAction.Save();

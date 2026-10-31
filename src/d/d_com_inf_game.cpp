@@ -24,7 +24,10 @@
 #include "m_Do/m_Do_graphic.h"
 #include <cstdio>
 #include <cstring>
+#include <dusk/ui/settings.hpp>
 
+#include "dusk/tphd/LosTable.hpp"
+#include "helpers/string.hpp"
 
 #if TARGET_PC
 #include "dusk/settings.h"
@@ -2029,7 +2032,12 @@ void dComIfGp_setSelectItem(int i_selItemIdx) {
 u8 dComIfGp_getSelectItem(int i_selItemIdx) {
     u8 playItem = g_dComIfG_gameInfo.play.getSelectItem(i_selItemIdx);
 
-    if ((i_selItemIdx == SELECT_ITEM_X || i_selItemIdx == SELECT_ITEM_Y) &&
+    if ((i_selItemIdx == SELECT_ITEM_X || i_selItemIdx == SELECT_ITEM_Y
+#if TARGET_PC
+         // TPHD R item slot (select index 3) combines like X / Y
+         || i_selItemIdx == 3
+#endif
+         ) &&
         dComIfGs_getMixItemIndex(i_selItemIdx) != 0xFF)
     {
         u8 saveItem = dComIfGs_getItem(dComIfGs_getMixItemIndex(i_selItemIdx), false);
@@ -2614,7 +2622,14 @@ u8 dComIfG_getNowCalcRegion() {
 
 bool dComIfGp_isLightDropMapVisible() {
     for (int i = 0; i < 3; i++) {
+        #if TARGET_PC
+        if (dComIfGs_isLightDropGetFlag(i) != FALSE && 
+            ((dusk::tphd_active() && dComIfGs_getLightDropNum(i) < 12) ||
+            (!dusk::tphd_active() && dComIfGs_getLightDropNum(i) < 16)))
+        {
+        #else
         if (dComIfGs_isLightDropGetFlag(i) != FALSE && dComIfGs_getLightDropNum(i) < 16) {
+        #endif
             return true;
         }
     }
@@ -2895,6 +2910,12 @@ BOOL dComIfGs_Wolf_Change_Check() {
     } else if (dComIfGs_isTransformLV(3) && !dComIfGs_isDarkClearLV(3)) {
         is_wolf = true;
     }
+
+#if TARGET_PC
+    if (dusk::tphd::is_los_active()) {
+        is_wolf = true;
+    }
+#endif
 
     OS_REPORT("dComIfGs_isSaveSwitch 12[%x] 13[%x]\n", dComIfGs_isSaveSwitch(12), dComIfGs_isSaveSwitch(13));
 

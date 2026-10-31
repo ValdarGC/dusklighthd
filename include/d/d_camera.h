@@ -1032,6 +1032,9 @@ public:
     bool CalcSubjectAngle(s16*, s16*);
     bool SaveZoomRatio();
     bool subjectCamera(s32);
+#if TARGET_PC
+    bool subjectCameraTphd(s32);
+#endif
     bool magneCamera(s32);
     bool colosseumCamera(s32);
     bool test1Camera(s32);
