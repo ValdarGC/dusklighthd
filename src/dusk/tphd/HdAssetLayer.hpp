@@ -10,6 +10,8 @@
 
 namespace dusk::tphd {
 
+struct GtxSurface;
+
 // Configure the base directory for HD asset overrides. `contentPath` should
 // point at a Wii-U `content/` directory (the parent of `res/`). Empty path
 // disables HD overrides.
@@ -40,6 +42,19 @@ std::optional<size_t> find_registered_hd_archive_remaining(const void* ptr);
 // Reads one file (Yaz0-decoded) from a Wii U archive (e.g. "res/FieldMap/Field0.arc",
 // "f_sp121/room0.dzs"), ignoring the HD skip list. No texture registration is done.
 std::optional<std::vector<u8>> read_hd_arc_file(std::string_view resPath, std::string_view filePath);
+
+// A Wii U texture as aurora gets it: R8_PC / RG8_PC / RGBA8_PC / BC1_PC (gxFormat), all mips
+// back to back, linear.
+struct HdDecodedTexture {
+    std::vector<u8> bytes;
+    u32 width = 0;
+    u32 height = 0;
+    u32 mipCount = 1;
+    u8 gxFormat = 0;
+};
+std::optional<HdDecodedTexture> decode_hd_surface(const GtxSurface& s);
+
+const std::filesystem::path& hd_content_path();
 
 }
 

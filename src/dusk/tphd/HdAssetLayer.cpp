@@ -29,6 +29,7 @@
 #include "helpers/endian.h"
 #include "AddrLib.hpp"
 #include "GtxParser.hpp"
+#include "HdTextureExport.hpp"
 #include "LosTable.hpp"
 #include "TphdPack.hpp"
 #include "tracy/Tracy.hpp"
@@ -450,6 +451,25 @@ void registerHdSurface(const Gx2FormatMapping& m, const GtxSurface& s,
                        const void* pixelPtr, std::string_view gtxName,
                        u32 surfaceIdx, bool replaceExistingPointer = false) {
     ZoneScoped;
+    if (pixelPtr == nullptr) {
+        return;
+    }
+
+    // A texture pack file with this texture's hash wins over the HD texture.
+    if (auto userPath = find_user_hd_texture(s)) {
+        aurora::texture::ReplacementKey key{aurora::texture::TexturePointerKey{.data = pixelPtr}};
+        if (replaceExistingPointer) {
+            aurora::texture::unregister_replacements(key);
+        }
+        auto registration =
+            aurora::texture::register_file_replacement(std::move(key), *userPath, {.synchronous = true});
+        if (registration.id != 0) {
+            std::lock_guard lk{g_cacheMutex};
+            g_textureReplacementGroup().registrations.push_back(std::move(registration));
+            return;
+        }
+    }
+
     auto decoded = deswizzleAllMips(m, s);
 
     HdLog.info("HD reg: ptr={} fmt=0x{:02X} {}x{} mips={}/{} bytes={} gtx={}[{}]",
@@ -977,6 +997,26 @@ void rebuild_hd_overlay_locked() {
 
 }
 
+std::optional<HdDecodedTexture> decode_hd_surface(const GtxSurface& s) {
+    const Gx2FormatMapping* m = s.baseData.empty() ? nullptr : findFormatMapping(s.format);
+    if (m == nullptr) {
+        return std::nullopt;
+    }
+    auto decoded = deswizzleAllMips(*m, s);
+    if (decoded.bytes.empty()) {
+        return std::nullopt;
+    }
+    return HdDecodedTexture{
+        .bytes = std::move(decoded.bytes),
+        .width = s.width,
+        .height = s.height,
+        .mipCount = std::max(decoded.mipCount, 1u),
+        .gxFormat = m->newGxFormat,
+    };
+}
+
+const std::filesystem::path& hd_content_path() { return g_contentPath; }
+
 void register_hd_particle_textures(std::string_view jpcStem, void* jpcBuffer, size_t jpcSize) {
     if (g_contentPath.empty() || jpcBuffer == nullptr || jpcSize < 0x10) return;
     auto* jpc = static_cast<u8*>(jpcBuffer);
@@ -1031,6 +1071,7 @@ void set_hd_content_path(std::filesystem::path contentPath) {
     g_entryNumToOverlay().clear();
     g_arcRanges().clear();
     rebuild_hd_overlay_locked();
+    reload_user_hd_textures();
     load_los_table(g_contentPath);
     HdLog.info("HD content path set to: {}",
                g_contentPath.empty() ? "(disabled)" : g_contentPath.string());

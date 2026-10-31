@@ -1450,6 +1450,7 @@ set(DUSK_FILES
         src/dusk/hq_minimap.cpp
         src/dusk/imgui/ImGuiActorSpawner.cpp
         src/dusk/imgui/ImGuiBloomWindow.cpp
+        src/dusk/imgui/ImGuiTphdTextures.cpp
         src/dusk/imgui/ImGuiBloomWindow.hpp
         src/dusk/imgui/ImGuiCameraOverlay.cpp
         src/dusk/imgui/ImGuiConfig.hpp
@@ -1692,6 +1693,8 @@ set(DUSK_FILES
         src/dusk/tphd/AddrLib.cpp
         src/dusk/tphd/HdAssetLayer.hpp
         src/dusk/tphd/HdAssetLayer.cpp
+        src/dusk/tphd/HdTextureExport.hpp
+        src/dusk/tphd/HdTextureExport.cpp
         src/dusk/tphd/LosTable.hpp
         src/dusk/tphd/LosTable.cpp
 )

@@ -373,6 +373,7 @@ namespace dusk {
         }
 
         m_menuTools.ShowInputViewer();
+        m_menuTools.ShowTphdTextures();
 
         if (dusk::IsGameLaunched && !dusk::speedrun::isActive()) {
             m_menuTools.ShowDebugOverlay();

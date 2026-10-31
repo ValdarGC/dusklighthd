@@ -49,6 +49,8 @@ namespace dusk {
                 ImGui::EndDisabled();
             }
 
+            ImGui::MenuItem("TPHD Textures", nullptr, &m_showTphdTextures);
+
 #if DUSK_CAN_OPEN_DATA_FOLDER
             ImGui::Separator();
             if (ImGui::MenuItem("Open Data Folder")) {
