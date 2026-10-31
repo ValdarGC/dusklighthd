@@ -28,6 +28,10 @@ BOOL dMw_A_TRIGGER();
 BOOL dMw_B_TRIGGER();
 BOOL dMw_Z_TRIGGER();
 BOOL dMw_START_TRIGGER();
+#if TARGET_PC
+BOOL dMw_collectOpenTrigger();
+BOOL dMw_ringOpenTrigger();
+#endif
 BOOL dMw_LEFT_TRIGGER();
 BOOL dMw_RIGHT_TRIGGER();
 void dMw_onPauseWindow();
@@ -79,6 +83,17 @@ public:
         /* 0x20 */ INSECT_AGITHA_OPEN2,
         /* 0x21 */ INSECT_AGITHA_MOVE,
         /* 0x22 */ INSECT_AGITHA_CLOSE,
+#if TARGET_PC
+        // TPHD stamp album (opened from the collection screen)
+        /* 0x23 */ STAMP_OPEN,
+        /* 0x24 */ STAMP_MOVE,
+        /* 0x25 */ STAMP_CLOSE,
+        // TPHD: album opened from the field after the 1st / 49th stamp (Wii U 0x02a7fa48)
+        /* 0x26 */ STAMP_FIELD_OPEN1,
+        /* 0x27 */ STAMP_FIELD_OPEN2,
+        /* 0x28 */ STAMP_FIELD_MOVE,
+        /* 0x29 */ STAMP_FIELD_CLOSE,
+#endif
     };
 
     void key_wait_init(u8);
@@ -147,6 +162,24 @@ public:
     void collect_insect_open_proc();
     void collect_insect_move_proc();
     void collect_insect_close_proc();
+#if TARGET_PC
+    void collect_stamp_open_init(u8);
+    void collect_stamp_move_init(u8);
+    void collect_stamp_close_init(u8);
+    void collect_stamp_open_proc();
+    void collect_stamp_move_proc();
+    void collect_stamp_close_proc();
+    void stamp_field_open_init(u8);
+    void stamp_field_open2_init(u8);
+    void stamp_field_move_init(u8);
+    void stamp_field_close_init(u8);
+    void stamp_field_open_proc();
+    void stamp_field_open2_proc();
+    void stamp_field_move_proc();
+    void stamp_field_close_proc();
+    void dMw_stamp_create(u8 i_mode = 0);
+    bool dMw_stamp_delete();
+#endif
     void insect_open_proc();
     void insect_open2_proc();
     void insect_move_proc();

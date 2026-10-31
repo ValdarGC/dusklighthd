@@ -80,6 +80,22 @@ public:
     u8 openExplain(u8);
 #if TARGET_PC
     bool pointerMove();
+    // TPHD item screen (d_menu_ring_hd.cpp)
+    bool hdActive() const;
+    void hdCreate();
+    void hdDelete();
+    void hdRefresh();
+    void hdSyncCursor();
+    void hdMove();
+    void hdDraw();
+    void hdDrawNumber(int, int, f32, f32, f32);
+    void hdDrawCursor();
+    bool hdSetMixItemR();
+    void hdApplyR(u8 i_slot);
+    bool hdStartFly(int i_btn, u8 i_slot);
+    void hdFlyFinish();
+    void hdFlyForceR();
+    void hdDrawFly();
 #endif
 
     virtual void draw() { _draw(); }
@@ -212,6 +228,11 @@ public:
     /* 0x6D3 */ u8 field_0x6d3;
 #if TARGET_PC
     bool mPointerTouchPressHoveredCurrent;
+    J2DScreen* mpHdScreen = NULL;
+    u8 mHdCellSlot[21];
+    u8 mHdCursor = 0;
+    bool mHdEmpty = false;
+    f32 mHdIconScale = 1.0f;
 #endif
 };
 

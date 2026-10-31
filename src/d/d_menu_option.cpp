@@ -32,6 +32,215 @@
 #include "dusk/menu_pointer.h"
 #include "dusk/ui/touch_controls.hpp"
 #include "dusk/version.hpp"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "dusk/settings.h"
+#include "dusk/config.hpp"
+#include <borealis/log.hpp>
+extern JKRArchive* g_tphdMain2DRevoArchive;
+#endif
+
+#if TARGET_PC
+static inline bool optionRevo() {
+    return dusk::tphd_active();
+}
+
+static void setOptionTextBoxString(J2DTextBox* textBox, u32 msgId) {
+    if (!textBox) return;
+    char buf[128];
+    buf[0] = '\0';
+    if (dusk::tphd_active()) {
+        dusk::tphd::getWiiUMsgString(msgId, buf, sizeof(buf));
+    }
+    if (buf[0] == '\0') {
+        dMeter2Info_getStringKanji(msgId, buf, NULL);
+    }
+    SAFE_STRCPY(textBox->getStringPtr(), buf);
+}
+
+dMenu_OptionRow::dMenu_OptionRow() {
+    mState = 0;
+    mValue = 0;
+    mRowIdx = 0;
+    mNumValues = 0;
+    for (int i = 0; i < 4; i++) {
+        mValueMsgIds[i] = 0;
+    }
+    mpString = NULL;
+    mpTextTl = NULL;
+    mpTextIt = NULL;
+    mpBttn1 = NULL;
+    mpBttn0 = NULL;
+    mpArwL1 = NULL;
+    mpArwL0 = NULL;
+    mpArwR1 = NULL;
+    mpArwR0 = NULL;
+    mpMenu = NULL;
+    mpItm = NULL;
+    mpArwL = NULL;
+    mpArwR = NULL;
+}
+
+dMenu_OptionRow::~dMenu_OptionRow() {}
+
+void dMenu_OptionRow::setValue(int val) {
+    mValue = val;
+    update();
+}
+
+void dMenu_OptionRow::setFocus(int state) {
+    mState = state;
+    update();
+}
+
+dMenu_OptionRow* dMenu_OptionRow::create(dMenu_OptionRow* i_row, int i_rowIdx, int i_val,
+                                         u32 i_titleMsgId, const u32* i_valueMsgIds,
+                                         J2DScreen* i_screen, dMsgString_c* i_msgString) {
+    dMenu_OptionRow* row = i_row ? i_row : new dMenu_OptionRow();
+    row->mState = 0;
+    row->mValue = i_val;
+    row->mRowIdx = i_rowIdx;
+    row->mNumValues = 0;
+    row->mpString = i_msgString;
+
+    for (int i = 0; i < 4; i++) {
+        if (i_valueMsgIds && i_valueMsgIds[i] != 0) {
+            row->mValueMsgIds[i] = i_valueMsgIds[i];
+            row->mNumValues++;
+        } else {
+            row->mValueMsgIds[i] = 0;
+        }
+    }
+
+    u64 tag_menu = 0x6d656e755f303030ULL + i_rowIdx;
+    u64 tag_tl   = 0x746578745f746c30ULL + i_rowIdx;
+    u64 tag_it   = 0x746578745f697430ULL + i_rowIdx;
+    u64 tag_b0   = 0x6274746e5f305f30ULL + i_rowIdx;
+    u64 tag_b1   = 0x6274746e5f315f30ULL + i_rowIdx;
+    u64 tag_al0  = 0x6172774c5f305f30ULL + i_rowIdx;
+    u64 tag_al1  = 0x6172774c5f315f30ULL + i_rowIdx;
+    u64 tag_ar0  = 0x617277525f305f30ULL + i_rowIdx;
+    u64 tag_ar1  = 0x617277525f315f30ULL + i_rowIdx;
+    u64 tag_nitm = 0x4e5f69746d5f3030ULL + i_rowIdx;
+    u64 tag_narl = 0x4e5f61725f6c3030ULL + i_rowIdx;
+    u64 tag_narr = 0x4e5f61725f723030ULL + i_rowIdx;
+
+    row->mpMenu   = i_screen->search(tag_menu);
+    row->mpTextTl = (J2DTextBox*)i_screen->search(tag_tl);
+    row->mpTextIt = (J2DTextBox*)i_screen->search(tag_it);
+    row->mpBttn0  = i_screen->search(tag_b0);
+    row->mpBttn1  = i_screen->search(tag_b1);
+    row->mpArwL0  = i_screen->search(tag_al0);
+    row->mpArwL1  = i_screen->search(tag_al1);
+    row->mpArwR0  = i_screen->search(tag_ar0);
+    row->mpArwR1  = i_screen->search(tag_ar1);
+    row->mpItm    = i_screen->search(tag_nitm);
+    row->mpArwL   = i_screen->search(tag_narl);
+    row->mpArwR   = i_screen->search(tag_narr);
+
+    if (row->mpTextTl) {
+        row->mpTextTl->setFont(mDoExt_getMesgFont());
+        row->mpTextTl->setString(0x80, "");
+        if (i_titleMsgId != 0) {
+            setOptionTextBoxString(row->mpTextTl, i_titleMsgId);
+        }
+    }
+    if (row->mpTextIt) {
+        row->mpTextIt->setFont(mDoExt_getMesgFont());
+        row->mpTextIt->setString(0x80, "");
+        if (row->mNumValues > 0 && row->mValue < row->mNumValues) {
+            setOptionTextBoxString(row->mpTextIt, row->mValueMsgIds[row->mValue]);
+        }
+    }
+
+    return row;
+}
+
+void dMenu_OptionRow::update() {
+    if (mState == 1) {
+        if (mpArwL0) mpArwL0->show();
+        if (mpArwL1) mpArwL1->hide();
+        if (mpArwR0) mpArwR0->show();
+        if (mpArwR1) mpArwR1->hide();
+        if (mpBttn1) mpBttn1->show();
+        if (mpBttn0) mpBttn0->hide();
+        if (mpTextIt && mNumValues > 0 && mValue < mNumValues) {
+            setOptionTextBoxString(mpTextIt, mValueMsgIds[mValue]);
+        }
+    } else if (mState == 0) {
+        if (mpArwL0) mpArwL0->hide();
+        if (mpArwL1) mpArwL1->hide();
+        if (mpArwR0) mpArwR0->hide();
+        if (mpArwR1) mpArwR1->hide();
+        if (mpBttn1) mpBttn1->hide();
+        if (mpBttn0) mpBttn0->show();
+        if (mpTextIt && mNumValues > 0 && mValue < mNumValues) {
+            setOptionTextBoxString(mpTextIt, mValueMsgIds[mValue]);
+        }
+    } else if (mState == 2) {
+        if (mpMenu) mpMenu->hide();
+    }
+}
+
+dMenu_OptionRowSlider::dMenu_OptionRowSlider() {
+    mpKnobCrest = NULL;
+    mpKnobBase = NULL;
+}
+
+dMenu_OptionRowSlider::~dMenu_OptionRowSlider() {}
+
+dMenu_OptionRowSlider* dMenu_OptionRowSlider::create(dMenu_OptionRowSlider* i_slider, int i_rowIdx,
+                                                     int i_val, u32 i_titleMsgId, const u32* i_valueMsgIds,
+                                                     J2DScreen* i_screen, dMsgString_c* i_msgString) {
+    dMenu_OptionRowSlider* slider = i_slider ? i_slider : new dMenu_OptionRowSlider();
+    dMenu_OptionRow::create(slider, i_rowIdx, i_val, i_titleMsgId, i_valueMsgIds, i_screen, i_msgString);
+
+    u64 tag_b1 = 0x6274746e5f315f30ULL + i_rowIdx;
+    u64 tag_b2 = 0x6274746e5f325f30ULL + i_rowIdx;
+    slider->mpKnobCrest = i_screen->search(tag_b1);
+    slider->mpKnobBase  = i_screen->search(tag_b2);
+
+    slider->update();
+    return slider;
+}
+
+void dMenu_OptionRowSlider::update() {
+    if (mState == 1) {
+        if (mValue == 0) {
+            if (mpArwL0) mpArwL0->hide();
+            if (mpArwL1) mpArwL1->hide();
+            if (mpArwR0) mpArwR0->show();
+            if (mpArwR1) mpArwR1->hide();
+        } else if (mValue >= 5) {
+            if (mpArwL0) mpArwL0->show();
+            if (mpArwL1) mpArwL1->hide();
+            if (mpArwR0) mpArwR0->hide();
+            if (mpArwR1) mpArwR1->hide();
+        } else {
+            if (mpArwL0) mpArwL0->show();
+            if (mpArwL1) mpArwL1->hide();
+            if (mpArwR0) mpArwR0->show();
+            if (mpArwR1) mpArwR1->hide();
+        }
+        if (mpBttn0) mpBttn0->show();
+    } else if (mState == 0) {
+        if (mpArwL0) mpArwL0->hide();
+        if (mpArwL1) mpArwL1->hide();
+        if (mpArwR0) mpArwR0->hide();
+        if (mpArwR1) mpArwR1->hide();
+        if (mpBttn0) mpBttn0->show();
+    } else if (mState == 2) {
+        if (mpMenu) mpMenu->hide();
+        return;
+    }
+
+    if (mpBttn0 && mpKnobCrest) {
+        f32 x = mpBttn0->getTranslateX() + (f32)mValue * 37.5f - 93.0f;
+        mpKnobCrest->translate(x, mpKnobCrest->getTranslateY());
+        if (mpKnobBase) {
+            mpKnobBase->translate(x, mpKnobBase->getTranslateY());
+        }
+    }
+}
 #endif
 
 typedef void (dMenu_Option_c::*initFunc)();
@@ -76,6 +285,18 @@ static dusk::menu_pointer::TargetId option_yes_no_target(u8 index) noexcept {
     return static_cast<dusk::menu_pointer::TargetId>(0x100 + index);
 }
 
+struct RevoOptionState {
+    dMenu_OptionRow mRowStorage[7];
+    dMenu_OptionRowSlider mSliderStorage;
+    dMenu_OptionRow* mpRows[8];
+    u8 mRowValues[8];
+    u8 mOrigRowValues[8];
+    u8 mCursorPos;
+    bool mIsJapanese;
+    bool mIsRevoActive;
+};
+
+static RevoOptionState s_revoOpt;
 static u8 option_to_proc(u8 select) noexcept {
     if (!dusk::version::isRegionJpn() && select >= 1) {
         return static_cast<u8>(select + 1);
@@ -106,13 +327,35 @@ dMenu_Option_c::dMenu_Option_c(JKRArchive* i_archive, STControl* i_stick) {
     mpMount = NULL;
     mQuitStatus = 1;
     mpCalibration = NULL;
+#if TARGET_PC
+    for (int i = 0; i < 8; i++) {
+        s_revoOpt.mpRows[i] = NULL;
+        s_revoOpt.mRowValues[i] = 0;
+        s_revoOpt.mOrigRowValues[i] = 0;
+    }
+    s_revoOpt.mCursorPos = 0;
+    s_revoOpt.mIsJapanese = false;
+    s_revoOpt.mIsRevoActive = false;
+#endif
 }
 
-dMenu_Option_c::~dMenu_Option_c() {}
+dMenu_Option_c::~dMenu_Option_c() {
+#if TARGET_PC
+    for (int i = 0; i < 8; i++) {
+        s_revoOpt.mpRows[i] = NULL;
+    }
+#endif
+}
 
 static const u32 dMo_soundMode[3] = {JAS_OUTPUT_MONO, JAS_OUTPUT_STEREO, JAS_OUTPUT_SURROUND};
 
 void dMenu_Option_c::_create() {
+#if TARGET_PC
+    if (optionRevo()) {
+        _createRevo();
+        return;
+    }
+#endif
     static const u64 text_a_tag[5] = {MULTI_CHAR('atext1_1'), MULTI_CHAR('atext1_2'), MULTI_CHAR('atext1_3'), MULTI_CHAR('atext1_4'), MULTI_CHAR('atext1_5')};
     static const u64 text_b_tag[5] = {MULTI_CHAR('btext1_1'), MULTI_CHAR('btext1_2'), MULTI_CHAR('btext1_3'), MULTI_CHAR('btext1_4'), MULTI_CHAR('btext1_5')};
     static const u64 l_tagName012[2] = {MULTI_CHAR('w_no_n'), MULTI_CHAR('w_yes_n')};
@@ -187,20 +430,36 @@ void dMenu_Option_c::_create() {
 
     mpScreenIcon = JKR_NEW J2DScreen();
     JUT_ASSERT(325, mpScreenIcon != NULL);
+#if TARGET_PC
+    const char* iconBlo = optionRevo() ? "zelda_collect_soubi_do_icon_parts_revo.blo"
+                                              : "zelda_collect_soubi_do_icon_parts.blo";
+    mpScreenIcon->setPriority(iconBlo, 0x20000, mpArchive);
+#else
     mpScreenIcon->setPriority("zelda_collect_soubi_do_icon_parts.blo", 0x20000, mpArchive);
+#endif
     for (int i = 0; i < 2; i++) {
         mpButtonAB[i] = NULL;
         mpButtonText[i] = NULL;
     }
     dPaneClass_showNullPane(mpScreenIcon);
+#if TARGET_PC
+    if (optionRevo()) {
+        dusk::tphd::setupRevoButtonText(mpScreenIcon);
+    }
+#endif
     field_0x3dc = 0;
     field_0x3de = 0;
     for (int i = 0; i < 5; i++) {
-        ((J2DTextBox*)(mpScreenIcon->search(text_a_tag[i])))->setFont(mDoExt_getMesgFont());
-        ((J2DTextBox*)(mpScreenIcon->search(text_b_tag[i])))->setFont(mDoExt_getMesgFont());
-
-        ((J2DTextBox*)(mpScreenIcon->search(text_a_tag[i])))->setString(0x20, "");
-        ((J2DTextBox*)(mpScreenIcon->search(text_b_tag[i])))->setString(0x20, "");
+        J2DTextBox* aText = (J2DTextBox*)mpScreenIcon->search(text_a_tag[i]);
+        J2DTextBox* bText = (J2DTextBox*)mpScreenIcon->search(text_b_tag[i]);
+        if (aText != NULL) {
+            aText->setFont(mDoExt_getMesgFont());
+            aText->setString(0x20, "");
+        }
+        if (bText != NULL) {
+            bText->setFont(mDoExt_getMesgFont());
+            bText->setString(0x20, "");
+        }
     }
     setAButtonString(0x40C);
     setBButtonString(0x3F9);
@@ -315,6 +574,10 @@ void dMenu_Option_c::_create() {
 
 void dMenu_Option_c::_delete() {
 #if TARGET_PC
+    if (s_revoOpt.mIsRevoActive) {
+        _deleteRevo();
+        return;
+    }
     dusk::ui::set_control_override(dusk::ui::Control::Z, dusk::ui::ControlOverride::Default);
 #endif
 
@@ -503,6 +766,12 @@ void dMenu_Option_c::_delete() {
 }
 
 void dMenu_Option_c::_move() {
+#if TARGET_PC
+    if (s_revoOpt.mIsRevoActive) {
+        _moveRevo();
+        return;
+    }
+#endif
     mpStick->checkTrigger();
     if (field_0x3ea != 0 && !isRumbleSupported()) {
         field_0x3ea = 0;
@@ -579,6 +848,12 @@ skip:
 }
 
 void dMenu_Option_c::_draw() {
+#if TARGET_PC
+    if (s_revoOpt.mIsRevoActive) {
+        _drawRevo();
+        return;
+    }
+#endif
     if (mpArchive != NULL) {
 #if TARGET_PC
         if (dusk::game_clock::is_presentation_frame()) {
@@ -628,7 +903,15 @@ void dMenu_Option_c::_draw() {
         mpWarning->drawSelf();
         mpSelectScreen->draw(0.0f, 0.0f, ctx);
         if (field_0x3f3 != 1 && field_0x3f3 != 2 && field_0x3f3 != 3) {
+#if TARGET_PC
+            if (optionRevo()) {
+                dusk::tphd::drawRevoIconScreen(mpScreenIcon, ctx);
+            } else {
+                mpScreenIcon->draw(0.0f, 0.0f, ctx);
+            }
+#else
             mpScreenIcon->draw(0.0f, 0.0f, ctx);
+#endif
         }
     }
 }
@@ -698,7 +981,13 @@ void dMenu_Option_c::setAnimation() {
 
 bool dMenu_Option_c::_open() {
     if (!mpMount) {
+#if TARGET_PC
+        const char* arcPath = optionRevo() ? "/res/LayoutRevo/optresR.arc"
+                                                  : "/res/Layout/optres.arc";
+        mpMount = mDoDvdThd_mountArchive_c::create(arcPath, 0, NULL);
+#else
         mpMount = mDoDvdThd_mountArchive_c::create("/res/Layout/optres.arc", 0, NULL);
+#endif
     }
     if (mpMount->sync() != 0) {
         if (!dComIfGp_getOptionResArchive()) {
@@ -711,6 +1000,14 @@ bool dMenu_Option_c::_open() {
     } else {
         return 0;
     }
+
+#if TARGET_PC
+    if (s_revoOpt.mIsRevoActive) {
+        mQuitStatus = 2;
+        mFrame = 0;
+        return 1;
+    }
+#endif
 
     s16 openFrame = g_drawHIO.mOptionScreen.mOpenFrames;
     s16 closeFrame = g_drawHIO.mOptionScreen.mCloseFrames;
@@ -744,6 +1041,13 @@ bool dMenu_Option_c::_open() {
 }
 
 bool dMenu_Option_c::_close() {
+#if TARGET_PC
+    if (s_revoOpt.mIsRevoActive) {
+        mFrame = 0;
+        mQuitStatus = 0;
+        return 1;
+    }
+#endif
     s16 closeFrame = g_drawHIO.mOptionScreen.mCloseFrames;
     mFrame = 0;
     setHIO(false);
@@ -2452,6 +2756,12 @@ static void dummy() {
 }
 
 void dMenu_Option_c::setAButtonString(u16 i_stringID) {
+#if TARGET_PC
+    if (optionRevo()) {
+        dusk::tphd::setRevoButtonText(mpScreenIcon, i_stringID, true);
+        return;
+    }
+#endif
     static const u64 text_a_tag[5] = {MULTI_CHAR('atext1_1'), MULTI_CHAR('atext1_2'), MULTI_CHAR('atext1_3'), MULTI_CHAR('atext1_4'), MULTI_CHAR('atext1_5')};
     u32 stringId = i_stringID;
     if (stringId != field_0x3dc) {
@@ -2459,18 +2769,28 @@ void dMenu_Option_c::setAButtonString(u16 i_stringID) {
         if (stringId == 0) {
             for (int i = 0; i < 5; i++) {
                 J2DTextBox* textBox = (J2DTextBox*)mpScreenIcon->search(text_a_tag[i]);
-                SAFE_STRCPY(textBox->getStringPtr(), "");
+                if (textBox != NULL) {
+                    SAFE_STRCPY(textBox->getStringPtr(), "");
+                }
             }
         } else {
             for (int i = 0; i < 5; i++) {
                 J2DTextBox* textBox = (J2DTextBox*)mpScreenIcon->search(text_a_tag[i]);
-                dMeter2Info_getStringKanji(stringId, textBox->getStringPtr(), NULL);
+                if (textBox != NULL) {
+                    dMeter2Info_getStringKanji(stringId, textBox->getStringPtr(), NULL);
+                }
             }
         }
     }
 }
 
 void dMenu_Option_c::setBButtonString(u16 i_stringID) {
+#if TARGET_PC
+    if (optionRevo()) {
+        dusk::tphd::setRevoButtonText(mpScreenIcon, i_stringID, false);
+        return;
+    }
+#endif
     static const u64 text_b_tag[5] = {MULTI_CHAR('btext1_1'), MULTI_CHAR('btext1_2'), MULTI_CHAR('btext1_3'), MULTI_CHAR('btext1_4'), MULTI_CHAR('btext1_5')};
     u32 stringId = i_stringID;
     if (stringId != field_0x3de) {
@@ -2479,12 +2799,16 @@ void dMenu_Option_c::setBButtonString(u16 i_stringID) {
         if (stringId == 0) {
             for (int i = 0; i < 5; i++) {
                 J2DTextBox* textBox = (J2DTextBox*)mpScreenIcon->search(text_b_tag[i]);
-                SAFE_STRCPY(textBox->getStringPtr(), "");
+                if (textBox != NULL) {
+                    SAFE_STRCPY(textBox->getStringPtr(), "");
+                }
             }
         } else {
             for (int i = 0; i < 5; i++) {
                 J2DTextBox* textBox = (J2DTextBox*)mpScreenIcon->search(text_b_tag[i]);
-                dMeter2Info_getStringKanji(stringId, textBox->getStringPtr(), NULL);
+                if (textBox != NULL) {
+                    dMeter2Info_getStringKanji(stringId, textBox->getStringPtr(), NULL);
+                }
             }
         }
     }
@@ -2973,3 +3297,434 @@ u8 dMenu_Option_c::yesnoWakuAlpahAnm(u8 i_idx) {
     }
     return ret;
 }
+
+#if TARGET_PC
+void dMenu_Option_c::_createRevo() {
+    s_revoOpt.mIsRevoActive = true;
+    s_revoOpt.mIsJapanese = dusk::version::isRegionJpn();
+    mpFont = mDoExt_getMesgFont();
+    mpString = JKR_NEW dMsgString_c();
+
+    mpScreen = JKR_NEW J2DScreen();
+    mpScreen->setPriority("zelda_option_select_menu_revo.blo", 0x20000, mpArchive);
+
+    mpBackScreen = JKR_NEW J2DScreen();
+    mpBackScreen->setPriority("zelda_option_base.blo", 0x20000, mpArchive);
+
+    mpScreenIcon = JKR_NEW J2DScreen();
+    mpScreenIcon->setPriority("zelda_collect_soubi_do_icon_parts_revo.blo", 0x20000, mpArchive);
+    dPaneClass_showNullPane(mpScreenIcon);
+    dusk::tphd::setupRevoButtonText(mpScreenIcon);
+
+    setAButtonString(0x40C);
+    setBButtonString(0x3F9);
+
+    ResTIMG* timg = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "tt_block8x8.bti");
+    mpBlackTex = JKR_NEW J2DPicture(timg);
+    mpBlackTex->setBlackWhite(JUtility::TColor(0, 0, 0, 0), JUtility::TColor(0, 0, 0, 0xff));
+    mpBlackTex->setAlpha(0);
+    field_0x374 = 0.0f;
+
+    mpWarning = NULL;
+    mpSelectScreen = NULL;
+    field_0x20 = NULL;
+    field_0x24 = NULL;
+    field_0x28 = NULL;
+    field_0x2c = NULL;
+    field_0x30 = NULL;
+    mpDrawCursor = NULL;
+    for (int i = 0; i < 2; i++) {
+        mpYesNoSelBase_c[i] = NULL;
+        mpYesNoTxt_c[i] = NULL;
+        mpYesNoCurWaku_c[i] = NULL;
+        mpYesNoCurWakuG0_c[i] = NULL;
+        mpYesNoCurWakuG1_c[i] = NULL;
+    }
+
+    J2DTextBox* titleBox = (J2DTextBox*)mpBackScreen->search(MULTI_CHAR('f_t00'));
+    if (!titleBox) {
+        titleBox = (J2DTextBox*)mpScreen->search(MULTI_CHAR('f_t00'));
+    }
+    if (titleBox) {
+        // RPX 0x029f50b8: the title uses the sub font (FUN_02adde80, reishotai), not the
+        // message font.
+        titleBox->setFont(mDoExt_getSubFont());
+        titleBox->setString(0x40, "");
+        setOptionTextBoxString(titleBox, 0x547);
+    }
+
+    readSettingsRevo();
+
+    for (int i = 0; i < 8; i++) {
+        initRow(i);
+    }
+
+    if (!s_revoOpt.mIsJapanese) {
+        if (s_revoOpt.mpRows[1]) {
+            s_revoOpt.mpRows[1]->setFocus(2);
+        }
+        static const f32 s_rowShift[8] = { 18.0f, 0.0f, -20.0f, -16.0f, -12.0f, -8.0f, -4.0f, 0.0f };
+        for (int i = 0; i < 8; i++) {
+            if (i != 1 && s_revoOpt.mpRows[i] && s_revoOpt.mpRows[i]->getMenuPane()) {
+                J2DPane* pane = s_revoOpt.mpRows[i]->getMenuPane();
+                pane->translate(pane->getTranslateX(), pane->getTranslateY() + s_rowShift[i]);
+            }
+        }
+    }
+
+    // RPX 0x029f50b8: 4-corner cursor (type 2, main2DR.arc), setParam(0.98, 0.63, 0.03, 0.42,
+    // 0.525), shown on open (0x029f3c20).
+    mpDrawCursor = JKR_NEW dSelect_cursor_c(2, 1.0f, g_tphdMain2DRevoArchive);
+    mpDrawCursor->setParam(0.98f, 0.63f, 0.03f, 0.42f, 0.525f);
+    mpDrawCursor->setAlphaRate(1.0f);
+    mpDrawCursor->onPlayAnime(0);
+
+    s_revoOpt.mCursorPos = 0;
+    field_0x3ef = PROC_ATTEN_e;
+    field_0x3f7 = 0;
+    field_0x3f9 = 0;
+    field_0x3fa = 0;
+
+    drawSelfRevo();
+}
+
+void dMenu_Option_c::_deleteRevo() {
+    for (int i = 0; i < 8; i++) {
+        s_revoOpt.mpRows[i] = NULL;
+    }
+
+    JKR_DELETE(mpString);
+    mpString = NULL;
+
+    JKR_DELETE(mpScreen);
+    mpScreen = NULL;
+
+    JKR_DELETE(mpBackScreen);
+    mpBackScreen = NULL;
+
+    JKR_DELETE(mpScreenIcon);
+    mpScreenIcon = NULL;
+
+    JKR_DELETE(mpBlackTex);
+    mpBlackTex = NULL;
+
+    if (mpDrawCursor != NULL) {
+        JKR_DELETE(mpDrawCursor);
+    }
+    mpDrawCursor = NULL;
+    mDoExt_removeSubFont();
+    mpWarning = NULL;
+    mpSelectScreen = NULL;
+    field_0x24 = NULL;
+    field_0x28 = NULL;
+    field_0x20 = NULL;
+    field_0x2c = NULL;
+    field_0x30 = NULL;
+    for (int i = 0; i < 2; i++) {
+        mpYesNoSelBase_c[i] = NULL;
+        mpYesNoTxt_c[i] = NULL;
+        mpYesNoCurWaku_c[i] = NULL;
+        mpYesNoCurWakuG0_c[i] = NULL;
+        mpYesNoCurWakuG1_c[i] = NULL;
+    }
+
+    if (mpMount != NULL) {
+        JKRUnmountArchive(mpMount->getArchive());
+        mpMount->destroy();
+        mpMount = NULL;
+    }
+
+    if (mpArchive != NULL) {
+        JKRUnmountArchive(mpArchive);
+        mpArchive = NULL;
+    }
+
+    dComIfGp_setOptionResArchive(NULL);
+    s_revoOpt.mIsRevoActive = false;
+}
+
+void dMenu_Option_c::initRow(int i_rowIdx) {
+    static const u32 s_titleMsgIds[8] = {
+        0x548, 0x54b, 0x565, 0x56c, 0x92, 0x570, 0x571, 0x556
+    };
+    static const u32 s_valMsgIds[8][4] = {
+        { 0x549, 0x54a, 0, 0 },
+        { 0x54d, 0x54c, 0, 0 },
+        { 0x566, 0x567, 0x56e, 0x56f },
+        { 0x566, 0x567, 0x56e, 0x56f },
+        { 0x93,  0x94,  0, 0 },
+        { 0x54d, 0x54c, 0, 0 },
+        { 0x54d, 0x54c, 0, 0 },
+        { 0, 0, 0, 0 },
+    };
+
+    if (i_rowIdx == 7) {
+        s_revoOpt.mpRows[7] = dMenu_OptionRowSlider::create(&s_revoOpt.mSliderStorage, 7,
+                                                            s_revoOpt.mRowValues[7], s_titleMsgIds[7],
+                                                            NULL, mpScreen, mpString);
+    } else {
+        s_revoOpt.mpRows[i_rowIdx] = dMenu_OptionRow::create(&s_revoOpt.mRowStorage[i_rowIdx], i_rowIdx,
+                                                             s_revoOpt.mRowValues[i_rowIdx],
+                                                             s_titleMsgIds[i_rowIdx], s_valMsgIds[i_rowIdx],
+                                                             mpScreen, mpString);
+    }
+}
+
+// RPX dMenu_Option_c::readSettings 0x029f4f18. The Wii U keeps these options in the save config
+// (dSv_config +2 / +4 / +5 / +0xa bits); here the ones Dusklight already has come from its settings
+// (so the Dusklight settings menu and this one stay in sync), the rest from the save options.
+void dMenu_Option_c::readSettingsRevo() {
+    dusk::UserSettings& set = dusk::getSettings();
+    // Row 0: Lock-on type (0 Hold, 1 Switch): save option, as in the GC options menu.
+    s_revoOpt.mRowValues[0] = dComIfGs_getOptAttentionType() != 0 ? 1 : 0;
+    // Row 1: Furigana (Japanese only; 0 On, 1 Off).
+    s_revoOpt.mRowValues[1] = dComIfGs_getOptRuby() != 0 ? 0 : 1;
+    // Row 2: Camera control, bit 0 = invert horizontal (0x567), bit 1 = invert vertical (0x56e).
+    s_revoOpt.mRowValues[2] = (set.game.invertCameraXAxis.getValue() ? 1 : 0) |
+                              (set.game.invertCameraYAxis.getValue() ? 2 : 0);
+    // Row 3: Air / water control, same bits.
+    s_revoOpt.mRowValues[3] = (set.game.invertAirSwimX.getValue() ? 1 : 0) |
+                              (set.game.invertAirSwimY.getValue() ? 2 : 0);
+    // Row 4: Aim (0 1st person, 1 3rd person).
+    s_revoOpt.mRowValues[4] = set.game.aimThirdPerson.getValue() ? 1 : 0;
+    // Row 5: Rumble (0 On, 1 Off): save option.
+    s_revoOpt.mRowValues[5] = dComIfGs_getOptVibration() != 0 ? 0 : 1;
+    // Row 6: Motion controls (0 On, 1 Off) = Dusklight gyro aim.
+    s_revoOpt.mRowValues[6] = set.game.enableGyroAim.getValue() ? 0 : 1;
+    // Row 7: Brightness 1..6, the slider shows brightness - 1.
+    int bright = set.game.brightness.getValue();
+    if (bright < 1) bright = 1;
+    if (bright > 6) bright = 6;
+    s_revoOpt.mRowValues[7] = (u8)(bright - 1);
+
+    for (int i = 0; i < 8; i++) {
+        s_revoOpt.mOrigRowValues[i] = s_revoOpt.mRowValues[i];
+    }
+}
+
+// RPX 0x029f4b60 (accept): everything is written and the Dusklight settings are saved.
+void dMenu_Option_c::writeSettingsRevo() {
+    dusk::UserSettings& set = dusk::getSettings();
+    dComIfGs_setOptAttentionType(s_revoOpt.mRowValues[0]);
+    if (s_revoOpt.mIsJapanese) {
+        dComIfGs_setOptRuby(s_revoOpt.mRowValues[1] == 0 ? 1 : 0);
+    }
+    set.game.invertCameraXAxis.setValue((s_revoOpt.mRowValues[2] & 1) != 0);
+    set.game.invertCameraYAxis.setValue((s_revoOpt.mRowValues[2] & 2) != 0);
+    set.game.invertAirSwimX.setValue((s_revoOpt.mRowValues[3] & 1) != 0);
+    set.game.invertAirSwimY.setValue((s_revoOpt.mRowValues[3] & 2) != 0);
+    set.game.aimThirdPerson.setValue(s_revoOpt.mRowValues[4] != 0);
+    const u8 vib = s_revoOpt.mRowValues[5] == 0 ? 1 : 0;
+    dComIfGs_setOptVibration(vib);
+    dComIfGp_setNowVibration(vib);
+    set.game.enableGyroAim.setValue(s_revoOpt.mRowValues[6] == 0);
+    set.game.brightness.setValue(s_revoOpt.mRowValues[7] + 1);
+    dusk::applyBrightness();
+    dusk::config::save();
+
+    static constexpr borealis::Log s_log{"dusk::tphd::option"};
+    s_log.info("options saved: lock {} cam {} swim {} aim {} rumble {} motion {} bright {}",
+               s_revoOpt.mRowValues[0], s_revoOpt.mRowValues[2], s_revoOpt.mRowValues[3],
+               s_revoOpt.mRowValues[4], s_revoOpt.mRowValues[5], s_revoOpt.mRowValues[6],
+               s_revoOpt.mRowValues[7] + 1);
+}
+
+void dMenu_Option_c::drawSelfRevo() {
+    for (int i = 0; i < 8; i++) {
+        if (s_revoOpt.mpRows[i]) {
+            if (s_revoOpt.mpRows[i]->getState() != 2) {
+                s_revoOpt.mpRows[i]->setFocus(i == s_revoOpt.mCursorPos ? 1 : 0);
+            }
+            s_revoOpt.mpRows[i]->setValue(s_revoOpt.mRowValues[i]);
+        }
+    }
+}
+
+// RPX 0x029f4398: change of the value of a row (i_left: left arrow / stick left).
+static bool revoChangeRow(int i_row, bool i_left) {
+    u8& v = s_revoOpt.mRowValues[i_row];
+    switch (i_row) {
+    case 2:
+    case 3:
+        // Wii U: (v + 5) & 3 to the right, (v + 3) & 3 to the left.
+        v = (u8)((v + (i_left ? 3 : 1)) & 3);
+        break;
+    case 7:
+        // Brightness: clamped 1..6, applied at once (GX2SetTVGamma) for the preview.
+        if (i_left) {
+            if (v == 0) {
+                return false;
+            }
+            v--;
+        } else {
+            if (v >= 5) {
+                return false;
+            }
+            v++;
+        }
+        dusk::applyBrightness(v + 1);
+        break;
+    default:
+        v ^= 1;
+        break;
+    }
+    Z2GetAudioMgr()->seStart(Z2SE_SY_OPTION_SWITCH, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    return true;
+}
+
+static bool revoRowSelectable(int i_row) {
+    return s_revoOpt.mpRows[i_row] != NULL && s_revoOpt.mpRows[i_row]->getState() != 2 &&
+           (i_row != 1 || s_revoOpt.mIsJapanese);
+}
+
+static void revoMoveCursor(int i_dir) {
+    int pos = s_revoOpt.mCursorPos;
+    for (int n = 0; n < 8; n++) {
+        pos = (pos + i_dir + 8) % 8;
+        if (revoRowSelectable(pos)) {
+            break;
+        }
+    }
+    if (pos != s_revoOpt.mCursorPos) {
+        s_revoOpt.mCursorPos = (u8)pos;
+        Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_OPTION, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    }
+}
+
+// RPX 0x029f6210: A = accept (MenuAccept, SE 0xa1, settings written), B = back (MenuBack, SE 0xa2,
+// changes dropped and the brightness preview undone, 0x029f4b60 else branch).
+void dMenu_Option_c::_moveRevo() {
+    mpStick->checkTrigger();
+
+    if (mDoGph_gInf_c::getFader()->getStatus() != 1) {
+        return;
+    }
+
+    bool accept = mDoCPd_c::getTrigA(PAD_1) != 0;
+    bool back = mDoCPd_c::getTrigB(PAD_1) != 0;
+
+#if TARGET_PC
+    dusk::menu_pointer::begin_context(dusk::menu_pointer::Context::Options);
+    if (mpScreenIcon != NULL && !accept && !back) {
+        J2DPane* aBtn = mpScreenIcon->search(MULTI_CHAR('g_abtn_n'));
+        J2DPane* bBtn = mpScreenIcon->search(MULTI_CHAR('g_bbtn_n'));
+        if (aBtn && dusk::menu_pointer::hit_pane(aBtn, 8.0f)) {
+            dusk::menu_pointer::set_hover_target(0x200);
+            accept = dusk::menu_pointer::consume_click();
+        } else if (bBtn && dusk::menu_pointer::hit_pane(bBtn, 8.0f)) {
+            dusk::menu_pointer::set_hover_target(0x201);
+            back = dusk::menu_pointer::consume_click();
+        }
+    }
+#endif
+
+    if (accept) {
+        writeSettingsRevo();
+        Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_NEXT, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        mQuitStatus = 3;
+        return;
+    }
+    if (back) {
+        for (int i = 0; i < 8; i++) {
+            s_revoOpt.mRowValues[i] = s_revoOpt.mOrigRowValues[i];
+        }
+        dusk::applyBrightness();
+        Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_BACK, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        mQuitStatus = 3;
+        return;
+    }
+
+#if TARGET_PC
+    for (int i = 0; i < 8; i++) {
+        if (!revoRowSelectable(i)) {
+            continue;
+        }
+        dMenu_OptionRow* row = s_revoOpt.mpRows[i];
+        if (row->mpArwL && dusk::menu_pointer::hit_pane(row->mpArwL, 4.0f)) {
+            dusk::menu_pointer::set_hover_target(0x300 + i * 2);
+            if (dusk::menu_pointer::consume_click()) {
+                s_revoOpt.mCursorPos = (u8)i;
+                revoChangeRow(i, true);
+                drawSelfRevo();
+                return;
+            }
+        } else if (row->mpArwR && dusk::menu_pointer::hit_pane(row->mpArwR, 4.0f)) {
+            dusk::menu_pointer::set_hover_target(0x300 + i * 2 + 1);
+            if (dusk::menu_pointer::consume_click()) {
+                s_revoOpt.mCursorPos = (u8)i;
+                revoChangeRow(i, false);
+                drawSelfRevo();
+                return;
+            }
+        } else if (row->mpMenu && dusk::menu_pointer::hit_pane(row->mpMenu, 4.0f)) {
+            dusk::menu_pointer::set_hover_target(0x400 + i);
+            if (s_revoOpt.mCursorPos != i) {
+                s_revoOpt.mCursorPos = (u8)i;
+                Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_OPTION, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                         -1.0f, 0);
+                drawSelfRevo();
+            }
+            if (dusk::menu_pointer::consume_click()) {
+                revoChangeRow(i, false);
+                drawSelfRevo();
+                return;
+            }
+        }
+    }
+#endif
+
+    if (mpStick->checkUpTrigger() || mDoCPd_c::getTrigUp(PAD_1)) {
+        revoMoveCursor(-1);
+        drawSelfRevo();
+        return;
+    }
+    if (mpStick->checkDownTrigger() || mDoCPd_c::getTrigDown(PAD_1)) {
+        revoMoveCursor(1);
+        drawSelfRevo();
+        return;
+    }
+    const bool left = checkLeftTrigger() || mDoCPd_c::getTrigLeft(PAD_1);
+    const bool right = !left && (checkRightTrigger() || mDoCPd_c::getTrigRight(PAD_1));
+    if (left || right) {
+        if (revoRowSelectable(s_revoOpt.mCursorPos)) {
+            revoChangeRow(s_revoOpt.mCursorPos, left);
+        }
+        drawSelfRevo();
+    }
+}
+
+// RPX 0x029f376c: black, base screen, dimming, menu, cursor (4 corners, type 2), A / B captions.
+void dMenu_Option_c::_drawRevo() {
+    if (mpArchive == NULL) {
+        return;
+    }
+    J2DGrafContext* ctx = dComIfGp_getCurrentGrafPort();
+
+    mpBlackTex->setAlpha(0xff);
+    mpBlackTex->draw(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                     mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(), 0, 0, 0);
+
+    dusk::tphd::drawRevoScreen(mpBackScreen, ctx);
+
+    if (field_0x374 > 0.0f) {
+        f32 alpha = (f32)g_drawHIO.mOptionScreen.mBackgroundAlpha * (f32)field_0x374;
+        mpBlackTex->setAlpha(alpha);
+        mpBlackTex->draw(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                         mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(), 0, 0, 0);
+    }
+
+    dusk::tphd::drawRevoScreen(mpScreen, ctx);
+
+    // RPX 0x029f38f4: cursor on bttn_0 of the selected row, x - 1 (setPos without the pane scale).
+    dMenu_OptionRow* row = s_revoOpt.mpRows[s_revoOpt.mCursorPos];
+    if (mpDrawCursor != NULL && row != NULL && row->mpBttn0 != NULL) {
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        const Vec c = dusk::tphd::paneGlobalCenter(row->mpBttn0);
+        mpDrawCursor->setPosRevo(c.x - 1.0f, c.y, row->mpBttn0, false, sx,
+                                 mDoGph_gInf_c::getMinXF());
+        mpDrawCursor->draw();
+    }
+
+    dusk::tphd::drawRevoIconScreen(mpScreenIcon, ctx);
+}
+#endif

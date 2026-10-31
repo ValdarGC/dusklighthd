@@ -20,6 +20,12 @@
 #include "d/d_meter2_info.h"
 #include "d/d_meter_HIO.h"
 #include "d/d_msg_string.h"
+#include "d/d_select_cursor.h"
+#include "dusk/version.hpp"
+#if TARGET_PC
+#include "dusk/logging.h"
+#include "dusk/settings.h"
+#endif
 #include "m_Do/m_Do_controller_pad.h"
 #include "m_Do/m_Do_graphic.h"
 #include "d/d_msg_scrn_3select.h"
@@ -110,7 +116,11 @@ dMenu_ItemExplain_c::dMenu_ItemExplain_c(JKRExpHeap* i_heap, JKRArchive* i_archi
     mAlphaRatio = 201.0f;
 
 #if TARGET_PC
-    if (dusk::version::isRegionJpn()) {
+    // Wii U ctor 0x029eae80: DAT_1014b6af is the language (0 = Japanese, 0x029096ec at boot).
+    // Japanese -> i_text4 (20 pt, char 1) + item_n04..07 (item_n07 34 pt brown); others ->
+    // i_text1 (24 pt, char 0) + f_item_1..4 (f_item_1 34 pt): the same sets as the GC.
+    const bool jpTags = dusk::version::isRegionJpn();
+    if (jpTags) {
         mpInfoText = JKR_NEW CPaneMgr(mpInfoScreen, MULTI_CHAR('i_text4'), 0, NULL);
         mpInfoScreen->search(MULTI_CHAR('i_text1'))->hide();
     } else {
@@ -125,11 +135,11 @@ dMenu_ItemExplain_c::dMenu_ItemExplain_c(JKRExpHeap* i_heap, JKRArchive* i_archi
     mpInfoScreen->search(MULTI_CHAR('i_text4'))->hide();
 #endif
     ((J2DTextBox*)(mpInfoText->getPanePtr()))->setFont(mDoExt_getMesgFont());
-    ((J2DTextBox*)(mpInfoText->getPanePtr()))->setString(0x200, "");
+    ((J2DTextBox*)(mpInfoText->getPanePtr()))->setString(DUSK_IF_ELSE(0x800, 0x200), "");
     mpInfoText->show();
     for (int i = 0; i < 4; i++) {
 #if TARGET_PC
-        if (dusk::version::isRegionJpn()) {
+        if (jpTags) {
             mpNameText[i] = JKR_NEW CPaneMgr(mpInfoScreen, name_tag[i], 0, NULL);
             mpInfoScreen->search(fame_tag[i])->hide();
         } else {
@@ -175,8 +185,10 @@ dMenu_ItemExplain_c::dMenu_ItemExplain_c(JKRExpHeap* i_heap, JKRArchive* i_archi
     for (int i = 0; i < 3; i++) {
         mpItemNumTex[i] = JKR_NEW J2DPicture(texResource);
         mpInfoScreen->search(MULTI_CHAR('info_n1'))->appendChild(mpItemNumTex[i]);
+        // Wii U ctor 0x029eae80: digits at the icon's bottom edge (GC: 3 units higher).
         mpItemNumTex[i]->move(i * 16.0f + (mpInfoIcon->getPosX() + mpInfoIcon->getSizeX() * 0.5f),
-                              mpInfoIcon->getPosY() + mpInfoIcon->getSizeY() - 3.0f);
+                              mpInfoIcon->getPosY() + mpInfoIcon->getSizeY() -
+                                  DUSK_IF_ELSE(dusk::tphd_active() ? 0.0f : 3.0f, 3.0f));
         mpItemNumTex[i]->resize(16.0f, 16.0f);
     }
 
@@ -348,7 +360,46 @@ void dMenu_ItemExplain_c::draw(J2DOrthoGraph* i_graph) {
             mpInfoString->getString(field_0xc8, (J2DTextBox*)mpInfoText->getPanePtr(), NULL, NULL,
                                     NULL, 0);
         }
+#if TARGET_PC
+        // TPHD: the ammo digits are drawn by hand at the Wii U spot (icon centre + (16 * i, 15)
+        // in the icon's parent space, below the scaled icon's centre, over its bottom-right part).
+        bool hdNum[3] = {false, false, false};
+        const bool hdDigits = dusk::tphd_active();
+        if (hdDigits) {
+            for (int i = 0; i < 3; i++) {
+                hdNum[i] = mpItemNumTex[i]->isVisible();
+                mpItemNumTex[i]->hide();
+            }
+        }
+#endif
         mpInfoScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graph);
+#if TARGET_PC
+        if (hdDigits && mpInfoIcon->getPanePtr()->isVisible()) {
+            J2DPane* ic = mpInfoIcon->getPanePtr();
+            const Vec v0 = ic->getGlbVtx(0);
+            const Vec v3 = ic->getGlbVtx(3);
+            const f32 cx = (v0.x + v3.x) * 0.5f;
+            const f32 cy = (v0.y + v3.y) * 0.5f;
+            const f32 sy = ic->getHeight() * ic->getScaleY();
+            const f32 k = sy != 0.0f ? (v3.y - v0.y) / sy : 1.0f;
+            const u8 alpha = mpParent[0]->getPanePtr()->getAlpha();
+            for (int i = 0; i < 3; i++) {
+                if (!hdNum[i]) {
+                    continue;
+                }
+                mpItemNumTex[i]->show();
+                mpItemNumTex[i]->setAlpha(alpha);
+                mpItemNumTex[i]->draw(cx + 16.0f * k * i, cy + 15.0f * k, 16.0f * k, 16.0f * k,
+                                      false, false, false);
+            }
+        } else if (hdDigits) {
+            for (int i = 0; i < 3; i++) {
+                if (hdNum[i]) {
+                    mpItemNumTex[i]->show();
+                }
+            }
+        }
+#endif
         mpInfoString->drawOutFontLocal((J2DTextBox*)mpInfoText->getPanePtr(), -1.0f);
         drawKantera();
         if (mpSelect_c != NULL) {
@@ -367,8 +418,16 @@ void dMenu_ItemExplain_c::draw(J2DOrthoGraph* i_graph) {
 
 void dMenu_ItemExplain_c::drawKantera() {
     if (field_0xe1 == 0x48) {
+#if TARGET_PC
+        // Wii U drawKantera 0x029ec568: (-57, +43) for the itmInfResR layout.
+        const bool hd = dusk::tphd_active();
+        mpKanteraMeter->setPos(mpInfoIcon->getGlobalPosX() + (hd ? -57.0f : 48.0f),
+                               mpInfoIcon->getGlobalPosY() + mpInfoIcon->getSizeY() +
+                                   (hd ? 43.0f : 5.0f));
+#else
         mpKanteraMeter->setPos(mpInfoIcon->getGlobalPosX() + 48.0f,
                                mpInfoIcon->getGlobalPosY() + mpInfoIcon->getSizeY() + 5.0f);
+#endif
         mpKanteraMeter->setScale(1.0f, 1.0f);
         mpKanteraMeter->setNowGauge(dComIfGs_getMaxOil(), dComIfGs_getOil());
         mpKanteraMeter->setAlphaRate(mpInfoIcon->getAlphaRate());
@@ -699,6 +758,14 @@ u8 dMenu_ItemExplain_c::openExplainDmap(u8 param_0, u8 param_1, u8 param_2, bool
         if (itemNo == 0x25 && dComIfGs_isDungeonItemWarp(0x16)) {
             field_0xc8 = 0x351;
         }
+#if TARGET_PC
+        // Wii U dMenu_ItemExplain_c::openExplain (0x029ee2f4): Ghost Lantern (0xE8) uses
+        // name message 0x1B2 (434) and description message 0x2B3 (691).
+        if (dusk::tphd_active() && itemNo == dItemNo_GHOST_KANTERA_e) {
+            field_0xcc = 0x1b2;
+            field_0xc8 = 0x2b3;
+        }
+#endif
         field_0xe7 = 0;
         field_0xde = param_1;
         field_0xdf = param_2;
@@ -724,6 +791,12 @@ u8 dMenu_ItemExplain_c::openExplainDmap(u8 param_0, u8 param_1, u8 param_2, bool
         if (itemNo == 0x25 && dComIfGs_isDungeonItemWarp(0x16)) {
             field_0xc8 = 0x351;
         }
+#if TARGET_PC
+        if (dusk::tphd_active() && itemNo == dItemNo_GHOST_KANTERA_e) {
+            field_0xcc = 0x1b2;
+            field_0xc8 = 0x2b3;
+        }
+#endif
         field_0xe7 = 0;
         field_0xde = param_1;
         field_0xdf = param_2;

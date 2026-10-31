@@ -1,6 +1,11 @@
 #include "d/dolzel.h" // IWYU pragma: keep
 
 #include "JSystem/JKernel/JKRExpHeap.h"
+#include "m_Do/m_Do_ext.h"
+#if TARGET_PC
+#include "dusk/logging.h"
+#include "dusk/settings.h"
+#endif
 #include "d/actor/d_a_player.h"
 #include "d/d_lib.h"
 #include "d/d_menu_collect.h"
@@ -13,6 +18,14 @@
 #include "d/d_menu_ring.h"
 #include "d/d_menu_save.h"
 #include "d/d_menu_skill.h"
+#if TARGET_PC
+#include "d/d_menu_stamp.h"
+// TPHD stamp album; kept out of dMw_c so its layout does not change.
+static dMenu_Stamp_c* s_menuStamp = NULL;
+// Set by the stamp item functions (d_item.cpp) after the 1st / 49th stamp: the album opens from
+// the field once the item message is gone (Wii U dMsgScrnItem dtor 0x02a7fa48 -> +0x165).
+u8 g_dMw_tphdStampAutoOpen = 0;
+#endif
 #include "d/d_menu_window.h"
 
 #include "d/d_camera.h"
@@ -187,6 +200,26 @@ BOOL dMw_START_TRIGGER() {
     return mDoCPd_c::getTrigStart(PAD_1) != 0;
 }
 
+#if TARGET_PC
+// TPHD (Wii U Pro Controller): START opens / closes the item screen and d-pad down opens the
+// collection / save screen (the GC uses START for the collection and d-pad up / down for the ring).
+static bool dMw_tphdButtons() {
+    return dusk::tphd_active();
+}
+BOOL dMw_collectOpenTrigger() {
+    if (dMw_tphdButtons()) {
+        return dMw_DOWN_TRIGGER() && !dMw_LEFT_TRIGGER() && !dMw_RIGHT_TRIGGER();
+    }
+    return dMw_START_TRIGGER();
+}
+BOOL dMw_ringOpenTrigger() {
+    if (dMw_tphdButtons()) {
+        return dMw_START_TRIGGER();
+    }
+    return (dMw_UP_TRIGGER() || dMw_DOWN_TRIGGER()) && !dMw_LEFT_TRIGGER() && !dMw_RIGHT_TRIGGER();
+}
+#endif
+
 void dMw_onPauseWindow() {
     dMw_c* menu_window = dMeter2Info_getMenuWindowClass();
     if (menu_window != NULL) {
@@ -269,6 +302,15 @@ DUSK_GAME_DATA initFunc init_proc[] = {
     &dMw_c::insect_open2_init,
     &dMw_c::insect_move_init,
     &dMw_c::insect_close_init,
+#if TARGET_PC
+    &dMw_c::collect_stamp_open_init,
+    &dMw_c::collect_stamp_move_init,
+    &dMw_c::collect_stamp_close_init,
+    &dMw_c::stamp_field_open_init,
+    &dMw_c::stamp_field_open2_init,
+    &dMw_c::stamp_field_move_init,
+    &dMw_c::stamp_field_close_init,
+#endif
 };
 
 typedef void (dMw_c::*procFunc)();
@@ -308,6 +350,15 @@ DUSK_GAME_DATA procFunc move_proc[] = {
     &dMw_c::insect_open2_proc,
     &dMw_c::insect_move_proc,
     &dMw_c::insect_close_proc,
+#if TARGET_PC
+    &dMw_c::collect_stamp_open_proc,
+    &dMw_c::collect_stamp_move_proc,
+    &dMw_c::collect_stamp_close_proc,
+    &dMw_c::stamp_field_open_proc,
+    &dMw_c::stamp_field_open2_proc,
+    &dMw_c::stamp_field_move_proc,
+    &dMw_c::stamp_field_close_proc,
+#endif
 };
 
 void dMw_c::key_wait_init(u8 i_proc) {
@@ -336,6 +387,12 @@ void dMw_c::key_wait_init(u8 i_proc) {
         dMw_fade_in();
         dMw_insect_delete();
         break;
+#if TARGET_PC
+    case STAMP_FIELD_CLOSE:
+        dMw_fade_in();
+        dMw_stamp_delete();
+        break;
+#endif
     }
     mpHeap->freeAll();
     dComIfGp_offHeapLockFlag(0);
@@ -411,6 +468,15 @@ void dMw_c::collect_move_init(u8 i_proc) {
         dMeter2Info_setWindowStatus(3);
         dMw_collect_create();
         break;
+#if TARGET_PC
+    case STAMP_CLOSE:
+        dMw_fade_in();
+        dMw_stamp_delete();
+        field_0x144 = 3;
+        dMeter2Info_setWindowStatus(3);
+        dMw_collect_create();
+        break;
+#endif
     }
 }
 
@@ -420,7 +486,8 @@ void dMw_c::collect_close_init(u8) {
         if (mpMenuCollect->getSubWindowOpenCheck() == 3 ||
             mpMenuCollect->getSubWindowOpenCheck() == 4 ||
             mpMenuCollect->getSubWindowOpenCheck() == 5 ||
-            mpMenuCollect->getSubWindowOpenCheck() == 6)
+            mpMenuCollect->getSubWindowOpenCheck() == 6 ||
+            DUSK_IF_ELSE(mpMenuCollect->getSubWindowOpenCheck() == 7, false))
         {
             Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_IN, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
                                             -1.0f, 0);
@@ -605,6 +672,7 @@ void dMw_c::key_wait_proc() {
             var_r29 = 0;
         }
 
+
         if (dMeter2Info_getPauseStatus() == 8) {
             dMsgObject_setKillMessageFlag();
 
@@ -615,7 +683,11 @@ void dMw_c::key_wait_proc() {
             dComIfGp_setHeapLockFlag(1);
             mMenuProc = INSECT_AGITHA_OPEN1;
             dMeter2Info_resetPauseStatus();
+#if TARGET_PC
+        } else if (((g_dMw_tphdStampAutoOpen != 0 && !dMeter2Info_isShopTalkFlag() && !dComIfGp_event_runCheck()) || (dMw_collectOpenTrigger() && !dMw_A_TRIGGER())) &&
+#else
         } else if ((dMw_START_TRIGGER() && !dMw_A_TRIGGER()) &&
+#endif
                    (dMeter2Info_getMapStatus() == 0 || dMeter2Info_getMapStatus() == 1) &&
                    dMeter2Info_isWindowAccept(3) &&
                    !dComIfGp_isEnableNextStage())
@@ -627,7 +699,15 @@ void dMw_c::key_wait_proc() {
             }
 
             dComIfGp_setHeapLockFlag(1);
+#if TARGET_PC
+            if (g_dMw_tphdStampAutoOpen != 0) {
+                mMenuProc = STAMP_FIELD_OPEN1;
+            } else {
+                mMenuProc = COLLECT_OPEN;
+            }
+#else
             mMenuProc = COLLECT_OPEN;
+#endif
         } else if (dMeter2Info_getMapStatus() == 2 ||
                    dMeter2Info_getMapStatus() == 3 ||
                    dMeter2Info_getMapStatus() == 4 ||
@@ -664,7 +744,11 @@ void dMw_c::key_wait_proc() {
                 mMenuProc = DMAP_OPEN;
                 dMw_dmap_create();
             }
+#if TARGET_PC
+        } else if ((dMw_ringOpenTrigger() || dMeter2Info_isMenuInForce(2) || dMeter2Info_isTouchKeyCheck(2)) &&
+#else
         } else if ((((dMw_UP_TRIGGER() || dMw_DOWN_TRIGGER()) && !dMw_LEFT_TRIGGER() && !dMw_RIGHT_TRIGGER()) || dMeter2Info_isMenuInForce(2) || dMeter2Info_isTouchKeyCheck(2)) &&
+#endif
                    dMeter2Info_isWindowAccept(2) &&
                    (dMeter2Info_getMapStatus() == 0 || dMeter2Info_getMapStatus() == 1) &&
                    dMeter2Info_isItemOpenCheck() &&
@@ -746,6 +830,10 @@ void dMw_c::collect_close_proc() {
             mMenuProc = SKILL_OPEN;
         } else if (mpMenuCollect->getSubWindowOpenCheck() == 6) {
             mMenuProc = INSECT_OPEN;
+#if TARGET_PC
+        } else if (mpMenuCollect->getSubWindowOpenCheck() == 7) {
+            mMenuProc = STAMP_OPEN;
+#endif
         } else {
             mMenuProc = NO_MENU;
         }
@@ -1408,6 +1496,157 @@ bool dMw_c::dMw_skill_delete() {
     return true;
 }
 
+#if TARGET_PC
+// ---- TPHD stamp album (Wii U dMenu_Stamp_c, opened from the collection screen) ----------------
+void dMw_c::collect_stamp_open_init(u8) {
+    field_0x144 = 10;
+    dMeter2Info_setWindowStatus(10);
+    field_0x152 = 0;
+    dMw_collect_delete(true);
+    dMw_stamp_create();
+}
+
+void dMw_c::collect_stamp_move_init(u8) {}
+
+void dMw_c::collect_stamp_close_init(u8) {
+    Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_OUT, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    dMeter2Info_set2DVibration();
+    dMw_fade_out();
+}
+
+void dMw_c::collect_stamp_open_proc() {
+    if (s_menuStamp == NULL) {
+        mMenuProc = COLLECT_MOVE;
+        return;
+    }
+    if (s_menuStamp->getStatus() == 1) {
+        s_menuStamp->_open();
+        if (field_0x152 == 0 && s_menuStamp->isSync()) {
+            dMw_fade_in();
+            field_0x152 = 1;
+        }
+    }
+    if (s_menuStamp->getStatus() == 2 && field_0x152 == 1) {
+        mMenuProc = STAMP_MOVE;
+        field_0x152 = 0;
+    }
+}
+
+void dMw_c::collect_stamp_move_proc() {
+    if (s_menuStamp == NULL) {
+        mMenuProc = STAMP_CLOSE;
+        return;
+    }
+    if (s_menuStamp->getStatus() == 2) {
+        s_menuStamp->_move();
+    }
+    if (s_menuStamp->getStatus() == 3) {
+        s_menuStamp->_close();
+        mMenuProc = STAMP_CLOSE;
+    }
+}
+
+void dMw_c::collect_stamp_close_proc() {
+    if (mDoGph_gInf_c::getFader()->getStatus() == JUTFader::None) {
+        mMenuProc = COLLECT_MOVE;
+    }
+}
+
+void dMw_c::stamp_field_open_init(u8) {
+    field_0x144 = 10;
+    dMeter2Info_setWindowStatus(10);
+    Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_IN, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    dMw_fade_out();
+    dMw_capture_create();
+}
+
+void dMw_c::stamp_field_open2_init(u8) {}
+
+void dMw_c::stamp_field_move_init(u8) {}
+
+void dMw_c::stamp_field_close_init(u8) {
+    Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_OUT, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    dMeter2Info_set2DVibration();
+    dMw_fade_out();
+}
+
+void dMw_c::stamp_field_open_proc() {
+    if (mDoGph_gInf_c::getFader()->getStatus() == JUTFader::None) {
+        field_0x152 = 0;
+        dComIfGp_setHeapLockFlag(1);
+        // Wii U 0x02a18014: "view" mode, or the unlock of the last stamp from 49 stamps on.
+        const u8 mode = dMenu_Stamp_c::getStampNum() < 49 ? dMenu_Stamp_c::MODE_VIEW
+                                                           : dMenu_Stamp_c::MODE_COMPLETE;
+        g_dMw_tphdStampAutoOpen = 0;
+        dMw_stamp_create(mode);
+        mMenuProc = STAMP_FIELD_OPEN2;
+    }
+}
+
+void dMw_c::stamp_field_open2_proc() {
+    if (s_menuStamp == NULL) {
+        mMenuProc = STAMP_FIELD_CLOSE;
+        return;
+    }
+    if (s_menuStamp->getStatus() == 1) {
+        s_menuStamp->_open();
+        if (field_0x152 == 0 && s_menuStamp->isSync()) {
+            dMw_fade_in();
+            field_0x152 = 1;
+        }
+    }
+    if (s_menuStamp->getStatus() == 2 && field_0x152 == 1) {
+        mMenuProc = STAMP_FIELD_MOVE;
+        field_0x152 = 0;
+    }
+}
+
+void dMw_c::stamp_field_move_proc() {
+    if (s_menuStamp == NULL) {
+        mMenuProc = STAMP_FIELD_CLOSE;
+        return;
+    }
+    if (s_menuStamp->getStatus() == 2) {
+        s_menuStamp->_move();
+    }
+    if (s_menuStamp->getStatus() == 3) {
+        s_menuStamp->_close();
+        mMenuProc = STAMP_FIELD_CLOSE;
+    }
+}
+
+void dMw_c::stamp_field_close_proc() {
+    if (mDoGph_gInf_c::getFader()->getStatus() == JUTFader::None) {
+        mMenuProc = NO_MENU;
+    }
+}
+
+void dMw_c::dMw_stamp_create(u8 i_mode) {
+    markMemSize();
+    s_menuStamp = JKR_NEW dMenu_Stamp_c(mpHeap, mpStick, mpCStick, i_mode);
+    JUT_ASSERT(0, s_menuStamp != NULL);
+    if (mpCapture == NULL) {
+        mpCapture = JKR_NEW dDlst_MENU_CAPTURE_c();
+    }
+}
+
+bool dMw_c::dMw_stamp_delete() {
+    if (s_menuStamp != NULL) {
+        if (!s_menuStamp->isSync()) {
+            return false;
+        }
+        JKR_DELETE(s_menuStamp);
+        s_menuStamp = NULL;
+    }
+    if (mpCapture != NULL) {
+        JKR_DELETE(mpCapture);
+        mpCapture = NULL;
+    }
+    checkMemSize();
+    return true;
+}
+#endif
+
 void dMw_c::dMw_insect_create(u8 param_0) {
     markMemSize();
 
@@ -1593,6 +1832,9 @@ int dMw_c::_create() {
     mpMenuFishing = NULL;
     mpMenuSkill = NULL;
     mpMenuInsect = NULL;
+#if TARGET_PC
+    s_menuStamp = NULL;
+#endif
     mMemSize = 0;
     field_0x144 = 3;
 
@@ -1693,6 +1935,11 @@ int dMw_c::_draw() {
             if (mpMenuInsect != NULL) {
                 dComIfGd_set2DOpa(mpMenuInsect);
             }
+#if TARGET_PC
+            if (s_menuStamp != NULL) {
+                dComIfGd_set2DOpa(s_menuStamp);
+            }
+#endif
         } else if (dMeter2Info_getWindowStatus() == 2 && mpMenuRing != NULL) {
             mpMenuRing->drawFlag0();
             dComIfGd_set2DOpa(mpMenuRing);
@@ -1740,6 +1987,11 @@ int dMw_c::_delete() {
     } else if (!dMw_insect_delete()) {
         mDoExt_setCurrentHeap(heap);
         return 0;
+#if TARGET_PC
+    } else if (!dMw_stamp_delete()) {
+        mDoExt_setCurrentHeap(heap);
+        return 0;
+#endif
     } else if (!dMw_ring_delete()) {
         mDoExt_setCurrentHeap(heap);
         return 0;

@@ -58,6 +58,13 @@ public:
 #if TARGET_PC
     bool pointerWait();
     void presentAnims();
+    // TPHD (Wii U) letter screen (letresR.arc), see d_menu_letter.cpp
+    void hdCreate();
+    void hdDelete();
+    void hdMove();
+    void hdDraw();
+    void hdShow(int i_index, int i_page);
+    void hdUpdateIcons();
 #endif
 
     virtual void draw() { _draw(); }

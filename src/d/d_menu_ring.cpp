@@ -34,8 +34,10 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/menu_pointer.h"
 #include "dusk/settings.h"
+#include "dusk/action_bindings.h"
 #include "dusk/ui/touch_controls.hpp"
 #include "dusk/version.hpp"
+#include "dusk/tphd/HdUiArt.hpp"
 #endif
 
 typedef void (dMenu_Ring_c::*initFunc)();
@@ -550,10 +552,16 @@ dMenu_Ring_c::dMenu_Ring_c(JKRExpHeap* i_heap, STControl* i_stick, CSTControl* i
     } else {
         mpDrawCursor->setParam(1.0f, 1.0f, 0.1f, 0.6f, 0.5f);
     }
+#if TARGET_PC
+    hdCreate();
+#endif
 }
 
 dMenu_Ring_c::~dMenu_Ring_c() {
     IF_DUSK(dusk::interp::erase_owned_samples(this));
+#if TARGET_PC
+    hdDelete();
+#endif
     mpHeap->getTotalFreeSize();
     dMeter2Info_setItemExplainWindowStatus(0);
     for (int i = 0; i < 4; i++) {
@@ -674,6 +682,11 @@ void dMenu_Ring_c::_move() {
     mRingRadiusV = g_ringHIO.mRingRadiusV;
     mOldStatus = mStatus; // Save current status for check
     mpItemExplain->move();
+#if TARGET_PC
+    if (hdActive()) {
+        hdMove();
+    }
+#endif
     (this->*stick_proc[mStatus])(); // run process based on status
 
     // If a new status has been set in mStatus, initialize the new process
@@ -716,6 +729,30 @@ void dMenu_Ring_c::_draw() {
 #endif
     J2DGrafContext* grafPort = dComIfGp_getCurrentGrafPort();
     grafPort->setup2D();
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // Wii U button prompts (Y/X/L/R/stick) instead of the GC ones.
+        JKRArchive* ringArc = dComIfGp_getRingResArchive();
+        dusk::tphd::hdApplyButtonArt(mpScreen, ringArc, dusk::tphd::kHdRingButtonRules,
+                                     dusk::tphd::kHdRingButtonRuleCount);
+        dusk::tphd::hdApplyButtonArt(mpCenterScreen, ringArc, dusk::tphd::kHdRingButtonRules,
+                                     dusk::tphd::kHdRingButtonRuleCount);
+    }
+#endif
+#if TARGET_PC
+    if (hdActive()) {
+        if (mDrawFlag == 0) {
+            hdDraw();
+            mDrawFlag = 1;
+        } else {
+            hdDrawCursor();
+            mpItemExplain->trans(mCenterPosX, mCenterPosY);
+            mpItemExplain->draw((J2DOrthoGraph*)grafPort);
+            drawFlag0();
+        }
+        return;
+    }
+#endif
     if (mDrawFlag == 0) {
         mpSpotParent->setAlphaRate(mAlphaRate * g_ringHIO.mOverlayAlpha);
         mpSpotScreen->draw(0.0f, 0.0f, grafPort);
@@ -821,7 +858,14 @@ bool dMenu_Ring_c::isOpen() {
 bool dMenu_Ring_c::isMoveEnd() {
     bool ret = 0;
     if (mStatus == STATUS_WAIT && mOldStatus != STATUS_EXPLAIN_FORCE && mOldStatus != STATUS_EXPLAIN) {
+#if TARGET_PC
+        // TPHD: the item screen closes with START (the button that opens it) or B.
+        const bool openBtn = dusk::tphd_active() ? dMw_START_TRIGGER() != 0
+                                                 : (dMw_UP_TRIGGER() || dMw_DOWN_TRIGGER());
+        if (openBtn || dMw_B_TRIGGER() ||
+#else
         if (dMw_UP_TRIGGER() || dMw_DOWN_TRIGGER() || dMw_B_TRIGGER() ||
+#endif
             dMeter2Info_getWarpStatus() == 2 || dMeter2Info_getWarpStatus() == 1 ||
             dMeter2Info_isTouchKeyCheck(0xe))
         {
@@ -1062,6 +1106,12 @@ void dMenu_Ring_c::setItem() {
         setSelectItemForce(i);
     }
 
+#if TARGET_PC
+    // What X / Y held before this assignment (needed to swap with the TPHD R slot below).
+    const u8 oldXSlot = dComIfGs_getSelectItemIndex(0);
+    const u8 oldYSlot = dComIfGs_getSelectItemIndex(1);
+#endif
+
     checkExplainForce();
     if (field_0x6b3 == 0) {
         uVar1 = dComIfGs_getSelectItemIndex(1);
@@ -1126,6 +1176,21 @@ void dMenu_Ring_c::setItem() {
             }
         }
     }
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // Same rule as X <-> Y: an item that is already on the R slot moves to the button it
+        // was taken from (or leaves R empty when that button had nothing).
+        const u8 rSlot = dComIfGs_getSelectItemIndex(3);
+        if (rSlot != 0xFF && rSlot == mItemSlots[mCurrentSlot]) {
+            dComIfGs_setSelectItemIndex(3, field_0x6b3 == 0 ? oldXSlot : oldYSlot);
+            dComIfGs_setMixItemIndex(3, 0xFF);
+        } else if (dComIfGs_getMixItemIndex(3) == mItemSlots[mCurrentSlot]) {
+            // the bow of an R combo goes to X / Y: R keeps the bombs / Hawkeye alone
+            dComIfGs_setMixItemIndex(3, 0xFF);
+        }
+        dComIfGp_setSelectItem(3);
+    }
+#endif
     field_0x6b4[0] = uVar1;
     field_0x6b4[1] = uVar2;
     field_0x6b4[2] = uVar3;
@@ -1230,7 +1295,13 @@ void dMenu_Ring_c::setScale() {
             }
         } else {
             if (i == mCurrentSlot && (mStatus == STATUS_WAIT || mStatus == STATUS_EXPLAIN || mStatus == STATUS_EXPLAIN_FORCE)) {
-                itemId = dComIfGs_getItem(mItemSlots[i], false) + 0x165;
+                u8 slotItem = dComIfGs_getItem(mItemSlots[i], false);
+                itemId = slotItem + 0x165;
+#if TARGET_PC
+                if (dusk::tphd_active() && slotItem == dItemNo_GHOST_KANTERA_e) {
+                    itemId = 0x1B2;
+                }
+#endif
                 if (dMeter2Info_getRentalBombBag() != 0xff &&
                     mItemSlots[i] == dMeter2Info_getRentalBombBag() + 0xf)
                 {
@@ -1281,6 +1352,11 @@ void dMenu_Ring_c::setNameString(u32 i_stringID) {
 
 void dMenu_Ring_c::setActiveCursor() {
     u8 item = dComIfGs_getItem(mItemSlots[mCurrentSlot], false);
+#if TARGET_PC
+    if (hdActive() && mHdEmpty) {
+        item = dItemNo_NONE_e;
+    }
+#endif
     if (mStatus == STATUS_WAIT && mOldStatus != STATUS_EXPLAIN_FORCE && mOldStatus != STATUS_EXPLAIN && mpItemExplain->getStatus() == 0) {
         if (mDoCPd_c::getTrigR(PAD_1) && !mPlayerIsWolf && item != dItemNo_NONE_e) {
             for (int i = 0; i < MAX_SELECT_ITEM; i++) {
@@ -1311,6 +1387,40 @@ void dMenu_Ring_c::setActiveCursor() {
                     (this->*stick_init[mStatus])();
                 }
             }
+#if TARGET_PC
+        } else if (dusk::tphd_active() && mDoCPd_c::getTrigL(PAD_1) && !mPlayerIsWolf &&
+                   item != dItemNo_NONE_e) {
+            // TPHD ZL ("Combine", ZeldaItemScreen input 0x02b000bc): bow combo on / off.
+            if (isMixItemOn() || isMixItemOff()) {
+                for (int i = 0; i < MAX_SELECT_ITEM; i++) {
+                    setSelectItemForce(i);
+                }
+                setMixItem();
+            } else {
+                Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+            }
+        } else if (dusk::tphd_active() &&
+                   dusk::getActionBindTrig(dusk::ActionBinds::USE_ITEM_R, PAD_1)) {
+            // TPHD (Wii U Pro Controller) R item slot = select-item index 3.
+            const u8 slot = mItemSlots[mCurrentSlot];
+            bool onMix = false;
+            for (int i = 0; i < 2; i++) {
+                onMix |= dComIfGs_getMixItemIndex(i) == slot;
+            }
+            if (mPlayerIsWolf || item == dItemNo_NONE_e || onMix) {
+                Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+            } else {
+                for (int i = 0; i < MAX_SELECT_ITEM; i++) {
+                    setSelectItemForce(i);
+                }
+                // Wii U (ZeldaProItems 0x02b030f4): the icon flies from the cell to the R slot and
+                // the assignment is applied when it arrives (hdFlyFinish).
+                if (!hdStartFly(3, slot)) {
+                    hdApplyR(slot);
+                }
+                Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_SET_X, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+            }
+#endif
         } else if (mDoCPd_c::getTrigX(PAD_1) || mDoCPd_c::getTrigY(PAD_1)) {
             // If the player is a wolf or somehow manages to access an item slot with no item, error
             Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
@@ -1318,7 +1428,104 @@ void dMenu_Ring_c::setActiveCursor() {
     }
 }
 
+#if TARGET_PC
+// TPHD R slot assignment (select-item index 3): item already on X / Y swaps with what R held.
+void dMenu_Ring_c::hdApplyR(u8 i_slot) {
+    // Item already on X / Y: swap (that button gets what R held), like X <-> Y.
+    const u8 oldR = dComIfGs_getSelectItemIndex(3);
+    for (int i = 0; i < 2; i++) {
+        if (dComIfGs_getSelectItemIndex(i) == i_slot) {
+            dComIfGs_setSelectItemIndex(i, oldR);
+            dComIfGs_setMixItemIndex(i, 0xFF);
+        }
+    }
+    for (int i = 0; i < mItemsTotal; i++) {
+        if (dComIfGs_getSelectItemIndex(0) == mItemSlots[i]) {
+            mXButtonSlot = i;
+        }
+        if (dComIfGs_getSelectItemIndex(1) == mItemSlots[i]) {
+            mYButtonSlot = i;
+        }
+    }
+    if (dComIfGs_getSelectItemIndex(0) == 0xFF) {
+        mXButtonSlot = 0xFF;
+    }
+    if (dComIfGs_getSelectItemIndex(1) == 0xFF) {
+        mYButtonSlot = 0xFF;
+    }
+    dComIfGs_setSelectItemIndex(3, i_slot);
+    dComIfGs_setMixItemIndex(3, 0xFF);
+    dComIfGp_setSelectItem(3);
+}
+
+// TPHD third item slot (R; select-item index 3 here, 2 on the Wii U). The Wii U combine check
+// (FUN_02afdbb8, called from the ZeldaItemScreen input 0x02b000bc) tests X, Y and then that slot
+// with the same rules: un-combine when the cursor item is on the slot together with the bow,
+// combine when the bow is on it. X / Y keep the GC code (and its slide animation); this only
+// handles the case where neither of them applies.
+bool dMenu_Ring_c::hdSetMixItemR() {
+    const u8 slot = mItemSlots[mCurrentSlot];
+    const u8 item = dComIfGs_getItem(slot, false);
+    const bool xyOff = (dComIfGs_getMixItemIndex(0) == SLOT_4 && slot == dComIfGs_getSelectItemIndex(0)) ||
+                       (dComIfGs_getMixItemIndex(1) == SLOT_4 && slot == dComIfGs_getSelectItemIndex(1));
+    if (xyOff) {
+        return false;
+    }
+    if (dComIfGs_getMixItemIndex(3) == SLOT_4 && slot == dComIfGs_getSelectItemIndex(3)) {
+        Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_OFF, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        dComIfGs_setSelectItemIndex(3, SLOT_4);
+        dComIfGs_setMixItemIndex(3, 0xFF);
+        dComIfGp_setSelectItem(3);
+        return true;
+    }
+    switch (item) {
+    case dItemNo_NORMAL_BOMB_e:
+    case dItemNo_WATER_BOMB_e:
+    case dItemNo_POKE_BOMB_e:
+    case dItemNo_HAWK_EYE_e:
+        break;
+    default:
+        return false;
+    }
+    const bool xyOn = (dComIfGs_getSelectItemIndex(0) == SLOT_4 && dComIfGs_getMixItemIndex(0) == 0xFF) ||
+                      dComIfGs_getMixItemIndex(0) == SLOT_4 ||
+                      (dComIfGs_getSelectItemIndex(1) == SLOT_4 && dComIfGs_getMixItemIndex(1) == 0xFF) ||
+                      dComIfGs_getMixItemIndex(1) == SLOT_4;
+    if (xyOn) {
+        return false;
+    }
+    if (!((dComIfGs_getSelectItemIndex(3) == SLOT_4 && dComIfGs_getMixItemIndex(3) == 0xFF) ||
+          dComIfGs_getMixItemIndex(3) == SLOT_4))
+    {
+        return false;
+    }
+    Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_ON, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+    // The bombs / Hawkeye leave X or Y if they were there (same as the GC X / Y combine).
+    for (int i = 0; i < 2; i++) {
+        if (dComIfGs_getSelectItemIndex(i) == slot) {
+            dComIfGs_setSelectItemIndex(i, 0xFF);
+            dComIfGs_setMixItemIndex(i, 0xFF);
+            dComIfGp_setSelectItem(i);
+            if (i == 0) {
+                mXButtonSlot = 0xFF;
+            } else {
+                mYButtonSlot = 0xFF;
+            }
+        }
+    }
+    dComIfGs_setSelectItemIndex(3, slot);
+    dComIfGs_setMixItemIndex(3, SLOT_4);
+    dComIfGp_setSelectItem(3);
+    return true;
+}
+#endif
+
 void dMenu_Ring_c::setMixItem() {
+#if TARGET_PC
+    if (dusk::tphd_active() && hdSetMixItemR()) {
+        return;
+    }
+#endif
     u8 item = dComIfGs_getItem(mItemSlots[mCurrentSlot], false);
     bool bVar1 = false;
     u8 selectItemIndex0 = dComIfGs_getSelectItemIndex(0);
@@ -1529,6 +1736,11 @@ void dMenu_Ring_c::stick_wait_init() {
 
 void dMenu_Ring_c::stick_wait_proc() {
     u8 item = dComIfGs_getItem(mItemSlots[mCurrentSlot], false);
+#if TARGET_PC
+    if (hdActive() && mHdEmpty) {
+        item = dItemNo_NONE_e;
+    }
+#endif
 
     if (item != dItemNo_NONE_e) {
         setDoStatus(0x24);
@@ -1544,6 +1756,12 @@ void dMenu_Ring_c::stick_wait_proc() {
         return;
     }
 #if TARGET_PC
+    if (hdActive()) {
+        if (dMw_A_TRIGGER() && !dMeter2Info_isTouchKeyCheck(0xe)) {
+            Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        }
+        return;  // the grid cursor moves in hdMove
+    }
     if (pointerMove()) {
         return;
     }
@@ -1702,6 +1920,11 @@ void dMenu_Ring_c::stick_explain_force_init() {
 
 void dMenu_Ring_c::stick_explain_proc() {
     mpItemExplain->move();
+#if TARGET_PC
+    if (hdActive()) {
+        setDoStatus(0x12);  // Wii U 0x02b000bc: A "Back" while the explain is open
+    }
+#endif
     if (mpItemExplain->getStatus() == 0) {
         if (dMeter2Info_getWarpStatus() == 1) {
             dMeter2Info_warpInProc();
@@ -1718,6 +1941,11 @@ void dMenu_Ring_c::stick_explain_proc() {
 
 void dMenu_Ring_c::stick_explain_force_proc() {
     mpItemExplain->move();
+#if TARGET_PC
+    if (hdActive()) {
+        setDoStatus(0x12);
+    }
+#endif
     u8 endButton = mpItemExplain->checkEndButton();
     if (endButton == 1) {
         setCombineBomb(field_0x6b3);
@@ -1847,6 +2075,11 @@ void dMenu_Ring_c::drawSelectItem() {
 }
 
 void dMenu_Ring_c::setSelectItemForce(int i_idx) {
+#if TARGET_PC
+    if (i_idx == 3) {
+        hdFlyForceR();  // a pending TPHD R assignment (Wii U applies it before anything else)
+    }
+#endif
     if (i_idx == 2) {
         if (field_0x674[i_idx] != 0) {
             dComIfGs_setSelectItemIndex(i_idx, field_0x6b4[i_idx]);
@@ -2174,6 +2407,14 @@ bool dMenu_Ring_c::isMixItemOn() {
             {
                 return true;
             }
+#if TARGET_PC
+            if (dusk::tphd_active() &&
+                ((dComIfGs_getSelectItemIndex(3) == SLOT_4 && dComIfGs_getMixItemIndex(3) == dItemNo_NONE_e) ||
+                 dComIfGs_getMixItemIndex(3) == SLOT_4))
+            {
+                return true;
+            }
+#endif
             break;
         }
     }
@@ -2192,6 +2433,13 @@ bool dMenu_Ring_c::isMixItemOff() {
         {
             return 1;
         }
+#if TARGET_PC
+        if (dusk::tphd_active() && dComIfGs_getMixItemIndex(3) == SLOT_4 &&
+            mItemSlots[mCurrentSlot] == dComIfGs_getSelectItemIndex(3))
+        {
+            return 1;
+        }
+#endif
     }
     return 0;
 }

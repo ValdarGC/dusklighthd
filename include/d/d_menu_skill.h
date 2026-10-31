@@ -52,6 +52,10 @@ public:
 #if TARGET_PC
     bool pointerWait();
     void presentAnims();
+    // TPHD (Wii U) screen
+    void hdSetInfo();
+    void hdMoveInfo();
+    void hdDraw();
 #endif
 
     virtual void draw() { _draw(); }

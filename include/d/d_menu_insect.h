@@ -96,6 +96,11 @@ public:
     /* 0xFA */ u8 field_0xfa;
     /* 0xFB */ u8 field_0xfb;
     /* 0xFC */ u8 field_0xfc;
+#if TARGET_PC
+    void updateInsectInfo();
+    void setInsectInfo(u8 i_itemNo);
+    void moveInsectInfo();
+#endif
 };
 
 #endif /* D_MENU_D_MENU_INSECT_H */

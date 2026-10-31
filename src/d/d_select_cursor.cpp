@@ -6,6 +6,12 @@
 #include "JSystem/J2DGraph/J2DAnimation.h"
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
 #include <cstring>
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "m_Do/m_Do_graphic.h"
+extern JKRArchive* g_tphdMain2DRevoArchive;
+#endif
 
 #if TARGET_PC
 #include "dusk/interp/samples.h"
@@ -108,6 +114,15 @@ dSelect_cursor_c::dSelect_cursor_c(u8 param_0, f32 param_1, JKRArchive* param_2)
     if (param_2 == NULL) {
         param_2 = dComIfGp_getMain2DArchive();
     }
+#if TARGET_PC
+    // TPHD: the Wii U builds every 4-part cursor from main2DR.arc (its zelda_select_cursor_4parts
+    // has a single visible 22x24 corner piece per corner with the HD art, the GC one 24x24).
+    if (mNameIdx == 0 && dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL &&
+        param_2 == dComIfGp_getMain2DArchive())
+    {
+        param_2 = g_tphdMain2DRevoArchive;
+    }
+#endif
 
     mpScreen = JKR_NEW J2DScreen();
     mpScreen->setPriority(blo_name[mNameIdx], 0x20000, param_2);
@@ -214,8 +229,133 @@ dSelect_cursor_c::dSelect_cursor_c(u8 param_0, f32 param_1, JKRArchive* param_2)
 }
 
 
+#if TARGET_PC
+namespace {
+struct CursorStretch {
+    const dSelect_cursor_c* cursor;
+    f32 scaleX;
+    f32 offsetX;
+    bool squareCorners;  // unused: the Wii U stretches the corners with the screen
+    f32 trackDx;
+    f32 trackDy;
+};
+CursorStretch s_drawStretch[8] = {};
+
+CursorStretch* cursorSlot(const dSelect_cursor_c* i_cursor, bool i_create) {
+    CursorStretch* slot = NULL;
+    for (CursorStretch& s : s_drawStretch) {
+        if (s.cursor == i_cursor) {
+            return &s;
+        }
+        if (slot == NULL && s.cursor == NULL) {
+            slot = &s;
+        }
+    }
+    if (!i_create || slot == NULL) {
+        return NULL;
+    }
+    slot->cursor = i_cursor;
+    slot->scaleX = 1.0f;
+    slot->offsetX = 0.0f;
+    slot->squareCorners = false;
+    slot->trackDx = 0.0f;
+    slot->trackDy = 0.0f;
+    return slot;
+}
+}  // namespace
+
+void dSelect_cursor_c::setDrawStretch(f32 i_scaleX, f32 i_offsetX, bool i_squareCorners) {
+    if (CursorStretch* slot = cursorSlot(this, true)) {
+        slot->scaleX = i_scaleX;
+        slot->offsetX = i_offsetX;
+        slot->squareCorners = i_squareCorners;
+    }
+}
+
+void dSelect_cursor_c::setTrackOffset(f32 i_dx, f32 i_dy) {
+    if (CursorStretch* slot = cursorSlot(this, true)) {
+        slot->trackDx = i_dx;
+        slot->trackDy = i_dy;
+    }
+}
+#endif
+
+#if TARGET_PC
+void dSelect_cursor_c::setPosRevo(f32 i_glbX, f32 i_glbY, J2DPane* i_pane, bool i_scaleBounds,
+                                  f32 i_sx, f32 i_minX) {
+    if (i_sx <= 0.0f) {
+        i_sx = 1.0f;
+    }
+    f32 ratio = 1.0f;
+    for (J2DPane* p = i_pane; p != NULL; p = p->getParentPane()) {
+        if (dusk::tphd::isN43Tag(p->getUserInfo())) {
+            // Wii U dSelect_cursor_c::setPos (RPX 0x02aad0ec): under an n_43 pane the bounds are
+            // scaled by viewport / TV ortho width = 640 / 808, and the cursor screen is then
+            // stretched by 808 / 608, so on screen they are 640 / 608 of the pane width.
+            ratio = (640.0f / 608.0f) / i_sx;
+            break;
+        }
+    }
+    mpPane = NULL;
+    setPos((i_glbX - i_minX) / i_sx, i_glbY);
+    if (i_pane != NULL) {
+        f32 width = i_pane->getWidth() * ratio * 0.5f;
+        f32 height = i_pane->getHeight() * 0.5f;
+        if (i_scaleBounds) {
+            width *= i_pane->getScaleX();
+            height *= i_pane->getScaleY();
+        }
+        field_0x94[0] = -width;
+        field_0x94[1] = -width;
+        field_0x94[2] = width;
+        field_0x94[3] = width;
+        field_0xa4[0] = -height;
+        field_0xa4[1] = height;
+        field_0xa4[2] = -height;
+        field_0xa4[3] = height;
+    }
+    setDrawStretch(i_sx, i_minX);
+}
+#endif
+
+#if TARGET_PC
+void dSelect_cursor_c::setRevoTrack(f32 i_sx, f32 i_minX) {
+    if (i_sx <= 0.0f) {
+        i_sx = 1.0f;
+    }
+    setDrawStretch(i_sx, i_minX);
+    if (mpPane == NULL) {
+        return;
+    }
+    f32 ratio = 1.0f;
+    for (J2DPane* p = mpPane; p != NULL; p = p->getParentPane()) {
+        if (dusk::tphd::isN43Tag(p->getUserInfo())) {
+            ratio = (640.0f / 608.0f) / i_sx;
+            break;
+        }
+    }
+    const f32 width = mpPane->getWidth() * mpPane->getScaleX() * ratio * 0.5f;
+    const f32 height = mpPane->getHeight() * mpPane->getScaleY() * 0.5f;
+    field_0x94[0] = -width;
+    field_0x94[1] = -width;
+    field_0x94[2] = width;
+    field_0x94[3] = width;
+    field_0xa4[0] = -height;
+    field_0xa4[1] = height;
+    field_0xa4[2] = -height;
+    field_0xa4[3] = height;
+}
+#endif
+
 dSelect_cursor_c::~dSelect_cursor_c() {
     IF_DUSK(dusk::interp::erase_owned_samples(this);)
+#if TARGET_PC
+    for (CursorStretch& st : s_drawStretch) {
+        if (st.cursor == this) {
+            st.cursor = NULL;
+        }
+    }
+#endif
     JKR_DELETE(mpScreen);
     mpScreen = NULL;
     if (mpPaneMgr) {
@@ -274,7 +414,20 @@ void dSelect_cursor_c::draw() {
     update();
     J2DGrafContext* gphCtx = dComIfGp_getCurrentGrafPort();
     gphCtx->setup2D();
+#if TARGET_PC
+    f32 stretchX = 1.0f;
+    f32 offsetX = 0.0f;
+    for (const auto& s : s_drawStretch) {
+        if (s.cursor == this) {
+            stretchX = s.scaleX;
+            offsetX = s.offsetX;
+        }
+    }
+    mpScreen->scale(stretchX, 1.0f);
+    mpScreen->draw(offsetX, 0.0f, gphCtx);
+#else
     mpScreen->draw(0.0f, 0.0f, gphCtx);
+#endif
     if (mpSelectIcon) {
         mpSelectIcon->drawSelf(); // inline here, but not sure how to properly define it
     }
@@ -295,8 +448,25 @@ void dSelect_cursor_c::update() {
 #if TARGET_PC
     if (mpPane) {
         Vec pos = mpPaneMgr->getGlobalVtxCenter(mpPane, false, 0);
-        mPositionX = pos.x;
-        mPositionY = pos.y;
+        f32 stretchX = 1.0f;
+        f32 offsetX = 0.0f;
+        f32 dx = 0.0f;
+        f32 dy = 0.0f;
+        for (const auto& s : s_drawStretch) {
+            if (s.cursor == this) {
+                stretchX = s.scaleX;
+                offsetX = s.offsetX;
+                dx = s.trackDx;
+                dy = s.trackDy;
+                break;
+            }
+        }
+        if (stretchX > 0.0f) {
+            mPositionX = (pos.x - offsetX) / stretchX + dx;
+        } else {
+            mPositionX = pos.x + dx;
+        }
+        mPositionY = pos.y + dy;
     }
 
     auto& samples = dusk::interp::get<CursorSamples>(this);
@@ -413,16 +583,42 @@ void dSelect_cursor_c::update() {
         mpSelectIcon->setAlpha(field_0x14->getPanePtr()->getAlpha());
     }
 
+#if 0
+#else
     for (int i = 0; i < 4; i++) {
         if (field_0x1C[i]) {
             field_0x1C[i]->scale(mParam4, mParam5);
         }
     }
+#endif
 }
+
+#if TARGET_PC
+void dSelect_cursor_c::setPosShopPc(f32 i_posX, f32 i_posY) {
+    if (dusk::tphd_active()) {
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        const f32 minX = mDoGph_gInf_c::getMinXF();
+        mPositionX = (i_posX - minX) / sx;
+        mPositionY = i_posY;
+        setDrawStretch(sx, minX);
+        return;
+    }
+    mPositionX = i_posX;
+    mPositionY = i_posY;
+}
+#endif
 
 void dSelect_cursor_c::setPos(f32 i_posX, f32 i_posY, J2DPane* i_pane, bool i_scaleBounds) {
     mpPane = i_pane;
-    setPos(i_posX,i_posY);
+    setPos(i_posX, i_posY);
+#if TARGET_PC
+    if (i_pane != NULL) {
+        if (CursorStretch* slot = cursorSlot(this, false)) {
+            slot->trackDx = 0.0f;
+            slot->trackDy = 0.0f;
+        }
+    }
+#endif
 
     if (!i_pane) {
         return;

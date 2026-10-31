@@ -48,16 +48,41 @@ public:
     void setWorldPos(const cXyz& position, f32 offsetX, f32 offsetY) { setPos(offsetX, offsetY, &position); }
 #else
     void setPos(f32 x, f32 y) {
+#if TARGET_PC
+        if (field_0xb6 == 1 && mpPane == NULL) {
+            setPosShopPc(x, y);
+            return;
+        }
+#endif
         mPositionX = x;
         mPositionY = y;
     }
 #endif
 
 #if TARGET_PC
+#ifdef TARGET_PC
+    void setPosShopPc(f32 x, f32 y);
     f32 getPositionX() const { return mPositionX; }
     f32 getPositionY() const { return mPositionY; }
 
     void refreshAspectScale(f32 param_0);
+    // TPHD layouts authored on a 608-unit canvas that the Wii U stretches to 16:9: the cursor
+    // screen is stretched the same way (positions are then given on the unstretched canvas).
+    // (kept out of the object: the class layout is shared with code that must not change)
+    void setDrawStretch(f32 i_scaleX, f32 i_offsetX, bool i_squareCorners = false);
+    // Wii U dSelect_cursor_c::setPos (RPX 0x02aad0ec) for a screen drawn stretched by i_sx at
+    // i_minX: the position is a global (stretched) point that is brought back to the 608 canvas,
+    // and the corner box of a pane under an 'n_43' (not stretched) pane is narrowed by 1 / i_sx.
+    void setPosRevo(f32 i_glbX, f32 i_glbY, J2DPane* i_pane, bool i_scaleBounds, f32 i_sx,
+                    f32 i_minX);
+    // Keeps following the pane given to setPos (the file select moves its panes with animations)
+    // on a screen stretched by i_sx at i_minX, with the Wii U corner box of setPosRevo.
+    void setRevoTrack(f32 i_sx, f32 i_minX);
+    J2DPane* getTrackPane() const { return mpPane; }
+    // Offset (cursor screen units) added to the tracked pane centre: the Wii U passes
+    // centre + offset to setPos (e.g. -1.5 / -1.5 in the save menu, +1 / 0 on the file slots).
+    // Cleared by setPos with a pane.
+    void setTrackOffset(f32 i_dx, f32 i_dy);
 #endif
 
     void onUpdateFlag() { mUpdateFlag = true; }

@@ -9,6 +9,7 @@ class J2DTextBox;
 class STControl;
 class dMsgString_c;
 class mDoDvdThd_mountArchive_c;
+class dSelect_cursor_c;
 
 class dMenu_Fishing_c : public dDlst_base_c {
 public:
@@ -42,6 +43,15 @@ public:
     virtual ~dMenu_Fishing_c();
 
     u8 getStatus() { return mStatus; }
+
+#if TARGET_PC
+    void selectFish(int index);
+    int checkLeft();
+    int checkRight();
+    int checkUp();
+    int checkDown();
+    void setCursorPos(int index);
+#endif
 
     /* 0x004 */ JKRExpHeap* mpHeap;
     /* 0x008 */ JKRArchive* mpArchive;

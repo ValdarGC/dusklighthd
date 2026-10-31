@@ -23,6 +23,9 @@
 #include "dusk/menu_pointer.h"
 #include "dusk/ui/touch_controls.hpp"
 #include "dusk/version.hpp"
+#include "dusk/settings.h"
+#include "dusk/action_bindings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
 
 static void enable_turn_page_controls(bool enabled) {
     const auto controlOverride =
@@ -31,6 +34,485 @@ static void enable_turn_page_controls(bool enabled) {
     dusk::ui::set_control_override(dusk::ui::Control::R, controlOverride);
 }
 
+
+#if TARGET_PC
+// ---------------------------------------------------------------------------------------------
+// TPHD (Wii U) letter screen, ported from the RPX dMenu_Letter_c (ctor 0x029ee75c, screen set-up
+// 0x029eefb0, letter display 0x029eeba8, input 0x029ef934, update 0x029ef5d0, draw 0x029ef844)
+// and the generic menu widgets it is built from (0x029cb9a0 backdrop, 0x029cbb98 screen,
+// 0x029cd088 scrolling list, 0x029cc308 A/B icons).
+//
+// letresR.arc: zelda_letter_base.blo (letter paper on the right + page indicator),
+// zelda_letter_menuItem.blo (scrolling list of up to 19 letters, 7 visible, with a slider),
+// zelda_letter_title.blo ("Letters") and the A/B icons. Unlike the GameCube screen there is
+// no separate reading window: the letter under the cursor is always shown on the right, L/R turn
+// its pages, B goes back. The list is in letter number order.
+// ---------------------------------------------------------------------------------------------
+namespace {
+struct LetterHdItem {
+    CPaneMgr* mgr;        // menun_0X (hidden when empty / scrolled out)
+    J2DPane* pane;        // menun_0X
+    J2DTextBox* subject;  // menutp0X
+    J2DTextBox* sender;   // menuts0X
+    J2DPane* frame;       // menurg0X (normal frame)
+    J2DPane* frameSel;    // menusl0X (selected frame)
+    J2DPane* iconClosed;  // menuic0X
+    J2DPane* iconOpen;    // menuic1X
+    int letter;           // letter number, -1 when empty
+};
+
+struct LetterHd {
+    bool active;
+    J2DScreen* base;
+    J2DScreen* list;
+    J2DScreen* title;
+    J2DScreen* icon;
+    J2DPicture* black;
+    dSelect_cursor_c* cursor;
+    dMsgString_c* string;
+    J2DTextBox* text;        // letter text (lett_w_t, or lett_j_t + shadow lett_j_f in Japanese)
+    J2DTextBox* textShadow;
+    J2DTextBox* pageText;
+    J2DPane* pageTurn;
+    J2DPane* arrowL;
+    J2DPane* arrowR;
+    J2DPane* items;          // menu_itm (scrolled)
+    f32 itemsX, itemsY;
+    J2DPane* slider;         // menu_sld
+    J2DPane* sliderFg;       // slide_fg
+    f32 sliderFgX, sliderFgY;
+    LetterHdItem item[19];
+    int itemMax;
+    int count;
+    int top;
+    int index;
+    int page;
+    int pageMax;
+    int lines;
+    int curText;             // text message of the letter shown
+    int curLetter;
+};
+LetterHd s_letterHd;
+
+const u64 kLetterItemTag[19] = {
+    MULTI_CHAR('menun_0A'), MULTI_CHAR('menun_0B'), MULTI_CHAR('menun_0C'), MULTI_CHAR('menun_0D'),
+    MULTI_CHAR('menun_0E'), MULTI_CHAR('menun_0F'), MULTI_CHAR('menun_0G'), MULTI_CHAR('menun_0H'),
+    MULTI_CHAR('menun_0I'), MULTI_CHAR('menun_0J'), MULTI_CHAR('menun_0K'), MULTI_CHAR('menun_0L'),
+    MULTI_CHAR('menun_0M'), MULTI_CHAR('menun_0N'), MULTI_CHAR('menun_0O'), MULTI_CHAR('menun_0P'),
+    MULTI_CHAR('menun_0Q'), MULTI_CHAR('menun_0R'), MULTI_CHAR('menun_0S'),
+};
+
+u64 letterItemTag(const char* prefix, int i, char digit = '0') {
+    char name[9];
+    std::snprintf(name, sizeof(name), "%s%c%c", prefix, digit, 'A' + i);
+    u64 tag = 0;
+    for (int k = 0; name[k] != '\0' && k < 8; k++) {
+        tag = (tag << 8) | (u8)name[k];
+    }
+    return tag;
+}
+
+void letterHdVisible(J2DPane* p, bool v) {
+    if (v) {
+        p->show();
+    } else {
+        p->hide();
+    }
+}
+
+// RPX 0x029cca8c: closed / open envelope, and the subject in yellow while the letter is unread.
+void letterHdSetOpened(LetterHdItem& it, bool opened) {
+    if (it.iconClosed != NULL) {
+        letterHdVisible(it.iconClosed, !opened);
+    }
+    if (it.iconOpen != NULL) {
+        letterHdVisible(it.iconOpen, opened);
+    }
+    if (it.subject != NULL) {
+        const JUtility::TColor c = opened ? JUtility::TColor(0xFF, 0xFF, 0xFF, 0xFF)
+                                          : JUtility::TColor(0xFF, 0xFF, 0x0F, 0xFF);
+        it.subject->setCharColor(c);
+        it.subject->setGradColor(c);
+    }
+}
+}  // namespace
+
+void dMenu_Letter_c::hdCreate() {
+    LetterHd& hd = s_letterHd;
+    std::memset(&hd, 0, sizeof(hd));
+    hd.active = true;
+    hd.curText = -1;
+    hd.curLetter = -1;
+
+    ResTIMG* timg = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "tt_block8x8.bti");
+    hd.black = JKR_NEW J2DPicture(timg);
+    hd.black->setBlackWhite(JUtility::TColor(0, 0, 0, 0), JUtility::TColor(0, 0, 0, 0xff));
+
+    hd.string = JKR_NEW dMsgString_c();
+
+    // Base: letter paper and page indicator.
+    hd.base = JKR_NEW J2DScreen();
+    hd.base->setPriority("zelda_letter_base.blo", 0x20000, mpArchive);
+    dPaneClass_showNullPane(hd.base);
+    hd.pageText = (J2DTextBox*)hd.base->search(MULTI_CHAR('pageText'));
+    if (hd.pageText != NULL) {
+        hd.pageText->setFont(mDoExt_getMesgFont());
+        hd.pageText->setString(0x80, "");
+    }
+    hd.pageTurn = hd.base->search(MULTI_CHAR('pageTurn'));
+    hd.arrowL = hd.base->search(MULTI_CHAR('PICT_LA0'));
+    hd.arrowR = hd.base->search(MULTI_CHAR('PICT_RA0'));
+    J2DTextBox* jt = (J2DTextBox*)hd.base->search(MULTI_CHAR('lett_j_t'));
+    J2DTextBox* jf = (J2DTextBox*)hd.base->search(MULTI_CHAR('lett_j_f'));
+    J2DTextBox* wt = (J2DTextBox*)hd.base->search(MULTI_CHAR('lett_w_t'));
+    if (dusk::version::isRegionJpn()) {
+        // RPX: Japanese -> lett_j_t with its shadow lett_j_f, 9 lines a page.
+        hd.text = jt;
+        hd.textShadow = jf;
+        hd.lines = 9;
+        if (wt != NULL) {
+            wt->hide();
+        }
+    } else {
+        // Other languages -> lett_w_t, 12 lines a page.
+        hd.text = wt;
+        hd.textShadow = NULL;
+        hd.lines = 12;
+        for (J2DTextBox* t : {jt, jf}) {
+            if (t != NULL) {
+                t->setString(0x10, "");
+                t->hide();
+            }
+        }
+    }
+    for (J2DTextBox* t : {hd.text, hd.textShadow}) {
+        if (t != NULL) {
+            t->show();
+            t->setFont(mDoExt_getMesgFont());
+            t->setString(0x800, "");
+        }
+    }
+
+    // Scrolling list (RPX 0x029cd088 / 0x029ccb74).
+    hd.list = JKR_NEW J2DScreen();
+    hd.list->setPriority("zelda_letter_menuItem.blo", 0x20000, mpArchive);
+    dPaneClass_showNullPane(hd.list);
+    hd.items = hd.list->search(MULTI_CHAR('menu_itm'));
+    if (hd.items != NULL) {
+        hd.itemsX = hd.items->getTranslateX();
+        hd.itemsY = hd.items->getTranslateY();
+    }
+    hd.slider = hd.list->search(MULTI_CHAR('menu_sld'));
+    hd.sliderFg = hd.list->search(MULTI_CHAR('slide_fg'));
+    if (hd.sliderFg != NULL) {
+        hd.sliderFgX = hd.sliderFg->getTranslateX();
+        hd.sliderFgY = hd.sliderFg->getTranslateY();
+    }
+    hd.itemMax = 0;
+    for (int i = 0; i < 19; i++) {
+        if (hd.list->search(kLetterItemTag[i]) == NULL) {
+            break;
+        }
+        LetterHdItem& it = hd.item[i];
+        it.mgr = JKR_NEW CPaneMgr(hd.list, kLetterItemTag[i], 0, NULL);
+        it.pane = it.mgr->getPanePtr();
+        it.subject = (J2DTextBox*)hd.list->search(letterItemTag("menutp", i));
+        it.sender = (J2DTextBox*)hd.list->search(letterItemTag("menuts", i));
+        it.frame = hd.list->search(letterItemTag("menurg", i));
+        it.frameSel = hd.list->search(letterItemTag("menusl", i));
+        it.iconClosed = hd.list->search(letterItemTag("menuic", i, '0'));
+        it.iconOpen = hd.list->search(letterItemTag("menuic", i, '1'));
+        for (J2DTextBox* t : {it.subject, it.sender}) {
+            if (t != NULL) {
+                t->setFont(mDoExt_getMesgFont());
+                t->setString(0x100, "");
+            }
+        }
+        it.letter = -1;
+        letterHdSetOpened(it, false);
+        it.mgr->hide();
+        hd.itemMax++;
+    }
+
+    // RPX 0x029eefb0: every letter received, in letter number order.
+    hd.count = 0;
+    for (int i = 0; i < 64 && hd.count < hd.itemMax; i++) {
+        if (!dComIfGs_isLetterGetFlag(i)) {
+            continue;
+        }
+        LetterHdItem& it = hd.item[hd.count++];
+        it.letter = i;
+        if (it.subject != NULL) {
+            hd.string->getString(dMenu_Letter::getLetterSubject(i), it.subject, NULL, NULL, NULL, 0);
+        }
+        if (it.sender != NULL) {
+            hd.string->getString(dMenu_Letter::getLetterName(i), it.sender, NULL, NULL, NULL, 0);
+        }
+        letterHdSetOpened(it, dComIfGs_isLetterReadFlag(i) != 0);
+        it.mgr->show();
+    }
+
+    // Title "Letters" (RPX: message 0x4c8 in f_t00).
+    hd.title = JKR_NEW J2DScreen();
+    hd.title->setPriority("zelda_letter_title.blo", 0x20000, mpArchive);
+    dPaneClass_showNullPane(hd.title);
+    if (J2DTextBox* t = (J2DTextBox*)hd.title->search(MULTI_CHAR('t_t00'))) {
+        t->hide();
+    }
+    if (J2DTextBox* t = (J2DTextBox*)hd.title->search(MULTI_CHAR('f_t00'))) {
+        t->setFont(mDoExt_getSubFont());
+        t->setString(0x200, "");
+        hd.string->getString(0x4c8, t, NULL, NULL, NULL, 0);
+    }
+
+    // A (no caption, greyed) / B "Back".
+    hd.icon = JKR_NEW J2DScreen();
+    hd.icon->setPriority("zelda_collect_soubi_do_icon_parts_revo.blo", 0x20000, mpArchive);
+    dPaneClass_showNullPane(hd.icon);
+    dusk::tphd::setupRevoButtonText(hd.icon);
+    dusk::tphd::setRevoButtonText(hd.icon, 0, true);
+    dusk::tphd::setRevoButtonText(hd.icon, 0x3f9, false);
+
+    // RPX 0x029cbffc / 0x029cc290: list cursor (0.95, 1, 0.03, 0.7, 0.7).
+    hd.cursor = JKR_NEW dSelect_cursor_c(2, 1.0f, NULL);
+    hd.cursor->setParam(0.95f, 1.0f, 0.03f, 0.7f, 0.7f);
+    hd.cursor->setAlphaRate(1.0f);
+    hd.cursor->setScale(1.0f);
+    hd.cursor->onPlayAnime(0);
+
+    enable_turn_page_controls(true);
+    hd.index = 0;
+    hd.page = 0;
+    if (hd.count > 0) {
+        hdShow(0, 0);
+    } else if (hd.pageTurn != NULL) {
+        hd.pageTurn->hide();
+    }
+}
+
+void dMenu_Letter_c::hdDelete() {
+    LetterHd& hd = s_letterHd;
+    for (int i = 0; i < 19; i++) {
+        if (hd.item[i].mgr != NULL) {
+            JKR_DELETE(hd.item[i].mgr);
+            hd.item[i].mgr = NULL;
+        }
+    }
+    if (hd.cursor != NULL) {
+        JKR_DELETE(hd.cursor);
+    }
+    if (hd.string != NULL) {
+        JKR_DELETE(hd.string);
+    }
+    if (hd.black != NULL) {
+        JKR_DELETE(hd.black);
+    }
+    for (J2DScreen* scr : {hd.base, hd.list, hd.title, hd.icon}) {
+        if (scr != NULL) {
+            JKR_DELETE(scr);
+        }
+    }
+    std::memset(&hd, 0, sizeof(hd));
+}
+
+// RPX 0x029eeba8 (+ list select 0x029cd5a4): selects a list entry, scrolls the list, moves the
+// cursor and shows page i_page of that letter.
+void dMenu_Letter_c::hdShow(int i_index, int i_page) {
+    LetterHd& hd = s_letterHd;
+    if (hd.count <= 0) {
+        return;
+    }
+    hd.index = i_index;
+    // Scroll: 7 entries visible, 49 units apart.
+    if (hd.top + 6 < i_index) {
+        hd.top = i_index - 6;
+    } else if (i_index < hd.top) {
+        hd.top = i_index;
+    }
+    if (hd.items != NULL) {
+        hd.items->translate(hd.itemsX, hd.itemsY - hd.top * 49.0f);
+    }
+    if (hd.slider != NULL) {
+        if (hd.count - 7 > 0) {
+            hd.slider->show();
+            if (hd.sliderFg != NULL) {
+                hd.sliderFg->translate(hd.sliderFgX,
+                                       hd.sliderFgY + (hd.top * 134.0f) / (f32)(hd.count - 7));
+            }
+        } else {
+            hd.slider->hide();
+        }
+    }
+    for (int i = 0; i < hd.count; i++) {
+        LetterHdItem& it = hd.item[i];
+        const bool sel = i == i_index;
+        if (it.frame != NULL) {
+            letterHdVisible(it.frame, !sel);
+        }
+        if (it.frameSel != NULL) {
+            letterHdVisible(it.frameSel, sel);
+            it.frameSel->scale(sel ? 1.15f : 1.0f, sel ? 1.2f : 1.0f);
+        }
+        if (it.pane != NULL) {
+            letterHdVisible(it.pane, hd.top <= i && i < hd.top + 7);
+        }
+    }
+
+    const int letter = hd.item[i_index].letter;
+    hd.curLetter = letter;
+    hd.curText = dMenu_Letter::getLetterText(letter);
+    // Every letter with this text is read now.
+    for (int i = 0; i < 64; i++) {
+        if (dMenu_Letter::getLetterText(i) == hd.curText) {
+            dComIfGs_onLetterReadFlag(i);
+        }
+    }
+    hdUpdateIcons();
+
+    hd.page = i_page;
+    if (hd.text != NULL) {
+        hd.string->getStringPage(hd.curText, (u8)i_page, (u8)hd.lines, hd.text, hd.textShadow, NULL,
+                                 NULL, 0);
+        hd.pageMax = hd.string->getPageMax(hd.lines);
+    } else {
+        hd.pageMax = 1;
+    }
+    if (hd.pageText != NULL) {
+        // Message 0xaf2 is "Page %d/%d".
+        char fmt[0x80] = "";
+        dMeter2Info_getString(0xaf2, fmt, NULL);
+        if (fmt[0] == '\0' || std::strstr(fmt, "%d") == NULL) {
+            SAFE_STRCPY(fmt, "%d/%d");
+        }
+        char buf[0x80];
+        std::snprintf(buf, sizeof(buf), fmt, i_page + 1, hd.pageMax);
+        SAFE_STRCPY(hd.pageText->getStringPtr(), buf);
+    }
+    if (hd.pageTurn != NULL) {
+        letterHdVisible(hd.pageTurn, hd.pageMax > 1);
+    }
+}
+
+// RPX 0x029eea04: envelope of each entry (the letter being read keeps its look).
+void dMenu_Letter_c::hdUpdateIcons() {
+    LetterHd& hd = s_letterHd;
+    for (int i = 0; i < hd.count; i++) {
+        LetterHdItem& it = hd.item[i];
+        if (it.letter < 0) {
+            continue;
+        }
+        const int text = dMenu_Letter::getLetterText(it.letter);
+        if (!dComIfGs_isLetterReadFlag(it.letter)) {
+            letterHdSetOpened(it, false);
+        } else if (text != hd.curText) {
+            letterHdSetOpened(it, true);
+        }
+    }
+}
+
+// Page turn (RPX 0x02a1b0a8 / 0x02a1b158): the Pro Controller L / R shoulder buttons, not the
+// ZL / ZR triggers (the GC L / R). Here those buttons are the ones bound to "Call Midna" (L) and
+// "Use Item (R slot)" (R); without a binding the GC triggers still work.
+static bool hdPageTrig(bool i_right) {
+    const dusk::ActionBinds b =
+        i_right ? dusk::ActionBinds::USE_ITEM_R : dusk::ActionBinds::CALL_MIDNA;
+    if (dusk::isActionBound(b, PAD_1)) {
+        return dusk::getActionBindTrig(b, PAD_1);
+    }
+    return i_right ? mDoCPd_c::getTrigR(PAD_1) != 0 : mDoCPd_c::getTrigL(PAD_1) != 0;
+}
+
+// RPX 0x029ef934 (input) + 0x029ef5d0 (page arrows).
+void dMenu_Letter_c::hdMove() {
+    LetterHd& hd = s_letterHd;
+    if (mDoGph_gInf_c::getFader()->getStatus() != 1) {
+        return;
+    }
+    if (mDoCPd_c::getTrigB(PAD_1)) {
+        mStatus = 3;
+        return;
+    }
+    if (hd.count > 0) {
+        const int old = hd.index;
+        int next = old;
+        dusk::menu_pointer::begin_context(dusk::menu_pointer::Context::Collection);
+        for (int i = hd.top; i < hd.count && i < hd.top + 7; i++) {
+            if (hd.item[i].pane != NULL && dusk::menu_pointer::hit_pane(hd.item[i].pane, 4.0f)) {
+                dusk::menu_pointer::set_hover_target(i);
+                next = i;
+                break;
+            }
+        }
+        mpStick->checkTrigger();
+        if (next == old) {
+            if (mpStick->checkUpTrigger()) {
+                if (old > 0) {
+                    next = old - 1;
+                }
+            } else if (mpStick->checkDownTrigger()) {
+                if (old + 1 < hd.count) {
+                    next = old + 1;
+                }
+            }
+        }
+        if (next != old) {
+            hdShow(next, 0);
+            Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        } else if (hdPageTrig(false)) {
+            if (hd.page > 0) {
+                hdShow(hd.index, hd.page - 1);
+                Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_NEXT, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                         -1.0f, 0);
+            }
+        } else if (hdPageTrig(true)) {
+            if (hd.page + 1 < hd.pageMax) {
+                hdShow(hd.index, hd.page + 1);
+                Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_SUB_NEXT, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                         -1.0f, 0);
+            }
+        }
+    }
+    if (hd.arrowL != NULL) {
+        hd.arrowL->setAlpha(hd.page > 0 ? 0xff : 0x60);
+    }
+    if (hd.arrowR != NULL) {
+        hd.arrowR->setAlpha(hd.page + 1 < hd.pageMax ? 0xff : 0x60);
+    }
+}
+
+// RPX 0x029ef844: backdrop, letter base, list (+ cursor), title, A/B icons, then the letter text.
+void dMenu_Letter_c::hdDraw() {
+    LetterHd& hd = s_letterHd;
+    J2DGrafContext* graf = dComIfGp_getCurrentGrafPort();
+    hd.black->setAlpha(0xff);
+    hd.black->draw(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                   mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(), false, false, false);
+    if (hd.text != NULL && hd.curText >= 0) {
+        hd.string->getStringPage(hd.curText, (u8)hd.page, (u8)hd.lines, hd.text, hd.textShadow,
+                                 NULL, NULL, 0);
+    }
+    dusk::tphd::drawRevoScreen(hd.base, graf);
+    dusk::tphd::drawRevoScreen(hd.list, graf);
+    if (hd.count > 0 && hd.item[hd.index].mgr != NULL) {
+        // Centre of the item as it was just drawn (its global matrix includes the stretch and
+        // the 'n_43' squeeze of n_all); CPaneMgr's own bounds walk drifts on this nested
+        // centre-anchored chain (n_all > menu_itm > N_menu0X > menun_0X).
+        const Vec c = hd.item[hd.index].pane != NULL && hd.item[hd.index].pane->isVisible()
+                          ? dusk::tphd::paneGlobalCenter(hd.item[hd.index].pane)
+                          : dusk::tphd::mgrDrawnCenter(hd.item[hd.index].mgr);
+        hd.cursor->setPosRevo(c.x, c.y, hd.item[hd.index].pane, false,
+                              dusk::tphd::subscreenScaleX(), mDoGph_gInf_c::getMinXF());
+        hd.cursor->draw();
+    }
+    dusk::tphd::drawRevoScreen(hd.title, graf);
+    dusk::tphd::drawRevoIconScreen(hd.icon, graf);
+    if (hd.text != NULL && hd.curText >= 0) {
+        hd.string->drawOutFont(hd.text, -1.0f);
+    }
+}
+#endif
+
+#if TARGET_PC
 #define D_MENU_LETTER_LINE_MAX (dusk::version::isRegionJpn() ? 9 : 12)
 #elif VERSION == VERSION_GCN_JPN
 #define D_MENU_LETTER_LINE_MAX 9
@@ -95,6 +577,20 @@ dMenu_Letter_c::dMenu_Letter_c(JKRExpHeap* i_heap, STControl* i_stick, CSTContro
 dMenu_Letter_c::~dMenu_Letter_c() {
 #if TARGET_PC
     enable_turn_page_controls(false);
+    if (s_letterHd.active) {
+        hdDelete();
+        if (mpMount != NULL) {
+            JKRUnmountArchive(mpMount->getArchive());
+            mpMount->destroy();
+            mpMount = NULL;
+        }
+        if (mpArchive != NULL) {
+            JKRUnmountArchive(mpArchive);
+            mpArchive = NULL;
+        }
+        dComIfGp_getMsgArchive(0)->removeResourceAll();
+        return;
+    }
 #endif
 
     JKR_DELETE(mpDrawCursor);
@@ -211,6 +707,14 @@ void dMenu_Letter_c::_create() {
 
 
 void dMenu_Letter_c::_move() {
+#if TARGET_PC
+    if (s_letterHd.active) {
+        JKRHeap* hdHeap = mDoExt_setCurrentHeap((JKRHeap*)mpHeap);
+        hdMove();
+        mDoExt_setCurrentHeap(hdHeap);
+        return;
+    }
+#endif
     JKRHeap* heap = mDoExt_setCurrentHeap((JKRHeap*)mpHeap);
     u8 process = mProcess;
     (this->*map_move_process[mProcess])();
@@ -226,6 +730,12 @@ void dMenu_Letter_c::_draw() {
         return;
     }
     IF_DUSK(presentAnims());
+#if TARGET_PC
+    if (s_letterHd.active) {
+        hdDraw();
+        return;
+    }
+#endif
     J2DGrafContext* grafContext = dComIfGp_getCurrentGrafPort();
     u8 prevAlpha = mpBlackTex->getAlpha();
     mpBlackTex->setAlpha(0xff);
@@ -324,6 +834,27 @@ void dMenu_Letter_c::init() {
 }
 
 int dMenu_Letter_c::_open() {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // RPX 0x029ef4f4: mounts letresR.arc, builds the screen and is open at once.
+        if (mpMount == NULL && mpArchive == NULL) {
+            mpMount = mDoDvdThd_mountArchive_c::create("/res/LayoutRevo/letresR.arc", 0, NULL);
+        }
+        if (mpArchive == NULL) {
+            if (mpMount->sync() == 0) {
+                return 0;
+            }
+            mpArchive = (JKRArchive*)mpMount->getArchive();
+            JKR_DELETE(mpMount);
+            mpMount = NULL;
+            JKRHeap* hdHeap = mDoExt_setCurrentHeap((JKRHeap*)mpHeap);
+            hdCreate();
+            mDoExt_setCurrentHeap(hdHeap);
+        }
+        mStatus = 2;
+        return 1;
+    }
+#endif
     if (mpMount == NULL) {
         mpMount = mDoDvdThd_mountArchive_c::create("/res/Layout/letres.arc", 0, NULL);
     }
@@ -375,6 +906,10 @@ int dMenu_Letter_c::_open() {
 int dMenu_Letter_c::_close() {
 #if TARGET_PC
     enable_turn_page_controls(false);
+    if (s_letterHd.active) {
+        mStatus = 0;
+        return 1;
+    }
 #endif
 
     s16 closeWindowFrame =

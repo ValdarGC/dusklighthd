@@ -25,6 +25,9 @@
 #include "d/d_menu_option.h"
 #include "d/d_menu_save.h"
 #include "d/d_menu_skill.h"
+#if TARGET_PC
+#include "d/d_menu_stamp.h"
+#endif
 #include "d/d_menu_window.h"
 #include "d/d_meter2_info.h"
 #include "d/d_meter_HIO.h"
@@ -42,6 +45,42 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/menu_pointer.h"
 #include "dusk/utilities.hpp"
+#include "dusk/settings.h"
+#include "dusk/logging.h"
+
+extern JKRArchive* g_tphdCollectRevoArchive;
+extern JKRArchive* g_tphdMain2DRevoArchive;
+
+namespace {
+// TPHD (Wii U TV / Pro Controller) collection screen: zelda_collect_soubi_screen_revo.blo and
+// zelda_collect_soubi_do_icon_parts_revo.blo from /res/LayoutRevo/clctresR.arc. Both are authored on
+// a 608-unit canvas that the Wii U stretches to 16:9 (their 38 x 50 item frames come out square), so
+// they are drawn scaled to the whole screen width. Pane names match the GC layout except for the
+// A / B captions (cont_at / cont_bt) and the heart decoration (no uzu_01..07 / hishi).
+bool collectRevo() {
+    return dusk::tphd_active() && g_tphdCollectRevoArchive != NULL;
+}
+
+f32 collectRevoScaleX() {
+    return (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+}
+
+J2DTextBox* collectIconText(J2DScreen* scr, u64 tag) {
+    J2DPane* p = scr->search(tag);
+    if (p == NULL && collectRevo()) {
+        static const u64 kMap[][2] = {
+            {MULTI_CHAR('atext1_1'), MULTI_CHAR('cont_at')},  {MULTI_CHAR('atext1_2'), MULTI_CHAR('cont_at1')},
+            {MULTI_CHAR('btext1_1'), MULTI_CHAR('cont_bt')},  {MULTI_CHAR('btext1_2'), MULTI_CHAR('cont_bt1')},
+        };
+        for (const auto& m : kMap) {
+            if (m[0] == tag) {
+                p = scr->search(m[1]);
+            }
+        }
+    }
+    return (p != NULL && p->getTypeID() == 19) ? static_cast<J2DTextBox*>(p) : NULL;
+}
+}  // namespace
 #endif
 
 typedef void (dMenu_Collect2D_c::*initFunc)();
@@ -92,7 +131,25 @@ dMenu_Collect2D_c::dMenu_Collect2D_c(JKRExpHeap* param_0, STControl* param_1, CS
     mHeartPiecePosX = 0.0f;
     mHeartPiecePosY = 0.0f;
     mHeartPieceScale = 1.0f;
+#if TARGET_PC
+    // The HD (Revo) Options/Save layouts load far more texture data than the GC ones; the 0x46000
+    // heap overflowed ("allocation failure") when opening Options from the collection menu.
+    mpSubHeap = NULL;
+    if (dusk::tphd_active() && mpHeap != NULL) {
+        u32 hdSize = mpHeap->getTotalFreeSize() / 3;
+        if (hdSize > 0x00300000) {
+            hdSize = 0x00300000;
+        }
+        if (hdSize > 0x00046000) {
+            mpSubHeap = JKRCreateExpHeap(hdSize, mpHeap, 0);
+        }
+    }
+    if (mpSubHeap == NULL) {
+        mpSubHeap = JKRCreateExpHeap(0x00046000, mpHeap, 0);
+    }
+#else
     mpSubHeap = JKRCreateExpHeap(0x00046000, mpHeap, 0);
+#endif
 }
 
 
@@ -138,6 +195,9 @@ static dusk::utils::PaneCache mpScreenPanes[] = {
 };
 
 void dMenu_Collect2D_c::menuCollectWide() {
+    if (collectRevo()) {
+        return;  // stretched to the screen width in _draw instead
+    }
     static bool cachedPanes = false;
     // Get pre-scale values for each pane
     if (!cachedPanes) {
@@ -301,19 +361,34 @@ void dMenu_Collect2D_c::_create() {
     #endif
 
     mpScreen = JKR_NEW J2DScreen();
+#if TARGET_PC
+    const bool revo = collectRevo();
+    JKRArchive* scrArc = revo ? g_tphdCollectRevoArchive : dComIfGp_getCollectResArchive();
+    mpScreen->setPriority(revo ? "zelda_collect_soubi_screen_revo.blo" : "zelda_collect_soubi_screen.blo",
+                          0x1020000, scrArc);
+#else
     mpScreen->setPriority("zelda_collect_soubi_screen.blo", 0x1020000,
                           dComIfGp_getCollectResArchive());
+#endif
     dPaneClass_showNullPane(mpScreen);
     mpScreenIcon = JKR_NEW J2DScreen();
+#if TARGET_PC
+    mpScreenIcon->setPriority(revo ? "zelda_collect_soubi_do_icon_parts_revo.blo"
+                                   : "zelda_collect_soubi_do_icon_parts.blo",
+                              0x20000, scrArc);
+#else
     mpScreenIcon->setPriority("zelda_collect_soubi_do_icon_parts.blo", 0x20000,
                               dComIfGp_getCollectResArchive());
+#endif
     for (int i = 0; i < 2; i++) {
         mpButtonAB[i] = NULL;
         mpButtonText[i] = NULL;
     }
 
     #if TARGET_PC
-    mpScreenIcon->translate(-mDoGph_gInf_c::getSafeMinXF(), 0.0f);
+    if (!revo) {
+        mpScreenIcon->translate(-mDoGph_gInf_c::getSafeMinXF(), 0.0f);
+    }
     #endif
 
     dPaneClass_showNullPane(mpScreenIcon);
@@ -327,7 +402,12 @@ void dMenu_Collect2D_c::_create() {
     mpBlackTex = JKR_NEW J2DPicture(image);
     mpBlackTex->setBlackWhite(JUtility::TColor(0, 0, 0, 0), JUtility::TColor(0, 0, 0, 255));
     mpBlackTex->setAlpha(0);
+#if TARGET_PC
+    // Wii U: the 4-corner cursor of main2DR.arc (HD textures).
+    mpDrawCursor = JKR_NEW dSelect_cursor_c(2, 1.0f, revo ? g_tphdMain2DRevoArchive : NULL);
+#else
     mpDrawCursor = JKR_NEW dSelect_cursor_c(2, 1.0f, NULL);
+#endif
     mpString = JKR_NEW dMsgString_c();
     mpSaveScrn = NULL;
     mpOptionScrn = NULL;
@@ -340,6 +420,11 @@ void dMenu_Collect2D_c::_create() {
     screenSet();
     initialize();
     setHIO(true);
+#if TARGET_PC
+    if (revo) {
+        hdInit();
+    }
+#endif
 }
 
 void dMenu_Collect2D_c::_delete() {
@@ -554,12 +639,22 @@ void dMenu_Collect2D_c::screenSet() {
     }
 
     for (int i = 0; i < 5; i++) {
+#if TARGET_PC
+        for (J2DTextBox* tb : {collectIconText(mpScreenIcon, text_a_tag[i]),
+                               collectIconText(mpScreenIcon, text_b_tag[i])}) {
+            if (tb != NULL) {
+                tb->setFont(mDoExt_getMesgFont());
+                tb->setString(0x20, "");
+            }
+        }
+#else
         static_cast<J2DTextBox*>(mpScreenIcon->search(text_a_tag[i]))
             ->setFont(mDoExt_getMesgFont());
         static_cast<J2DTextBox*>(mpScreenIcon->search(text_b_tag[i]))
             ->setFont(mDoExt_getMesgFont());
         static_cast<J2DTextBox*>(mpScreenIcon->search(text_a_tag[i]))->setString(0x20, "");
         static_cast<J2DTextBox*>(mpScreenIcon->search(text_b_tag[i]))->setString(0x20, "");
+#endif
     }
 
 #if TARGET_PC
@@ -719,7 +814,12 @@ void dMenu_Collect2D_c::screenSet() {
         field_0x22d[2][3] = 0;
     }
     field_0x22d[3][3] = isSkillIconVisible();
+#if TARGET_PC
+    // TPHD 0x029b3988 (+0x2cc = 0x029b1990): the stamp cell is "owned" once a stamp was found.
+    field_0x22d[4][3] = collectRevo() && dMenu_Stamp_c::getStampNum() != 0 ? 1 : 0;
+#else
     field_0x22d[4][3] = 0;
+#endif
     field_0x22d[5][3] = 0;
     field_0x22d[6][3] = 0;
     if (dComIfGs_getCollectSmell() != dItemNo_NONE_e) {
@@ -806,6 +906,8 @@ void dMenu_Collect2D_c::screenSet() {
         field_0x184[0][3] = 0x199;
     } else if (dComIfGs_getWalletSize() == BIG_WALLET) {
         field_0x184[0][3] = 0x19a;
+    } if (dusk::tphd_active() && dComIfGs_getWalletSize() == 3) {
+        field_0x184[0][3] = 0x19c;
     } else {
         field_0x184[0][3] = 0x19b;
     }
@@ -827,7 +929,7 @@ void dMenu_Collect2D_c::screenSet() {
     }
     field_0x184[2][3] = 0x5b8;
     field_0x184[3][3] = 0x5b0;
-    field_0x184[4][3] = 0;
+    field_0x184[4][3] = DUSK_IF_ELSE(collectRevo() ? 0xaf0 : 0, 0);  // TPHD "Stamps"
     field_0x184[5][3] = 0;
     field_0x184[6][3] = 0;
     field_0x184[0][4] = dMsgObject_getSmellTypeMessageID();
@@ -885,7 +987,7 @@ void dMenu_Collect2D_c::screenSet() {
     field_0x1d8[1][3] = field_0x184[1][3] + 0x100;
     field_0x1d8[2][3] = 0x5b9;
     field_0x1d8[3][3] = 0x5b1;
-    field_0x1d8[4][3] = 0;
+    field_0x1d8[4][3] = DUSK_IF_ELSE(collectRevo() ? 0xaf1 : 0, 0);  // TPHD "... %d/%d"
     field_0x1d8[5][3] = 0;
     field_0x1d8[6][3] = 0;
     field_0x1d8[0][4] = dMsgObject_getSmellTypeMessageID() + 0x100;
@@ -986,12 +1088,46 @@ void dMenu_Collect2D_c::screenSet() {
     setSmellType();
     setHeartPiece();
     setPohMaxNum(dComIfGs_getPohSpiritNum());
+#if TARGET_PC
+    if (collectRevo()) {
+        // TPHD 0x029b3850: number of stamps on the stamp cell (tens hidden below 10).
+        const int num = dMenu_Stamp_c::getStampNum();
+        JKRArchive* archive = dComIfGp_getMain2DArchive();
+        J2DPane* tens = mpScreen->search(MULTI_CHAR('stamp10'));
+        J2DPane* ones = mpScreen->search(MULTI_CHAR('stamp01'));
+        if (tens != NULL && tens->getTypeID() == 18) {
+            if (num > 9) {
+                tens->show();
+            } else {
+                tens->hide();
+            }
+            ResTIMG* timg =
+                (ResTIMG*)archive->getResource('TIMG', dMeter2Info_getNumberTextureName(num / 10));
+            if (timg != NULL) {
+                static_cast<J2DPicture*>(tens)->changeTexture(timg, 0);
+            }
+        }
+        if (ones != NULL && ones->getTypeID() == 18) {
+            ResTIMG* timg =
+                (ResTIMG*)archive->getResource('TIMG', dMeter2Info_getNumberTextureName(num % 10));
+            if (timg != NULL) {
+                static_cast<J2DPicture*>(ones)->changeTexture(timg, 0);
+            }
+        }
+    }
+#endif
 }
 
 void dMenu_Collect2D_c::animationSet() {
     OSInitFastCast();
+#if TARGET_PC
+    void* resource =
+        collectRevo() ? JKRGetNameResource("zelda_collect_soubi_screen_revo.btk", g_tphdCollectRevoArchive)
+                      : JKRGetNameResource("zelda_collect_soubi_screen.btk", dComIfGp_getCollectResArchive());
+#else
     void* resource =
         JKRGetNameResource("zelda_collect_soubi_screen.btk", dComIfGp_getCollectResArchive());
+#endif
     mpAnmKey = (J2DAnmTextureSRTKey*)J2DAnmLoaderDataBase::load(resource);
     mpAnmKey->searchUpdateMaterialID(mpScreen);
     field_0x34 = 0.0f;
@@ -1292,25 +1428,47 @@ LAB_802bab54:
 }
 
 void dMenu_Collect2D_c::cursorPosSet() {
+#if TARGET_PC
+    // TPHD collect HIO (ctor 0x02a4e00c, read by 0x029b2748): unselected 1.0, selected 1.1 for every
+    // cell (GC: 1.5 for items). Kept local because dMeter_drawHIO_c::updateOnWide resets g_drawHIO.
+    const bool hdRevo = collectRevo();
+    const f32 kSelItem = hdRevo ? 1.1f : g_drawHIO.mCollectScreen.mSelectItemScale;
+    const f32 kUnselItem = hdRevo ? 1.0f : g_drawHIO.mCollectScreen.mUnselectItemScale;
+    const f32 kSelSO = hdRevo ? 1.1f : g_drawHIO.mCollectScreen.mSelectSaveOptionScale;
+    const f32 kUnselSO = hdRevo ? 1.0f : g_drawHIO.mCollectScreen.mUnselectSaveOptionScale;
+#else
+    const f32 kSelItem = g_drawHIO.mCollectScreen.mSelectItemScale;
+    const f32 kUnselItem = g_drawHIO.mCollectScreen.mUnselectItemScale;
+    const f32 kSelSO = g_drawHIO.mCollectScreen.mSelectSaveOptionScale;
+    const f32 kUnselSO = g_drawHIO.mCollectScreen.mUnselectSaveOptionScale;
+#endif
     for (int i = 0; i < 7; i++) {
         for (int j = 0; j < 6; j++) {
             if (getItemTag(i, j, true) != 0) {
                 J2DPane* itemTag = mpScreen->search(getItemTag(i, j, true));
+#if TARGET_PC
+                // TPHD 0x029b2748 leaves the heart and the Fused Shadow / Mirror unscaled.
+                if (hdRevo && (getItemTag(i, j, true) == MULTI_CHAR('heart_kn') ||
+                               getItemTag(i, j, true) == MULTI_CHAR('kamen_n')))
+                {
+                    continue;
+                }
+#endif
                 if ((i != 0 || j != 0) && (i != 6 || j != 0)) {
                     if (j == 5) {
                         if (i == mCursorX && j == mCursorY) {
-                            itemTag->scale(g_drawHIO.mCollectScreen.mSelectSaveOptionScale,
-                                           g_drawHIO.mCollectScreen.mSelectSaveOptionScale);
+                            itemTag->scale(kSelSO,
+                                           kSelSO);
                         } else {
-                            itemTag->scale(g_drawHIO.mCollectScreen.mUnselectSaveOptionScale,
-                                           g_drawHIO.mCollectScreen.mUnselectSaveOptionScale);
+                            itemTag->scale(kUnselSO,
+                                           kUnselSO);
                         }
                     } else if (i == mCursorX && j == mCursorY) {
-                        itemTag->scale(g_drawHIO.mCollectScreen.mSelectItemScale,
-                                       g_drawHIO.mCollectScreen.mSelectItemScale);
+                        itemTag->scale(kSelItem,
+                                       kSelItem);
                     } else {
-                        itemTag->scale(g_drawHIO.mCollectScreen.mUnselectItemScale,
-                                       g_drawHIO.mCollectScreen.mUnselectItemScale);
+                        itemTag->scale(kUnselItem,
+                                       kUnselItem);
                     }
                 }
             }
@@ -1327,6 +1485,11 @@ void dMenu_Collect2D_c::cursorPosSet() {
     } else {
         mpDrawCursor->setParam(1.0f, 1.0f, 0.1f, 0.7f, 0.7f);
     }
+#if TARGET_PC
+    if (collectRevo()) {
+        hdSetCursorParam();
+    }
+#endif
 }
 
 void dMenu_Collect2D_c::changeSword() {
@@ -1750,6 +1913,351 @@ void dMenu_Collect2D_c::setEquipItemFrameColorClothes(int i_frame) {
     }
 }
 
+#if TARGET_PC
+// ---- TPHD (Wii U TV) collection screen -----------------------------------------------------------
+namespace {
+// RPX 0x10093e20 (read by 0x029b20c0): the Wii U grid, 9 columns x 5 rows, row-major, x = column.
+const char* const kHdGrid[5][9] = {
+    {NULL, NULL, NULL, NULL, "fuku_n1", "fuku_n0", "fuku_n2", NULL, NULL},
+    {NULL, "heart_kn", NULL, "tate_n0", "tate_n1", NULL, "ken_n0", "ken_n1", "kamen_n"},
+    {"item_1_n", "item_0_n", "item_2_n", "wolf_n", NULL, NULL, NULL, NULL, NULL},
+    {"kabu_6n", "fish_3_n", "maki_5_n", "lett_4_n", "stam_7_n", NULL, NULL, NULL, NULL},
+    {"save_n", NULL, NULL, NULL, NULL, NULL, NULL, NULL, "option_n"},
+};
+u8 s_hdX = 0, s_hdY = 0, s_hdPX = 0xFF, s_hdPY = 0xFF;
+s8 s_hdGcX[5][9], s_hdGcY[5][9];  // GC cell (mCursorX / mCursorY) holding the same pane
+
+// Equipped / normal frame looks (RPX 0x029b14a4 reads them from ar_equip / ar_01, 0x029b1ae4
+// applies them): texture, white colour and size.
+struct HdFrameTex {
+    const ResTIMG* tex = NULL;
+    JUtility::TColor white;
+    f32 w = 0.0f, h = 0.0f;
+};
+HdFrameTex s_hdEquipTex, s_hdNormalTex;
+u8 s_hdEquip[3] = {0xFF, 0xFF, 0xFF};
+
+u64 hdTag8(const char* s) {
+    u64 t = 0;
+    for (int i = 0; i < 8 && s[i] != 0; i++) {
+        t = (t << 8) | static_cast<u8>(s[i]);
+    }
+    return t;
+}
+
+bool hdValid(int x, int y) {
+    return x >= 0 && x < 9 && y >= 0 && y < 5 && kHdGrid[y][x] != NULL && s_hdGcX[y][x] >= 0;
+}
+
+HdFrameTex hdReadFrame(J2DScreen* scr, const char* tag) {
+    HdFrameTex t;
+    J2DPane* p = scr->search(hdTag8(tag));
+    if (p != NULL && p->getTypeID() == 18) {
+        J2DPicture* pic = static_cast<J2DPicture*>(p);
+        if (pic->getTexture(0) != NULL) {
+            t.tex = pic->getTexture(0)->getTexInfo();
+        }
+        t.white = pic->getWhite();
+        t.w = p->getWidth();
+        t.h = p->getHeight();
+    }
+    return t;
+}
+
+void hdApplyFrame(J2DScreen* scr, const char* tag, const HdFrameTex& t) {
+    J2DPane* p = scr->search(hdTag8(tag));
+    if (p == NULL || p->getTypeID() != 18 || t.tex == NULL) {
+        return;
+    }
+    J2DPicture* pic = static_cast<J2DPicture*>(p);
+    pic->changeTexture(t.tex, 0);
+    pic->setBlackWhite(JUtility::TColor(0, 0, 0, 0), t.white);
+    // Size: the frames are centre-anchored (base position 4); J2DPane::resize keeps the top-left
+    // corner, which moved the frame off its cell (and the cursor, centred on the cell, looked
+    // off-centre). Scale about the anchor instead, from the size and scale the blo gave the pane.
+    struct Orig {
+        J2DPane* pane;
+        f32 w, h, sx, sy;
+    };
+    static Orig s_orig[16];
+    static J2DScreen* s_origScr = NULL;
+    if (s_origScr != scr) {
+        s_origScr = scr;
+        for (Orig& o : s_orig) {
+            o.pane = NULL;
+        }
+    }
+    Orig* o = NULL;
+    for (Orig& e : s_orig) {
+        if (e.pane == p) {
+            o = &e;
+            break;
+        }
+    }
+    if (o == NULL) {
+        for (Orig& e : s_orig) {
+            if (e.pane == NULL) {
+                e = Orig{p, p->getWidth(), p->getHeight(), p->getScaleX(), p->getScaleY()};
+                o = &e;
+                break;
+            }
+        }
+    }
+    if (o != NULL && o->w > 0.0f && o->h > 0.0f) {
+        p->scale(o->sx * t.w / o->w, o->sy * t.h / o->h);
+    }
+}
+
+// Equipped cells (RPX 0x029b1bc8 / 0x029b1d58 / 0x029b1ec4).
+int hdSwordCell() {
+    switch (dComIfGs_getSelectEquipSword()) {
+    case dItemNo_SWORD_e:
+    case dItemNo_WOOD_STICK_e:
+        return 6;
+    case dItemNo_MASTER_SWORD_e:
+        return 7;
+    case dItemNo_LIGHT_SWORD_e:
+        return dComIfGs_isItemFirstBit(dItemNo_LIGHT_SWORD_e) ? 7 : -1;
+    }
+    return -1;
+}
+int hdShieldCell() {
+    switch (dComIfGs_getSelectEquipShield()) {
+    case dItemNo_WOOD_SHIELD_e:
+    case dItemNo_SHIELD_e:
+        return 3;
+    case dItemNo_HYLIA_SHIELD_e:
+        return 4;
+    }
+    return -1;
+}
+int hdClothesCell() {
+    switch (dComIfGs_getSelectEquipClothes()) {
+    case dItemNo_WEAR_ZORA_e:
+        return 4;
+    case dItemNo_WEAR_KOKIRI_e:
+        return 5;
+    case dItemNo_ARMOR_e:
+        return 6;
+    }
+    return -1;
+}
+}  // namespace
+
+void dMenu_Collect2D_c::hdInit() {
+    for (int y = 0; y < 5; y++) {
+        for (int x = 0; x < 9; x++) {
+            s_hdGcX[y][x] = s_hdGcY[y][x] = -1;
+            if (kHdGrid[y][x] == NULL) {
+                continue;
+            }
+            const u64 tag = hdTag8(kHdGrid[y][x]);
+            for (int i = 0; i < 7; i++) {
+                for (int j = 0; j < 6; j++) {
+                    if (getItemTag(i, j, true) == tag && mpSelPm[i][j] != NULL) {
+                        s_hdGcX[y][x] = i;
+                        s_hdGcY[y][x] = j;
+                    }
+                }
+            }
+        }
+    }
+    s_hdEquipTex = hdReadFrame(mpScreen, "ar_equip");
+    s_hdNormalTex = hdReadFrame(mpScreen, "ar_01");
+    s_hdEquip[0] = s_hdEquip[1] = s_hdEquip[2] = 0xFF;
+    // Start on the Wii U cell of the GC cursor.
+    bool found = false;
+    for (int y = 0; y < 5 && !found; y++) {
+        for (int x = 0; x < 9 && !found; x++) {
+            if (hdValid(x, y) && s_hdGcX[y][x] == mCursorX && s_hdGcY[y][x] == mCursorY) {
+                s_hdX = x;
+                s_hdY = y;
+                found = true;
+            }
+        }
+    }
+    for (int y = 0; y < 5 && !found; y++) {
+        for (int x = 0; x < 9 && !found; x++) {
+            if (hdValid(x, y)) {
+                s_hdX = x;
+                s_hdY = y;
+                found = true;
+                mCursorX = s_hdGcX[y][x];
+                mCursorY = s_hdGcY[y][x];
+            }
+        }
+    }
+    s_hdPX = s_hdPY = 0xFF;
+    hdEquipFrames();
+    cursorPosSet();
+    hdSetCursorParam();
+    setItemNameString(mCursorX, mCursorY);
+}
+
+// RPX 0x029b2748: cursor shape per cell.
+void dMenu_Collect2D_c::hdSetCursorParam() {
+    const int x = s_hdX;
+    const int y = s_hdY;
+    if (y == 4) {
+        mpDrawCursor->setParam(1.0f, 1.0f, 0.05f, 0.5f, 0.6f);
+    } else if (y == 1 && x == 1) {
+        mpDrawCursor->setParam(1.0f, 1.0f, 0.03f, 0.6f, 0.72f);
+    } else if (y == 1 && x == 8) {
+        mpDrawCursor->setParam(0.8f, 0.85f, 0.03f, 0.6f, 0.72f);
+    } else if ((y == 1 && ((x >= 6 && x <= 7 && x == hdSwordCell()) ||
+                           (x >= 3 && x <= 4 && x == hdShieldCell()))) ||
+               (y == 0 && x >= 4 && x <= 5 && x == hdClothesCell()))
+    {
+        mpDrawCursor->setParam(1.21f, 0.913f, 0.1f, 0.7f, 0.84f);  // on an "equipped" frame
+    } else {
+        mpDrawCursor->setParam(1.1f, 0.83f, 0.1f, 0.7f, 0.84f);
+    }
+}
+
+// RPX 0x029b76f4: stick navigation on the Wii U grid. The GC cursor (mCursorX / mCursorY) follows
+// on the cell holding the same pane, so the GC actions (equip, save, options, letters...) keep working.
+void dMenu_Collect2D_c::hdCursorMove() {
+    mpStick->checkTrigger();
+    const u8 ox = s_hdX;
+    const u8 oy = s_hdY;
+    int x = ox;
+    int y = oy;
+    const bool havePrev = s_hdPX != 0xFF;
+    const bool right = mpStick->checkRightTrigger();
+    const bool left = !right && mpStick->checkLeftTrigger();
+    if (left && x != 0) {
+        if (x == 8 && y == 1 && havePrev && s_hdPX > 2 && s_hdPY < 2) {
+            x = s_hdPX;  // back to where the cursor came from
+            y = s_hdPY;
+        } else {
+            int t = x;
+            do {
+                t--;
+                if (hdValid(t, y)) {
+                    x = t;
+                    break;
+                }
+            } while (t != 0);
+        }
+    } else if (right && x <= 7) {
+        if (x == 5 && y == 2 && havePrev && s_hdPX >= 3 && s_hdPY <= 1) {
+            x = s_hdPX;
+            y = s_hdPY;
+        } else if (ox == 1 && oy == 1 && havePrev && s_hdPX == 3 && s_hdPY == 1) {
+            x = 3;
+            y = 1;
+        } else {
+            int t = x;
+            do {
+                t++;
+                if (hdValid(t, y)) {
+                    x = t;
+                    break;
+                }
+            } while (t < 8);
+        }
+    }
+    if (mpStick->checkUpTrigger()) {
+        if (y != 0) {
+            int cx = x;
+            int cy = y;
+            while (cy != 0) {
+                cy--;
+                if (cy == 0) {
+                    if (cx <= 2) {
+                        cx = 3;
+                        cy = 1;
+                    } else if (cx >= 8) {
+                        cx = 7;
+                        cy = 1;
+                    }
+                } else if (cy == 1) {
+                    if (cx < 3) {
+                        cx = 1;
+                    }
+                } else if (cy == 2 && cx == 4) {
+                    cx = 3;
+                }
+                if (hdValid(cx, cy)) {
+                    x = cx;
+                    y = cy;
+                    break;
+                }
+            }
+        }
+    } else if (mpStick->checkDownTrigger() && y <= 3) {
+        if (x == 1 && y == 1 && havePrev && s_hdPY >= 2) {
+            x = s_hdPX;
+            y = s_hdPY;
+        } else {
+            int cy = y;
+            bool found = false;
+            while (cy < 4) {
+                cy++;
+                if (hdValid(x, cy)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                y = cy;
+            } else {
+                y = 4;
+                x = x > 7 ? 8 : 0;
+            }
+        }
+    }
+    if (!hdValid(x, y)) {
+        x = ox;
+        y = oy;
+    }
+    if (x != ox || y != oy) {
+        s_hdPX = ox;
+        s_hdPY = oy;
+        s_hdX = x;
+        s_hdY = y;
+        field_0x259 = mCursorX;
+        field_0x25a = mCursorY;
+        mCursorX = s_hdGcX[y][x];
+        mCursorY = s_hdGcY[y][x];
+        if (y == 4) {
+            Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_OPTION, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        } else {
+            Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        }
+        cursorPosSet();
+        hdSetCursorParam();
+        setItemNameString(mCursorX, mCursorY);
+    }
+}
+
+// Equipped frames (RPX 0x029b1bc8 / 0x029b1d58 / 0x029b1ec4): the frame of the equipped sword /
+// shield / clothes gets the ornate texture, the others the plain one.
+void dMenu_Collect2D_c::hdEquipFrames() {
+    const u8 eq[3] = {dComIfGs_getSelectEquipSword(), dComIfGs_getSelectEquipShield(),
+                      dComIfGs_getSelectEquipClothes()};
+    if (eq[0] == s_hdEquip[0] && eq[1] == s_hdEquip[1] && eq[2] == s_hdEquip[2]) {
+        return;
+    }
+    s_hdEquip[0] = eq[0];
+    s_hdEquip[1] = eq[1];
+    s_hdEquip[2] = eq[2];
+    const int sw = hdSwordCell();
+    const int sh = hdShieldCell();
+    const int cl = hdClothesCell();
+    hdApplyFrame(mpScreen, "sw_equip", sw == 6 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "sw_01", sw == 7 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "sh_01", sh == 3 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "sh_equip", sh == 4 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "ar_01", cl == 4 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "ar_equip", cl == 5 ? s_hdEquipTex : s_hdNormalTex);
+    hdApplyFrame(mpScreen, "ar_02", cl == 6 ? s_hdEquipTex : s_hdNormalTex);
+    if (mpDrawCursor != NULL) {
+        hdSetCursorParam();
+    }
+}
+#endif
+
 void dMenu_Collect2D_c::setHIO(bool i_useHIO) {
     static const u64 kaz_n[9] = {
         MULTI_CHAR('uzu_00'), MULTI_CHAR('uzu_01'), MULTI_CHAR('uzu_02'), MULTI_CHAR('uzu_03'), MULTI_CHAR('uzu_04'), MULTI_CHAR('uzu_05'), MULTI_CHAR('uzu_06'), MULTI_CHAR('uzu_07'), MULTI_CHAR('hishi'),
@@ -1806,6 +2314,11 @@ void dMenu_Collect2D_c::setHIO(bool i_useHIO) {
 
         for (int i = 0; i < 9; i++) {
             J2DPicture* kazPicture = (J2DPicture*)mpScreen->search(kaz_n[i]);
+#if TARGET_PC
+            if (kazPicture == NULL) {
+                continue;  // not in the Wii U layout
+            }
+#endif
             kazPicture->setBlackWhite(g_drawHIO.mCollectScreen.mVesselBack[1],
                                       g_drawHIO.mCollectScreen.mVesselFront[1]);
         }
@@ -1869,6 +2382,12 @@ u64 dMenu_Collect2D_c::getItemTag(int i_tag1, int i_tag2, bool param_3) {
     if (i_tag2 == 5 && !param_3) {
         return 0;
     }
+#if TARGET_PC
+    // TPHD: the stamp album cell (stam_7_n, Wii U grid x 4 / y 3) lives on the free GC cell (4, 3).
+    if (collectRevo() && i_tag1 == 4 && i_tag2 == 3) {
+        return MULTI_CHAR('stam_7_n');
+    }
+#endif
     return itemTag[i_tag2][i_tag1];
 }
 
@@ -1916,6 +2435,17 @@ void dMenu_Collect2D_c::wait_init() {
     mDoExt_setCurrentHeap(heap);
 }
 
+bool dMenu_Collect2D_c::isStampSelected() {
+    return collectRevo() && mCursorX == 4 && mCursorY == 3 && field_0x22d[4][3] != 0;
+}
+
+void dMenu_Collect2D_c::openStampSubWindow() {
+    if (field_0x22d[4][3] != 0 && mDoGph_gInf_c::getFader()->mStatus == 1) {
+        mSubWindowOpenCheck = 7;
+        dMeter2Info_set2DVibration();
+    }
+}
+
 void dMenu_Collect2D_c::wait_proc() {
 #if TARGET_PC
     if (pointerWait()) {
@@ -1958,6 +2488,11 @@ void dMenu_Collect2D_c::wait_proc() {
                 mSubWindowOpenCheck = 6;
                 dMeter2Info_set2DVibration();
             }
+#if TARGET_PC
+        } else if (isStampSelected()) {
+            // TPHD: open the stamp album.
+            openStampSubWindow();
+#endif
         } else {
             if (field_0x22d[mCursorX][mCursorY] != 0 && !mIsWolf) {
                 if ((mCursorX >= 3 && mCursorX <= 4) || (mCursorX == 5 && mCursorY == 2)) {
@@ -1983,8 +2518,41 @@ void dMenu_Collect2D_c::wait_proc() {
             daPy_getPlayerActorClass()->getShieldChangeWaitTimer() == 0 &&
             daPy_getPlayerActorClass()->getClothesChangeWaitTimer() == 0)
         {
+#if TARGET_PC
+            if (collectRevo()) {
+                hdCursorMove();
+            } else {
+                cursorMove();
+            }
+#else
             cursorMove();
+#endif
         }
+#if TARGET_PC
+        if (collectRevo()) {
+            // TPHD 0x029b8020: A caption (and badge) per Wii U cell.
+            const int x = s_hdX;
+            const int y = s_hdY;
+            const bool owned = field_0x22d[mCursorX][mCursorY] != 0;
+            u16 a = 0;
+            if ((y == 0 && x >= 4 && x <= 6) || (y == 1 && ((x >= 6 && x <= 7) || (x >= 3 && x <= 4)))) {
+                a = owned && !mIsWolf ? 0x436 : 0;  // "Equip"
+            } else if (y == 4 && (x == 0 || x == 8)) {
+                a = 0x40C;
+            } else if (y == 3 && owned) {
+                bool open = false;
+                switch (x) {
+                case 0: open = isInsectIconVisible(); break;
+                case 1: open = isFishIconVisible(); break;
+                case 2: open = isSkillIconVisible(); break;
+                case 3: open = field_0x22d[3][4] != 0; break;
+                case 4: open = field_0x22d[4][3] != 0; break;  // stamps
+                }
+                a = open ? 0x3EE : 0;  // "Open"
+            }
+            setAButtonString(a);
+        } else
+#endif
         if (mCursorX >= 3 && mCursorX <= 4 && mCursorY <= 2 || (mCursorX == 5 && mCursorY == 2)) {
             if (field_0x22d[mCursorX][mCursorY] != 0 && !mIsWolf) {
                 setAButtonString(0x436);
@@ -2060,6 +2628,8 @@ void dMenu_Collect2D_c::pointerActivateCurrent() {
             mSubWindowOpenCheck = 6;
             dMeter2Info_set2DVibration();
         }
+    } else if (isStampSelected()) {
+        openStampSubWindow();
     } else if (field_0x22d[mCursorX][mCursorY] != 0 && !mIsWolf) {
         if ((mCursorX >= 3 && mCursorX <= 4) || (mCursorX == 5 && mCursorY == 2)) {
             u8 cursorY = mCursorY;
@@ -2466,7 +3036,63 @@ void dMenu_Collect2D_c::_draw() {
 
     J2DGrafContext* grafPort = dComIfGp_getCurrentGrafPort();
     grafPort->setup2D();
+#if TARGET_PC
+    if (collectRevo()) {
+        hdEquipFrames();
+        {
+            static int s_blink = 0;
+            s_blink = (s_blink + 1) % 60;
+            const f32 k = s_blink < 30 ? s_blink / 30.0f : (60 - s_blink) / 30.0f;
+            const bool onSave = s_hdY == 4 && s_hdX == 0;
+            const bool onOpt = s_hdY == 4 && s_hdX == 8;
+            if (J2DPane* p = mpScreen->search(MULTI_CHAR('wi_save1'))) {
+                p->setAlpha(onSave ? static_cast<u8>(255.0f * k) : 0);
+            }
+            if (J2DPane* p = mpScreen->search(MULTI_CHAR('wi_opti1'))) {
+                p->setAlpha(onOpt ? static_cast<u8>(255.0f * k) : 0);
+            }
+        }
+        // The heart container art is not stretched on the Wii U (same height, 3/4 width).
+        mpHeartParent->scale(g_drawHIO.mCollectScreen.mHeartVesselScale / collectRevoScaleX(),
+                             g_drawHIO.mCollectScreen.mHeartVesselScale);
+        // Item icons keep their shape too (only their frames are stretched): counter the stretch
+        // on every item cell, keeping the selected / unselected scale set by cursorPosSet.
+        for (int y = 0; y < 4; y++) {
+            for (int x = 0; x < 9; x++) {
+                const char* t = kHdGrid[y][x];
+                if (t == NULL || (y == 1 && (x == 1 || x == 8))) {
+                    continue;  // heart (handled above) and the 3D Fused Shadow / Mirror
+                }
+                if (J2DPane* cell = mpScreen->search(hdTag8(t))) {
+                    const f32 s = cell->getScaleY();
+                    cell->scale(s / collectRevoScaleX(), s);
+                }
+            }
+        }
+        const f32 invSx = 1.0f / collectRevoScaleX();
+        for (u64 tag : {MULTI_CHAR('op_tex_n'), MULTI_CHAR('sa_tex_n'),
+                        MULTI_CHAR('itemn_n'), MULTI_CHAR('infotxtn')}) {
+            if (J2DPane* p = mpScreen->search(tag)) {
+                p->scale(invSx, 1.0f);
+            } else if (J2DPane* p = mpScreen->searchUserInfo(tag)) {
+                p->scale(invSx, 1.0f);
+            }
+        }
+        for (u64 tag : {MULTI_CHAR('t_t00'), MULTI_CHAR('f_t00')}) {
+            if (J2DPane* p = mpScreen->search(tag)) {
+                p->scale(invSx, 1.0f);
+            } else if (J2DPane* p = mpScreen->searchUserInfo(tag)) {
+                p->scale(invSx, 1.0f);
+            }
+        }
+        mpScreen->scale(collectRevoScaleX(), 1.0f);
+        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, grafPort);
+    } else {
+        mpScreen->draw(0.0f, 0.0f, grafPort);
+    }
+#else
     mpScreen->draw(0.0f, 0.0f, grafPort);
+#endif
 
     if (mItemNameString == 0) {
 #if TARGET_PC
@@ -2524,6 +3150,22 @@ void dMenu_Collect2D_c::_draw() {
         J2DTextBox* textBox0 = static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('f_text0')));
 #endif
         mpString->getString(mItemNameString, textBox0, NULL, NULL, NULL, 0);
+#if TARGET_PC
+        if (collectRevo() && mItemNameString == 0xaf1) {
+            // TPHD 0x029b6814: "... Stamps found: %d/%d" gets the number of stamps / 50.
+            const int num = dMenu_Stamp_c::getStampNum();
+            for (J2DTextBox* tb : {textBox1, textBox0}) {
+                if (tb == NULL) {
+                    continue;
+                }
+                char fmt[512];
+                char buf[512];
+                SAFE_STRCPY(fmt, (const char*)tb->getStringPtr());
+                snprintf(buf, sizeof(buf), fmt, num, (int)dMenu_Stamp_c::STAMP_MAX);
+                SAFE_STRCPY(tb->getStringPtr(), buf);
+            }
+        }
+#endif
 
 #if TARGET_PC
         if (dusk::version::isRegionJpn()) {
@@ -2538,6 +3180,52 @@ void dMenu_Collect2D_c::_draw() {
 #endif
         mpString->drawOutFontLocal(textBox0, -1.0f);
     }
+#if TARGET_PC
+    if (collectRevo() && mpSelPm[mCursorX][mCursorY] != NULL) {
+        // The cursor follows the drawn (stretched) cell: its global vertices include the screen
+        // scale and offset, which CPaneMgr::getGlobalVtxCenter (dSelect_cursor_c::update) does not.
+        J2DPane* cell = mpSelPm[mCursorX][mCursorY]->getPanePtr();
+        const Vec a = cell->getGlbVtx(0);
+        const Vec b = cell->getGlbVtx(3);
+        // RPX 0x029b2748: the cursor sits at the cell centre + (-1.75, -1.5) on the 608-unit
+        // canvas, and its screen is stretched like the collection screen.
+        const f32 sx = collectRevoScaleX();
+        const f32 minX = mDoGph_gInf_c::getMinXF();
+        // The offset is applied before the un-stretch (Wii U setPos 0x02aad0ec maps the
+        // stretched x back), so it is -1.75 drawn units.
+        const f32 cx = ((a.x + b.x) * 0.5f - 1.75f - minX) / sx;
+        const f32 cy = (a.y + b.y) * 0.5f - 1.5f;
+        // Cursor box = pane size x its own scale, drawn on the stretched cursor screen. The item
+        // cells already carry the 1/sx counter-stretch; the heart and the Fused Shadow / Mirror
+        // ('n_43' groups the Wii U keeps 1:1) do not, so their box would come out sx times too
+        // wide: give the cursor their unstretched width.
+        const bool unstretched = cell->mInfoTag == MULTI_CHAR('heart_kn') ||
+                                 cell->mInfoTag == MULTI_CHAR('kamen_n');
+        const f32 keepSX = cell->getScaleX();
+        if (unstretched) {
+            cell->scale(keepSX / sx, cell->getScaleY());
+        }
+        mpDrawCursor->setPos(cx, cy, cell, true);
+        if (unstretched) {
+            cell->scale(keepSX, cell->getScaleY());
+        }
+        mpDrawCursor->setPos(cx, cy, NULL, false);
+        mpDrawCursor->setDrawStretch(sx, minX);
+        {
+            static J2DPane* s_logCell = NULL;
+            if (cell != s_logCell) {
+                s_logCell = cell;
+                char tag[9] = {};
+                for (int k = 0, n = 0; k < 8; k++) {
+                    const char c = static_cast<char>((cell->mInfoTag >> (56 - k * 8)) & 0xFF);
+                    if (c != 0) {
+                        tag[n++] = c;
+                    }
+                }
+            }
+        }
+    }
+#endif
     mpDrawCursor->draw();
 }
 
@@ -2557,6 +3245,18 @@ bool dMenu_Collect2D_c::isOutCheck() {
 }
 
 void dMenu_Collect2D_c::setAButtonString(u16 i_stringID) {
+#if TARGET_PC
+    // TPHD 0x029b20e0 / 0x029b22cc: the badge is grey (white = 0x808080) while the button has
+    // nothing to do, white otherwise.
+    if (collectRevo()) {
+        J2DPane* badge = mpScreenIcon->search(MULTI_CHAR('a_btn_cp'));
+        if (badge != NULL && badge->getTypeID() == 18) {
+            static_cast<J2DPicture*>(badge)->setBlackWhite(
+                JUtility::TColor(0, 0, 0, 0),
+                i_stringID != 0 ? JUtility::TColor(255, 255, 255, 255) : JUtility::TColor(128, 128, 128, 255));
+        }
+    }
+#endif
     static const u64 text_a_tag[5] = {
         MULTI_CHAR('atext1_1'), MULTI_CHAR('atext1_2'), MULTI_CHAR('atext1_3'), MULTI_CHAR('atext1_4'), MULTI_CHAR('atext1_5'),
     };
@@ -2566,14 +3266,30 @@ void dMenu_Collect2D_c::setAButtonString(u16 i_stringID) {
 
         if (i_stringID == 0) {
             for (int i = 0; i < 5; i++) {
+#if TARGET_PC
+                J2DTextBox* tb = collectIconText(mpScreenIcon, text_a_tag[i]);
+                if (tb == NULL) {
+                    continue;
+                }
+                TEXT_SPAN stringPtr = tb->getStringPtr();
+#else
                 TEXT_SPAN stringPtr =
                     static_cast<J2DTextBox*>(mpScreenIcon->search(text_a_tag[i]))->getStringPtr();
+#endif
                 SAFE_STRCPY(stringPtr, "");
             }
         } else {
             for (int i = 0; i < 5; i++) {
+#if TARGET_PC
+                J2DTextBox* tb = collectIconText(mpScreenIcon, text_a_tag[i]);
+                if (tb == NULL) {
+                    continue;
+                }
+                TEXT_SPAN stringPtr = tb->getStringPtr();
+#else
                 TEXT_SPAN stringPtr =
                     static_cast<J2DTextBox*>(mpScreenIcon->search(text_a_tag[i]))->getStringPtr();
+#endif
                 dMeter2Info_getStringKanji(i_stringID, stringPtr, NULL);
             }
         }
@@ -2581,6 +3297,18 @@ void dMenu_Collect2D_c::setAButtonString(u16 i_stringID) {
 }
 
 void dMenu_Collect2D_c::setBButtonString(u16 i_stringID) {
+#if TARGET_PC
+    // TPHD 0x029b20e0 / 0x029b22cc: the badge is grey (white = 0x808080) while the button has
+    // nothing to do, white otherwise.
+    if (collectRevo()) {
+        J2DPane* badge = mpScreenIcon->search(MULTI_CHAR('b_btn_cp'));
+        if (badge != NULL && badge->getTypeID() == 18) {
+            static_cast<J2DPicture*>(badge)->setBlackWhite(
+                JUtility::TColor(0, 0, 0, 0),
+                i_stringID != 0 ? JUtility::TColor(255, 255, 255, 255) : JUtility::TColor(128, 128, 128, 255));
+        }
+    }
+#endif
     static const u64 text_b_tag[5] = {
         MULTI_CHAR('btext1_1'), MULTI_CHAR('btext1_2'), MULTI_CHAR('btext1_3'), MULTI_CHAR('btext1_4'), MULTI_CHAR('btext1_5'),
     };
@@ -2590,14 +3318,30 @@ void dMenu_Collect2D_c::setBButtonString(u16 i_stringID) {
 
         if (i_stringID == 0) {
             for (int i = 0; i < 5; i++) {
+#if TARGET_PC
+                J2DTextBox* tb = collectIconText(mpScreenIcon, text_b_tag[i]);
+                if (tb == NULL) {
+                    continue;
+                }
+                TEXT_SPAN stringPtr = tb->getStringPtr();
+#else
                 TEXT_SPAN stringPtr =
                     static_cast<J2DTextBox*>(mpScreenIcon->search(text_b_tag[i]))->getStringPtr();
+#endif
                 SAFE_STRCPY(stringPtr, "");
             }
         } else {
             for (int i = 0; i < 5; i++) {
+#if TARGET_PC
+                J2DTextBox* tb = collectIconText(mpScreenIcon, text_b_tag[i]);
+                if (tb == NULL) {
+                    continue;
+                }
+                TEXT_SPAN stringPtr = tb->getStringPtr();
+#else
                 TEXT_SPAN stringPtr =
                     static_cast<J2DTextBox*>(mpScreenIcon->search(text_b_tag[i]))->getStringPtr();
+#endif
                 dMeter2Info_getStringKanji(i_stringID, stringPtr, NULL);
             }
         }
@@ -2714,6 +3458,13 @@ dMenu_Collect3D_c::dMenu_Collect3D_c(JKRExpHeap* param_0, dMenu_Collect2D_c* par
     } else {
         mLinkAngle = -23324;
     }
+#if TARGET_PC
+    if (collectRevo()) {
+        // TPHD ctor 0x029b9ab4: Link starts at the HIO angle (0x8eb8 / wolf 0x9e58), so he does
+        // not spin into place when the menu opens.
+        mLinkAngle = mIsWolf ? (s16)0x9E58 : (s16)0x8EB8;
+    }
+#endif
     mMaskMirrorAnmFrameBrk = 0.0f;
     mMaskMirrorAnmFrameBck = 0.0f;
     mMaskMirrorOffsetY = 0.0f;
@@ -2769,6 +3520,25 @@ void dMenu_Collect3D_c::_move(u8 param_0, u8 param_1) {
     Vec linkPos = mpCollect2D->getpLink()->getGlobalVtxCenter(false, 0);
     f32 posY;
     f32 posZ;
+#if TARGET_PC
+    const bool revo = collectRevo();
+    if (revo) {
+        // TPHD 0x029ba9bc + HIO defaults 0x029bc8d4: Link sits on linki_n (608-unit canvas) plus
+        // (0, 90) and the HIO offset (0, 30), depth 400; wolf: (0, 60), (-15, 30), 400. The extra
+        // (+-1, -3) of 0x029ba9bc only applies when the byte at 0x1012667d is 0, i.e. in the
+        // mirrored Hero Mode (0x029ba694 then flips the view matrix X), so it is not used here.
+        // The global vertices include the screen stretch; the Wii U works on the unstretched canvas.
+        const f32 lx = linkPos.x / collectRevoScaleX();
+        if (mIsWolf != 0) {
+            linkPos.x = lx - 15.0f;
+            posY = linkPos.y + 60.0f + 30.0f;
+        } else {
+            linkPos.x = lx;
+            posY = linkPos.y + 90.0f + 30.0f;
+        }
+        posZ = 400.0f;
+    } else
+#endif
     if (mIsWolf != 0) {
         posY = linkPos.y + 60.0f;
         posZ = 580.0f;
@@ -2784,6 +3554,14 @@ void dMenu_Collect3D_c::_move(u8 param_0, u8 param_1) {
         ANGLE_ADD(mLinkAngle, angle);
     } else
 #endif
+#if TARGET_PC
+    if (revo) {
+        // TPHD 0x029ba9bc: no idle spin; Link turns to the HIO angle 0x8eb8 (wolf 0x9e58). The
+        // -0x27ad / -0x423d correction and the negation are the mirrored Hero Mode branch.
+        const s16 target = mIsWolf != 0 ? (s16)0x9E58 : (s16)0x8EB8;
+        cLib_addCalcAngleS(&mLinkAngle, target, 4, 0x800, 0x80);
+    } else
+#endif
     if (param_0 == 0 && param_1 == 0) {
         f32 temp = 450.0f;
         ANGLE_ADD(mLinkAngle, temp);
@@ -2797,9 +3575,20 @@ void dMenu_Collect3D_c::_move(u8 param_0, u8 param_1) {
     if (mpModel != NULL) {
         cXyz modelPos;
         Vec maskPos = mpCollect2D->getpMask()->getGlobalVtxCenter(false, 0);
+#if TARGET_PC
+        if (revo) {
+            maskPos.x /= collectRevoScaleX();  // unstretched canvas, see above
+        }
+#endif
         f32 offsetX = 0.0f;
         f32 offsetY = 0.0f;
 
+#if TARGET_PC
+        // TPHD 0x029ba9bc places the Fused Shadow / Mirror with only the per-count table offset
+        // (mMaskMirrorOffsetX / Y) and the HIO position: no extra per-count nudge.
+        if (revo) {
+        } else
+#endif
         if (getMaskMdlVisible() == 2) {
             u8 mirrorNum = getMirrorNum();
             if (mirrorNum == 1 || mirrorNum == 2 || mirrorNum == 3 || mirrorNum == 4) {
@@ -2882,6 +3671,12 @@ void dMenu_Collect3D_c::setJ3D(const char* param_0, const char* param_1, const c
 
 void dMenu_Collect3D_c::set_mtx() {
     f32 scale = 0.0f;
+#if TARGET_PC
+    // TPHD set_mtx (0x029ba5f8): base scale = table scale + HIO scale only (no per-count shrink,
+    // so 1-2 Fused Shadows are 2.6 instead of the GC 2.0).
+    if (collectRevo()) {
+    } else
+#endif
     if (getMaskMdlVisible() == 2) {
         u8 mirrorNum = getMirrorNum();
         if (mirrorNum == 2 || mirrorNum == 3 || mirrorNum == 4) {
@@ -3072,6 +3867,21 @@ u8 dMenu_Collect3D_c::getMaskMdlVisible() {
 DUSK_GAME_DATA f32 dMenu_Collect3D_c::mViewOffsetY = -100.0f;
 
 void dMenu_Collect3D_c::setupItem3D(Mtx param_0) {
+#if TARGET_PC
+    if (collectRevo()) {
+        // TPHD 0x029bb124: full viewport (no -100 offset, so Link's feet are not cut) and a
+        // 608 / 448 projection that the Wii U scales to the TV *together with the framebuffer*.
+        // Here we render straight to the real framebuffer, so the projection must use the real
+        // aspect or the models get stretched horizontally.
+        GXSetViewport(0.0f, 0.0f, FB_WIDTH, FB_HEIGHT, 0.0f, 1.0f);
+        mViewOffsetY = -100.0f;
+        Mtx44 projection;
+        C_MTXPerspective(projection, 45.0f, mDoGph_gInf_c::getAspect(), 1.0f, 100000.0f);
+        GXSetProjection(projection, GX_PERSPECTIVE);
+        calcViewMtx(param_0);
+        return;
+    }
+#endif
     GXSetViewport(0.0f, mViewOffsetY, FB_WIDTH, FB_HEIGHT, 0.0f, 1.0f);
     IF_NOT_DUSK(mViewOffsetY = -100.0f);
     Mtx44 projection;
@@ -3086,6 +3896,17 @@ void dMenu_Collect3D_c::toItem3Dpos(f32 param_0, f32 param_1, f32 param_2, cXyz*
     Mtx adStack_98;
     Mtx auStack_c8;
 #if TARGET_PC
+    if (collectRevo()) {
+        // TPHD 0x029ba760: unstretched 608 x 448 canvas, aspect 608 / 448 (= 1.35714).
+        const f32 nx = 2.0f * (param_0 / 608.0f) - 1.0f;
+        const f32 ny = 2.0f * (param_1 / 448.0f) - 1.0f;
+        calcViewMtx(adStack_98);
+        MTXInverse(adStack_98, auStack_c8);
+        const f32 t = tan(0.39269909262657166);
+        cXyz v(nx * param_2 * mDoGph_gInf_c::getAspect() * t, t * (ny * -param_2), -param_2);
+        MTXMultVec(auStack_c8, &v, param_3);
+        return;
+    }
     param_0 =
         (2.0f * ((param_0 - mDoGph_gInf_c::getSafeMinXF()) / mDoGph_gInf_c::getSafeWidthF()) -
          1.0f);
@@ -3136,7 +3957,52 @@ void dMenu_Collect2DTop_c::draw() {
         mpCollect2D->getInsectScreen()->_draw();
     }
     if (mpCollect2D->getIconScreen() != NULL) {
+#if TARGET_PC
+        if (collectRevo()) {
+            // TPHD (screenSet 0x029b5a28 + setHIO, drawn by Top::draw at (0, 0)): the layer is a
+            // 608-unit canvas stretched to 16:9 like the collection screen. abtn_n / bbtn_n carry
+            // user info 'n_43', so Wii U J2DPane::draw (0x02b34334) squeezes their local X axis by
+            // 608 / orthoWidth around their anchor: the anchors follow the stretch, the badges and
+            // captions stay 1:1. CPaneMgr g_abtn_n / g_bbtn_n / a_text_n / b_text_n get the collect
+            // HIO (ctor 0x02a4e00c) through paneTrans (initial translate + offset) and scale:
+            // A (-22.3, 24.9) x1.3, B (-22.3, 25.0) x1.3, A text (-24.9, 24.9) x1.1,
+            // B text (-27.5, 26.0) x1.1.
+            J2DScreen* icon = mpCollect2D->getIconScreen();
+            static J2DScreen* s_icon = NULL;
+            static f32 s_init[4][2];
+            static const u64 kTags[4] = {MULTI_CHAR('g_abtn_n'), MULTI_CHAR('g_bbtn_n'),
+                                         MULTI_CHAR('a_text_n'), MULTI_CHAR('b_text_n')};
+            static const f32 kHio[4][3] = {{-22.3f, 24.9f, 1.3f}, {-22.3f, 25.0f, 1.3f},
+                                           {-24.9f, 24.9f, 1.1f}, {-27.5f, 26.0f, 1.1f}};
+            if (icon != s_icon) {
+                s_icon = icon;
+                for (int i = 0; i < 4; i++) {
+                    J2DPane* p = icon->search(kTags[i]);
+                    s_init[i][0] = p != NULL ? p->getTranslateX() : 0.0f;
+                    s_init[i][1] = p != NULL ? p->getTranslateY() : 0.0f;
+                }
+            }
+            for (int i = 0; i < 4; i++) {
+                if (J2DPane* p = icon->search(kTags[i])) {
+                    p->translate(s_init[i][0] + kHio[i][0], s_init[i][1] + kHio[i][1]);
+                    p->scale(kHio[i][2], kHio[i][2]);
+                }
+            }
+            const f32 sx = collectRevoScaleX();
+            if (J2DPane* p = icon->search(MULTI_CHAR('abtn_n'))) {
+                p->scale(1.0f / sx, 1.0f);
+            }
+            if (J2DPane* p = icon->search(MULTI_CHAR('bbtn_n'))) {
+                p->scale(1.0f / sx, 1.0f);
+            }
+            icon->scale(sx, 1.0f);
+            icon->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_port);
+        } else {
+            mpCollect2D->getIconScreen()->draw(0.0f, 0.0f, graf_port);
+        }
+#else
         mpCollect2D->getIconScreen()->draw(0.0f, 0.0f, graf_port);
+#endif
     }
 }
 

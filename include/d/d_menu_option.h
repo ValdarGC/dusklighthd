@@ -6,6 +6,8 @@
 class CPaneMgr;
 struct CSTControl;
 class J2DTextBox;
+class J2DPane;
+class J2DScreen;
 class JUTFont;
 class STControl;
 class dFile_warning_c;
@@ -14,6 +16,57 @@ class mDoDvdThd_mountArchive_c;
 class dMsgString_c;
 class dMeterHaihai_c;
 class dSelect_cursor_c;
+
+class dMenu_OptionRow {
+public:
+    dMenu_OptionRow();
+    virtual ~dMenu_OptionRow();
+    virtual void update();
+
+    static dMenu_OptionRow* create(dMenu_OptionRow* i_row, int i_rowIdx, int i_val, u32 i_titleMsgId,
+                                   const u32* i_valueMsgIds, J2DScreen* i_screen, dMsgString_c* i_msgString);
+
+    void setValue(int val);
+    void setFocus(int state);
+    int getValue() const { return mValue; }
+    int getState() const { return mState; }
+    int getNumValues() const { return mNumValues; }
+    J2DPane* getMenuPane() const { return mpMenu; }
+
+public:
+    int mState;
+    int mValue;
+    int mRowIdx;
+    int mNumValues;
+    u32 mValueMsgIds[4];
+    dMsgString_c* mpString;
+    J2DTextBox* mpTextTl;
+    J2DTextBox* mpTextIt;
+    J2DPane* mpBttn1;
+    J2DPane* mpBttn0;
+    J2DPane* mpArwL1;
+    J2DPane* mpArwL0;
+    J2DPane* mpArwR1;
+    J2DPane* mpArwR0;
+    J2DPane* mpMenu;
+    J2DPane* mpItm;
+    J2DPane* mpArwL;
+    J2DPane* mpArwR;
+};
+
+class dMenu_OptionRowSlider : public dMenu_OptionRow {
+public:
+    dMenu_OptionRowSlider();
+    virtual ~dMenu_OptionRowSlider();
+    virtual void update();
+
+    static dMenu_OptionRowSlider* create(dMenu_OptionRowSlider* i_slider, int i_rowIdx, int i_val, u32 i_titleMsgId,
+                                         const u32* i_valueMsgIds, J2DScreen* i_screen, dMsgString_c* i_msgString);
+
+public:
+    J2DPane* mpKnobCrest;
+    J2DPane* mpKnobBase;
+};
 
 class dMenu_Option_c : public dDlst_base_c {
 public:
@@ -113,6 +166,17 @@ public:
 
     virtual void draw() { _draw(); }
     virtual ~dMenu_Option_c();
+
+#if TARGET_PC
+    void _createRevo();
+    void _deleteRevo();
+    void _moveRevo();
+    void _drawRevo();
+    void initRow(int i_rowIdx);
+    void readSettingsRevo();
+    void writeSettingsRevo();
+    void drawSelfRevo();
+#endif
 
     u8 getQuitStatus() { return mQuitStatus; }
     bool isUseFlag(u8 i_flag) {

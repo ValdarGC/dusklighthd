@@ -33,6 +33,11 @@ public:
     void menuCollectWide();
     bool pointerWait();
     void pointerActivateCurrent();
+    // TPHD (Wii U TV) collection screen, d_menu_collect.cpp
+    void hdInit();
+    void hdCursorMove();
+    void hdSetCursorParam();
+    void hdEquipFrames();
     #endif
 
     void _create();
@@ -111,6 +116,8 @@ public:
     void setBButtonString(u16);
     void setItemNameString(u8, u8);
     void setItemNameStringNull();
+    bool isStampSelected();
+    void openStampSubWindow();
 
     virtual void draw() { _draw(); }
     virtual ~dMenu_Collect2D_c();
@@ -260,6 +267,8 @@ public:
     u8 getSubWindowOpenCheck() { return mpCollect2D->getSubWindowOpenCheck(); }
     bool isKeyCheck() { return mpCollect2D->isKeyCheck(); }
     bool isOutCheck() { return mpCollect2D->isOutCheck(); }
+    bool isStampSelected() { return mpCollect2D != NULL && mpCollect2D->isStampSelected(); }
+    void openStampSubWindow() { if (mpCollect2D != NULL) mpCollect2D->openStampSubWindow(); }
 
     /* 0x4 */ dMenu_Collect2D_c* mpCollect2D;
     /* 0x8 */ dMenu_Collect3D_c* mpCollect3D;

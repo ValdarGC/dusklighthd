@@ -23,6 +23,58 @@
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
 #include "dusk/menu_pointer.h"
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+
+// TPHD (Wii U) "Skills" screen, ported from the RPX dMenu_Skill_c (0x02a0def0 ctor ..
+// 0x02a115e8): skillresR.arc, list on the left (zelda_ougi_window.blo) and the description page of
+// the selected skill always shown on the right (zelda_ougi_info.blo, it cross-fades when the
+// cursor moves). There is no "read" window: A does nothing, B goes back.
+namespace {
+struct SkillHd {
+    bool active;
+    CPaneMgr* frameN[7];  // skill_01..07: normal frame (layout 'skill_0N')
+    CPaneMgr* frameS[7];  // skill_08..14: selected frame
+    J2DPane* picture[7];  // description pictures, by skill
+    u8 shown;             // skill whose description is on the page (0xff: none)
+    u8 infoState;         // 0 set up, 1 fade in, 2 shown, 3 fade out (RPX +0x266)
+    s16 infoFrame;
+};
+SkillHd s_skillHd;
+
+// dMeter_drawSkillHIO_c values of the RPX ctor (0x02a4eb7c; g_drawHIO + 0xa34).
+const f32 kSkillSelectBarScale = 1.02f;
+const f32 kSkillUnselectBarScale = 0.98f;
+const f32 kSkillDescPosX = 0.0f;
+const f32 kSkillDescPosY = 80.0f;
+const f32 kSkillDescScale = 0.95f;
+const f32 kSkillTitlePosX = 0.0f;
+const f32 kSkillTitlePosY = 0.0f;
+const f32 kSkillTitleScale = 1.1f;
+const s16 kSkillDescFadeInFrame = 10;
+const s16 kSkillDescFadeOutFrame = 10;
+const JUtility::TColor kSkillSelectBarBlack(105, 95, 55, 255);
+const JUtility::TColor kSkillSelectBarWhite(200, 180, 135, 255);
+const JUtility::TColor kSkillSelectTextBlack(31, 24, 12, 0);
+const JUtility::TColor kSkillSelectTextWhite(255, 255, 200, 255);
+const JUtility::TColor kSkillSelectIconBlack(0, 0, 0, 0);
+const JUtility::TColor kSkillSelectIconWhite(255, 255, 255, 255);
+const JUtility::TColor kSkillUnselectIconBlack(0, 0, 0, 0);
+const JUtility::TColor kSkillUnselectIconWhite(180, 180, 180, 100);
+
+// Description picture of each skill (RPX screenSetLetter 0x02a0fd7c: +0x120 .. +0x138).
+const u64 kSkillPictureTag[7] = {
+    MULTI_CHAR('i_haji11'), MULTI_CHAR('i_haji09'), MULTI_CHAR('i_haji08'), MULTI_CHAR('i_haji07'),
+    MULTI_CHAR('i_haji06'), MULTI_CHAR('i_haji05'), MULTI_CHAR('i_haji04'),
+};
+// Description / title messages (RPX tables 0x100982ac / 0x100982c8).
+const u32 kSkillDescId[7] = {1716, 1715, 1717, 1718, 1719, 1720, 1721};
+const u32 kSkillTitleId[7] = {1709, 1708, 1710, 1711, 1712, 1713, 1714};
+
+bool skillHd() {
+    return s_skillHd.active;
+}
+}  // namespace
 #endif
 
 typedef void (dMenu_Skill_c::*initFunc)();
@@ -62,6 +114,19 @@ dMenu_Skill_c::dMenu_Skill_c(JKRExpHeap* i_heap, STControl* i_stcontrol, CSTCont
 }
 
 dMenu_Skill_c::~dMenu_Skill_c() {
+#if TARGET_PC
+    for (int i = 0; i < 7; i++) {
+        if (s_skillHd.frameN[i] != NULL) {
+            JKR_DELETE(s_skillHd.frameN[i]);
+            s_skillHd.frameN[i] = NULL;
+        }
+        if (s_skillHd.frameS[i] != NULL) {
+            JKR_DELETE(s_skillHd.frameS[i]);
+            s_skillHd.frameS[i] = NULL;
+        }
+    }
+    s_skillHd.active = false;
+#endif
     JKR_DELETE(mpDrawCursor);
     mpDrawCursor = NULL;
 
@@ -121,6 +186,11 @@ dMenu_Skill_c::~dMenu_Skill_c() {
 }
 
 void dMenu_Skill_c::_create() {
+#if TARGET_PC
+    std::memset(&s_skillHd, 0, sizeof(s_skillHd));
+    s_skillHd.active = dusk::tphd_active();
+    s_skillHd.shown = 0xff;
+#endif
     mpDrawCursor = JKR_NEW dSelect_cursor_c(2, 1.0f, NULL);
     mpDrawCursor->setParam(1.01f, 0.85f, 0.02f, 0.5f, 0.5f);
     mpDrawCursor->setAlphaRate(0.0f);
@@ -142,10 +212,21 @@ void dMenu_Skill_c::_move() {
         (this->*map_init_process[mProcess])();
     }
     setHIO(false);
+#if TARGET_PC
+    if (skillHd()) {
+        hdMoveInfo();
+    }
+#endif
     mDoExt_setCurrentHeap(heap);
 }
 
 void dMenu_Skill_c::_draw() {
+#if TARGET_PC
+    if (mpArchive != NULL && skillHd()) {
+        hdDraw();
+        return;
+    }
+#endif
     if (mpArchive != NULL) {
         IF_DUSK(presentAnims());
         J2DGrafContext* context = dComIfGp_getCurrentGrafPort();
@@ -212,7 +293,13 @@ void dMenu_Skill_c::init() {
 
 int dMenu_Skill_c::_open() {
     if (!mpMount) {
+#if TARGET_PC
+        mpMount = mDoDvdThd_mountArchive_c::create(
+            dusk::tphd_active() ? "/res/LayoutRevo/skillresR.arc" : "/res/Layout/skillres.arc", 0,
+            NULL);
+#else
         mpMount = mDoDvdThd_mountArchive_c::create("/res/Layout/skillres.arc", 0, NULL);
+#endif
     }
     if (!mpArchive) {
         if (mpMount->sync() != 0) {
@@ -276,6 +363,14 @@ int dMenu_Skill_c::_close() {
 }
 
 void dMenu_Skill_c::wait_init() {
+#if TARGET_PC
+    if (skillHd()) {
+        // RPX 0x02a11198: A has no caption (greyed), B "Back".
+        setAButtonString(0);
+        setBButtonString(0x3f9);
+        return;
+    }
+#endif
     setAButtonString(0x40C);
     setBButtonString(0x3f9);
 }
@@ -292,7 +387,7 @@ void dMenu_Skill_c::wait_move() {
         if (mDoCPd_c::getTrigB(PAD_1) != 0) {
             mpDrawCursor->offPlayAnime(0);
             mStatus = 3;
-        } else if (mDoCPd_c::getTrigA(PAD_1)) {
+        } else if (mDoCPd_c::getTrigA(PAD_1) && !DUSK_IF_ELSE(skillHd(), false)) {
             mProcess = PROC_WAIT_MOVE;
             Z2GetAudioMgr()->seStart(Z2SE_SY_EXP_WIN_OPEN, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
             dMeter2Info_set2DVibration();
@@ -328,7 +423,7 @@ bool dMenu_Skill_c::pointerWait() {
             Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
                                      -1.0f, 0);
         }
-        if (dusk::menu_pointer::consume_click()) {
+        if (dusk::menu_pointer::consume_click() && !skillHd()) {
             mProcess = PROC_WAIT_MOVE;
             Z2GetAudioMgr()->seStart(Z2SE_SY_EXP_WIN_OPEN, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
                                      -1.0f, 0);
@@ -538,6 +633,32 @@ void dMenu_Skill_c::screenSetMenu() {
     for (int i = 0; i < 7; i++) {
         mpLetterParent[i] = JKR_NEW CPaneMgr(mpMenuScreen, tag_letter[i], 0, NULL);
     }
+#if TARGET_PC
+    if (skillHd()) {
+        // RPX 0x02a0f1b8: skill_01..07 (normal frames) and skill_08..14 (selected frames).
+        static const u64 tag_frameN[7] = {
+            MULTI_CHAR('skill_01'), MULTI_CHAR('skill_02'), MULTI_CHAR('skill_03'),
+            MULTI_CHAR('skill_04'), MULTI_CHAR('skill_05'), MULTI_CHAR('skill_06'),
+            MULTI_CHAR('skill_07'),
+        };
+        static const u64 tag_frameS[7] = {
+            MULTI_CHAR('skill_08'), MULTI_CHAR('skill_09'), MULTI_CHAR('skill_10'),
+            MULTI_CHAR('skill_11'), MULTI_CHAR('skill_12'), MULTI_CHAR('skill_13'),
+            MULTI_CHAR('skill_14'),
+        };
+        for (int i = 0; i < 7; i++) {
+            s_skillHd.frameN[i] = mpMenuScreen->search(tag_frameN[i]) != NULL
+                                      ? JKR_NEW CPaneMgr(mpMenuScreen, tag_frameN[i], 0, NULL)
+                                      : NULL;
+            s_skillHd.frameS[i] = mpMenuScreen->search(tag_frameS[i]) != NULL
+                                      ? JKR_NEW CPaneMgr(mpMenuScreen, tag_frameS[i], 0, NULL)
+                                      : NULL;
+            if (s_skillHd.frameS[i] != NULL) {
+                s_skillHd.frameS[i]->hide();
+            }
+        }
+    }
+#endif
     for (int i = 0; i < 7; i++) {
         mpTagPicture[i][0] = (J2DPicture*)mpMenuScreen->search(tag_frame[i]);
         mpTagPicture[i][1] = (J2DPicture*)mpMenuScreen->search(tag_maki[i]);
@@ -645,6 +766,13 @@ void dMenu_Skill_c::screenSetLetter() {
     }
     mpTextParent = JKR_NEW CPaneMgr(mpLetterScreen, MULTI_CHAR('n_all'), 2, NULL);
     mpTextParent->setAlphaRate(0.0f);
+#if TARGET_PC
+    if (skillHd()) {
+        for (int i = 0; i < 7; i++) {
+            s_skillHd.picture[i] = mpLetterScreen->search(kSkillPictureTag[i]);
+        }
+    }
+#endif
     ResTIMG* timg = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "tt_block8x8.bti");
     mpBlackTex = JKR_NEW J2DPicture(timg);
     mpBlackTex->setBlackWhite(JUtility::TColor(0, 0, 0, 0), JUtility::TColor(0, 0, 0, 0xff));
@@ -659,11 +787,23 @@ void dMenu_Skill_c::screenSetDoIcon() {
         MULTI_CHAR('btext1_1'), MULTI_CHAR('btext1_2'), MULTI_CHAR('btext1_3'), MULTI_CHAR('btext1_4'), MULTI_CHAR('btext1_5'),
     };
     mpIconScreen = JKR_NEW J2DScreen();
-    mpIconScreen->setPriority("zelda_collect_soubi_do_icon_parts.blo", 0x20000, mpArchive);
     for (int i = 0; i < 2; i++) {
         mpButtonAB[i] = 0;
         mpButtonText[i] = 0;
     }
+#if TARGET_PC
+    if (skillHd()) {
+        mpIconScreen->setPriority("zelda_collect_soubi_do_icon_parts_revo.blo", 0x20000, mpArchive);
+        dPaneClass_showNullPane(mpIconScreen);
+        dusk::tphd::setupRevoButtonText(mpIconScreen);
+        for (int i = 0; i < 5; i++) {
+            mpAButtonString[i] = NULL;
+            mpBButtonString[i] = NULL;
+        }
+        return;
+    }
+#endif
+    mpIconScreen->setPriority("zelda_collect_soubi_do_icon_parts.blo", 0x20000, mpArchive);
     dPaneClass_showNullPane(mpIconScreen);
     for (int i = 0; i < 5; i++) {
         mpAButtonString[i] = (J2DTextBox*)mpIconScreen->search(text_a_tag[i]);
@@ -676,12 +816,38 @@ void dMenu_Skill_c::screenSetDoIcon() {
 }
 
 void dMenu_Skill_c::setCursorPos() {
+#if TARGET_PC
+    if (skillHd()) {
+        return;  // placed on the drawn (stretched) list in hdDraw
+    }
+#endif
     Vec pos = mpLetterParent[mIndex]->getGlobalVtxCenter(mpLetterParent[mIndex]->mPane, false, 0);
     mpDrawCursor->setPos(pos.x, pos.y, mpLetterParent[mIndex]->getPanePtr(), false);
 }
 
 void dMenu_Skill_c::changeActiveColor() {
     setCursorPos();
+#if TARGET_PC
+    if (skillHd()) {
+        // RPX 0x02a10780: the selected bar shows its "selected" frame instead of the normal one.
+        for (int i = 0; i < 7; i++) {
+            if (s_skillHd.frameN[i] != NULL) {
+                if (i == mIndex) {
+                    s_skillHd.frameN[i]->hide();
+                } else {
+                    s_skillHd.frameN[i]->show();
+                }
+            }
+            if (s_skillHd.frameS[i] != NULL) {
+                if (i == mIndex) {
+                    s_skillHd.frameS[i]->show();
+                } else {
+                    s_skillHd.frameS[i]->hide();
+                }
+            }
+        }
+    }
+#endif
     for (int i = 0; i < 7; i++) {
         if (i == mIndex) {
             mpTagPicture[i][0]->setBlackWhite(mSelectBlack[0], mSelectWhite[0]);
@@ -716,6 +882,12 @@ void dMenu_Skill_c::setPageText() {
 }
 
 void dMenu_Skill_c::setAButtonString(u16 i_stringID) {
+#if TARGET_PC
+    if (skillHd()) {
+        dusk::tphd::setRevoButtonText(mpIconScreen, i_stringID, true);
+        return;
+    }
+#endif
     if (i_stringID == 0) {
         for (int i = 0; i < 5; i++) {
             SAFE_STRCPY(mpAButtonString[i]->getStringPtr(), "");
@@ -728,6 +900,12 @@ void dMenu_Skill_c::setAButtonString(u16 i_stringID) {
 }
 
 void dMenu_Skill_c::setBButtonString(u16 i_stringID) {
+#if TARGET_PC
+    if (skillHd()) {
+        dusk::tphd::setRevoButtonText(mpIconScreen, i_stringID, false);
+        return;
+    }
+#endif
     if (i_stringID == 0) {
         for (int i = 0; i < 5; i++) {
             SAFE_STRCPY(mpBButtonString[i]->getStringPtr(), "");
@@ -772,6 +950,30 @@ u8 dMenu_Skill_c::getSkillNum() {
 }
 
 void dMenu_Skill_c::setHIO(bool i_useHIO) {
+#if TARGET_PC
+    if (skillHd()) {
+        if (!i_useHIO) {
+            return;
+        }
+        // RPX 0x02a0e974 with the Wii U HIO values (g_drawHIO is reset by updateOnWide).
+        mSelectBlack[0] = kSkillSelectBarBlack;
+        mSelectWhite[0] = kSkillSelectBarWhite;
+        mSelectBlack[3] = kSkillSelectTextBlack;
+        mSelectWhite[3] = kSkillSelectTextWhite;
+        mBarScale[0] = kSkillSelectBarScale;
+        mBarScale[1] = kSkillUnselectBarScale;
+        mSelectBlack[4] = kSkillSelectIconBlack;
+        mSelectWhite[4] = kSkillSelectIconWhite;
+        mUnselectBlack[4] = kSkillUnselectIconBlack;
+        mUnselectWhite[4] = kSkillUnselectIconWhite;
+        changeActiveColor();
+        mpTextParent->paneTrans(kSkillDescPosX, kSkillDescPosY);
+        mpTextParent->scale(kSkillDescScale, kSkillDescScale);
+        mpExpName->paneTrans(kSkillTitlePosX, kSkillTitlePosY);
+        mpExpName->scale(kSkillTitleScale, kSkillTitleScale);
+        return;
+    }
+#endif
     if (i_useHIO || g_drawHIO.mSkillListScreen.mDebug) {
         mSelectBlack[0].set(g_drawHIO.mSkillListScreen.mSelectBarBlack);
         mSelectWhite[0].set(g_drawHIO.mSkillListScreen.mSelectBarWhite);
@@ -834,3 +1036,87 @@ void dMenu_Skill_c::setHIO(bool i_useHIO) {
         }
     }
 }
+
+#if TARGET_PC
+// RPX 0x02a0e54c: puts the selected skill on the description page.
+void dMenu_Skill_c::hdSetInfo() {
+    const u8 index = mIndex < 7 ? mIndex : 0;
+    s_skillHd.shown = mIndex;
+    s_skillHd.infoState = 1;
+    s_skillHd.infoFrame = 0;
+    mStringID = kSkillDescId[index];
+    mpTextParent->setAlphaRate(0.0f);
+    setNameString(kSkillTitleId[index]);
+    mpString->getString(mStringID, (J2DTextBox*)mpTextPane->getPanePtr(), NULL, NULL, NULL, 0);
+    for (int i = 0; i < 7; i++) {
+        if (s_skillHd.picture[i] != NULL) {
+            s_skillHd.picture[i]->show();
+            if (i != index) {
+                s_skillHd.picture[i]->hide();
+            }
+        }
+    }
+}
+
+// RPX 0x02a0ed2c (+ 0x02a0e6c0 / 0x02a0e81c): the page fades out when the cursor leaves its
+// skill, then fades back in with the new one.
+void dMenu_Skill_c::hdMoveInfo() {
+    if (mSkillNum == 0) {
+        return;
+    }
+    if (s_skillHd.infoState == 0) {
+        hdSetInfo();
+    } else if ((s_skillHd.infoState == 1 || s_skillHd.infoState == 2) &&
+               mIndex != s_skillHd.shown)
+    {
+        s_skillHd.infoState = 3;
+    }
+
+    if (s_skillHd.infoState == 1) {
+        s_skillHd.infoFrame++;
+        if (s_skillHd.infoFrame >= kSkillDescFadeInFrame) {
+            s_skillHd.infoState = 2;
+            mpTextParent->setAlphaRate(1.0f);
+        } else {
+            mpTextParent->setAlphaRate((f32)s_skillHd.infoFrame / (f32)kSkillDescFadeInFrame);
+        }
+    } else if (s_skillHd.infoState == 3) {
+        s_skillHd.infoFrame--;
+        if (s_skillHd.infoFrame < 1) {
+            s_skillHd.infoFrame = 0;
+            s_skillHd.infoState = 0;
+            mpTextParent->setAlphaRate(0.0f);
+        } else {
+            mpTextParent->setAlphaRate((f32)s_skillHd.infoFrame / (f32)kSkillDescFadeOutFrame);
+        }
+    }
+}
+
+// RPX 0x02a0eeb8: black backdrop, list, cursor, description page (+ its message), A/B icons.
+void dMenu_Skill_c::hdDraw() {
+    J2DGrafContext* context = dComIfGp_getCurrentGrafPort();
+    const u8 alpha = mpBlackTex->mAlpha;
+    mpBlackTex->setAlpha(0xff);
+    mpBlackTex->draw(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                     mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(), 0, 0, 0);
+    mpBlackTex->setAlpha(alpha);
+
+    dusk::tphd::drawRevoScreen(mpMenuScreen, context, mPosX);
+
+    // RPX 0x02a10780: cursor on the centre of let_0N_n, box = pane size (not scaled).
+    if (mSkillNum != 0 && mpLetterParent[mIndex] != NULL) {
+        J2DPane* pane = mpLetterParent[mIndex]->getPanePtr();
+        const Vec c = dusk::tphd::mgrDrawnCenter(mpLetterParent[mIndex]);
+        mpDrawCursor->setPosRevo(c.x, c.y, pane, false, dusk::tphd::subscreenScaleX(),
+                                 mDoGph_gInf_c::getMinXF());
+    }
+    mpDrawCursor->draw();
+
+    dusk::tphd::drawRevoScreen(mpLetterScreen, context);
+    if (mStringID != 0) {
+        mpString->getString(mStringID, (J2DTextBox*)mpTextPane->getPanePtr(), NULL, NULL, NULL, 0);
+        mpString->drawOutFont((J2DTextBox*)mpTextPane->getPanePtr(), -1.0f);
+    }
+    dusk::tphd::drawRevoIconScreen(mpIconScreen, context);
+}
+#endif
