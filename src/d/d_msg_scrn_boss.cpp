@@ -36,6 +36,13 @@ dMsgScrnBoss_c::dMsgScrnBoss_c() {
                             g_MsgObject_HIO_c.mBossNameBasePosY);
 
     for (int i = 0; i < 7; i++) {
+#if TARGET_PC
+        // The TPHD zelda_boss_name.blo only has sfontb0 / sfont00 (CPaneMgr crashed on the others).
+        if (mpScreen->search(t_tag[i]) == NULL) {
+            mpTm_c[i] = NULL;
+            continue;
+        }
+#endif
         mpTm_c[i] = JKR_NEW CPaneMgr(mpScreen, t_tag[i], 0, NULL);
         ((J2DTextBox*)mpTm_c[i]->getPanePtr())->setFont(mDoExt_getRubyFont());
 #if TARGET_PC || VERSION != VERSION_GCN_JPN
@@ -53,6 +60,7 @@ dMsgScrnBoss_c::dMsgScrnBoss_c() {
     mCharSpace = ((J2DTextBox*)mpTm_c[0]->getPanePtr())->getCharSpace();
 
     for (int i = 0; i < 7; i++) {
+        if (mpTm_c[i] == NULL) continue;
         ((J2DTextBox*)mpTm_c[i]->getPanePtr())->setLineSpace(mLineSpace);
     }
 
@@ -113,6 +121,7 @@ void dMsgScrnBoss_c::fukiAlpha(f32 i_alpha) {
     mpBaseParent->setAlphaRate(i_alpha * g_MsgObject_HIO_c.mBossNameBaseAlpha);
 
     for (int i = 0; i < 7; i++) {
+        if (mpTm_c[i] == NULL) continue;
         mpTm_c[i]->setAlphaRate(i_alpha);
     }
 }

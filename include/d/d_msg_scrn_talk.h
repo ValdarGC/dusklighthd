@@ -12,6 +12,7 @@ struct dMsgScrnTalk_c : public dMsgScrnBase_c {
     dMsgScrnTalk_c(u8, u8, JKRExpHeap*);
     ~dMsgScrnTalk_c();
     void exec();
+    void draw();
     void drawSelf();
     void arwAnimeInit();
     void arwAnimeMove();

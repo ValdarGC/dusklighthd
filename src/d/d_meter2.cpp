@@ -323,6 +323,21 @@ int dMeter2_c::_execute() {
         dMeter2Info_decHotSpringTimer();
     }
 
+#if TARGET_PC
+    // The player clears the use-button bits during its execute and the meter re-enables all of
+    // them here, so by draw time they always read "usable". Keep this frame's result for the
+    // Wii U HUD badges (d_meter2_draw.cpp hdRevoFrame).
+    {
+        extern u16 g_hdUseButtonSnap;
+        u16 snap = 0;
+        for (int b = 1; b <= 0x800; b <<= 1) {
+            if (dMeter2Info_isUseButton(b)) {
+                snap |= b;
+            }
+        }
+        g_hdUseButtonSnap = snap;
+    }
+#endif
     dMeter2Info_allUseButton();
     dMeter2Info_offUseButton(0x800);
     dMeter2Info_resetGameStatus();
@@ -2600,7 +2615,12 @@ void dMeter2_c::moveBombNum() {
 
                 if (var_r22 == 0) {
                     if (temp_r31 == dItemNo_BOMB_ARROW_e) {
-                        for (int j = 0; j < 2; j++) {
+                        for (int j = 0; j < 4; j++) {
+#if TARGET_PC
+                            if (j == 2) continue;  // j == 3: TPHD R item slot
+#else
+                            if (j >= 2) break;
+#endif
                             if (i + SLOT_15 == dComIfGs_getSelectItemIndex(j) ||
                                 i + SLOT_15 == dComIfGs_getMixItemIndex(j))
                             {
@@ -2613,7 +2633,12 @@ void dMeter2_c::moveBombNum() {
                     dComIfGs_setItem(i + SLOT_15, dItemNo_BOMB_BAG_LV1_e);
                     dComIfGp_setItem(i + SLOT_15, dItemNo_BOMB_BAG_LV1_e);
 
-                    for (int j = 0; j < 2; j++) {
+                    for (int j = 0; j < 4; j++) {
+#if TARGET_PC
+                        if (j == 2) continue;  // j == 3: TPHD R item slot
+#else
+                        if (j >= 2) break;
+#endif
                         if (i + SLOT_15 == dComIfGs_getSelectMixItemNoArrowIndex(j)) {
                             dComIfGp_setSelectItem(j);
                         }
@@ -2954,8 +2979,18 @@ void dMeter2_c::alphaAnimeButton() {
     var_31 = 0;
 
 #if TARGET_PC
+    // Wii U ZeldaItemScreen input 0x02b000bc: while the item explain is open the HUD stays: A =
+    // "Back" (do status DAT_1014b62d = 0x12), B shows the sword (B status DAT_1014b655 = 0) and
+    // X / Y / R the equipped items.
+    const bool hdExplain = dusk::tphd_active() && dMeter2Info_getItemExplainWindowStatus();
     dMsgObject_c* msgObject = dMsgObject_getMsgObjectClass();
-    if ((mStatus & 0x4000) ||
+    if (hdExplain) {
+        mpMeterDraw->setAlphaButtonAnimeMax();
+        mpMeterDraw->setAlphaButtonAAnimeMax();
+        mpMeterDraw->setAlphaButtonBAnimeMax();
+        onShowFlag(0);
+        onShowFlag(1);
+    } else if ((mStatus & 0x4000) ||
         ((mStatus & 0x100) && (msgObject != NULL && msgObject->isAutoMessageFlag())) ||
 #else
     if ((mStatus & 0x4000) ||

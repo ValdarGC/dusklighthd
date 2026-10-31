@@ -16,6 +16,8 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/menu_pointer.h"
 #include "dusk/scope_guard.hpp"
+#include "dusk/settings.h"
+#include "d/d_item.h"
 #include "dusk/version.hpp"
 #include "helpers/bits.hpp"
 
@@ -242,6 +244,13 @@ static u32 getFontCCColorTable(u8 i_colorNo, u8 i_fukiKind) {
         0xFFFFFFFF, 0xF07878FF, 0xAADC8CFF, 0xA0B4DCFF, 0xDCDC82FF,
         0xB4C8E6FF, 0xC8A0DCFF, 0xFFFFFFFF, 0xDCAA78FF,
     };
+#if TARGET_PC
+    // Wii U getFontCCColorTable (RPX 0x1009b43c): vibrant colors
+    static const u32 hdColorTable[9] = {
+        0xFFFFFFFF, 0xFF5046FF, 0x32C864FF, 0x46A0FFFF, 0xFAFF3CFF,
+        0xA0B4DCFF, 0xC850B4FF, 0xFFFFFFFF, 0xFFB432FF,
+    };
+#endif
 
     if (i_colorNo > 8) {
         return 0xFFFFFFFF;
@@ -253,7 +262,11 @@ static u32 getFontCCColorTable(u8 i_colorNo, u8 i_fukiKind) {
                (g_MsgObject_HIO_c.mTextColorUpperB[i_colorNo] << 0x8) | 0xFF;
     }
 
+#if TARGET_PC
+    u32 color = (dusk::tphd_active() ? hdColorTable : colorTable)[i_colorNo];
+#else
     u32 color = colorTable[i_colorNo];
+#endif
 
     if (i_colorNo != 0) {
         return color;
@@ -276,6 +289,13 @@ static u32 getFontGCColorTable(u8 i_colorNo, u8 i_fukiKind) {
         0xFFFFFFFF, 0xF07878FF, 0xAADC8CFF, 0xA0B4DCFF, 0xDCDC82FF,
         0xB4C8E6FF, 0xC8A0DCFF, 0xFFFFFFFF, 0xDCAA78FF,
     };
+#if TARGET_PC
+    // Wii U getFontGCColorTable (RPX 0x1009b460): identical to CC table
+    static const u32 hdColorTable[9] = {
+        0xFFFFFFFF, 0xFF5046FF, 0x32C864FF, 0x46A0FFFF, 0xFAFF3CFF,
+        0xA0B4DCFF, 0xC850B4FF, 0xFFFFFFFF, 0xFFB432FF,
+    };
+#endif
 
     if (i_colorNo > 8) {
         return 0xFFFFFFFF;
@@ -287,7 +307,11 @@ static u32 getFontGCColorTable(u8 i_colorNo, u8 i_fukiKind) {
                (g_MsgObject_HIO_c.mTextColorLowerB[i_colorNo] << 0x8) | 0xFF;
     }
 
+#if TARGET_PC
+    u32 color = (dusk::tphd_active() ? hdColorTable : colorTable)[i_colorNo];
+#else
     u32 color = colorTable[i_colorNo];
+#endif
 
     if (i_colorNo != 0) {
         return color;
@@ -445,6 +469,35 @@ jmessage_tReference::~jmessage_tReference() {
     JKR_DELETE(mpStick);
     mpStick = NULL;
 }
+
+#if TARGET_PC
+// Wii U message tags of group 7 (TPHD bmg: "<7:6> to defend", "use <7:1> or <7:5> to aim"...).
+// Icon numbers of COutFont_c, read from the switch of the dialogue do_tag (RPX 0x02a5c674) and
+// the string do_tag (0x02a60498), which agree: 70..77 = font_54, font_55, font_56, font_58,
+// font_57, font_59, font_nfc, font_amiibo (table 0x10124d98). Returns -1 for unknown tags.
+static int tphdButtonTagIcon(u32 i_tag) {
+    static const s8 l_icon[16] = {
+        -1,    // 0: nothing (dialogue returns 0, string 1)
+        0x47,  // 1
+        0x48,  // 2
+        0x49,  // 3
+        0x4a,  // 4
+        0x46,  // 5
+        7,     // 6: font_37
+        0x4b,  // 7
+        0x31,  // 8: font_22
+        0x41,  // 9: font_50
+        0x44,  // 10: font_52
+        0x43,  // 11: font_51
+        0x36,  // 12: font_39
+        0x4c,  // 13: font_nfc
+        0x4d,  // 14: font_amiibo
+        0x47,  // 15: same as 1
+    };
+    const u32 id = i_tag & 0xFF00FFFF;
+    return id < 16 ? l_icon[id] : -1;
+}
+#endif
 
 void jmessage_tReference::calcDistance() {
     if (mActorPos.x == 0.0f && mActorPos.y == 0.0f && mActorPos.z == 0.0f) {
@@ -1650,6 +1703,14 @@ bool jmessage_tMeasureProcessor::do_tag(u32 i_tag, void const* i_data, u32 i_siz
             pReference->setRevoMessageID(*(BE(u32)*)i_data);
             return true;
         }
+        break;
+#if TARGET_PC
+    case MSGTAG_GROUP(7):
+        if (tphdButtonTagIcon(i_tag) >= 0) {
+            do_space(i_tag);
+        }
+        return true;
+#endif
     }
 
     return false;
@@ -1832,6 +1893,11 @@ void jmessage_tMeasureProcessor::do_space(u32 i_tag) {
                 break;
             }
             break;
+#if TARGET_PC
+        case MSGTAG_GROUP(7):
+            pReference->setCharactor(character);
+            break;
+#endif
         }
     }
 
@@ -2117,6 +2183,9 @@ bool jmessage_tSequenceProcessor::do_isReady() {
 #endif
 
     if (dComIfGp_checkMesgBgm()) {
+#if TARGET_PC
+        dComIfGp_setMesgBgmOff();
+#else
         bool isItemMusicPlaying = true;
         if (mDoAud_checkPlayingSubBgmFlag() != Z2BGM_ITEM_GET &&
             mDoAud_checkPlayingSubBgmFlag() != Z2BGM_ITEM_GET_MINI)
@@ -2128,6 +2197,7 @@ bool jmessage_tSequenceProcessor::do_isReady() {
         if (isItemMusicPlaying) {
             return false;
         }
+#endif
     }
 
     if (pReference->isButtonTagStopFlag()) {
@@ -2643,6 +2713,14 @@ bool jmessage_tSequenceProcessor::do_tag(u32 i_tag, void const* i_data, u32 i_si
         case MSGTAG_WII_MSGID_OVERRIDE:
             return true;
         }
+        break;
+#if TARGET_PC
+    case MSGTAG_GROUP(7):
+        if (tphdButtonTagIcon(i_tag) >= 0) {
+            do_space(i_tag);
+        }
+        return true;
+#endif
     }
 
     return false;
@@ -3425,6 +3503,16 @@ bool jmessage_tRenderingProcessor::do_tag(u32 i_tag, void const* i_data, u32 i_s
             break;
         }
         break;
+#if TARGET_PC
+    case MSGTAG_GROUP(7): {
+        const int icon = tphdButtonTagIcon(i_tag);
+        if (icon < 0) {
+            return 0;
+        }
+        do_outfont(icon, 0);
+        return 1;
+    }
+#endif
     }
 
     return 0;
@@ -4566,6 +4654,16 @@ bool jmessage_string_tMeasureProcessor::do_tag(u32 i_tag, void const* i_data, u3
             break;
         }
         break;
+#if TARGET_PC
+    case MSGTAG_GROUP(7):
+        if (tphdButtonTagIcon(i_tag) >= 0) {
+            mpReference->setCharactor(0xFFFF);
+            fontsize.mSizeX += var_f30;
+            mpReference->addLineLength(mpReference->getLineCountNowPage(), fontsize.mSizeX);
+            mpReference->setOutfontLength(mpReference->getLineCountNowPage(), fontsize.mSizeX);
+        }
+        break;
+#endif
     }
     }
 
@@ -5212,6 +5310,15 @@ bool jmessage_string_tRenderingProcessor::do_tag(u32 i_tag, void const* i_data, 
             break;
         }
         break;
+#if TARGET_PC
+    case MSGTAG_GROUP(7): {
+        const int icon = tphdButtonTagIcon(i_tag);
+        if (icon >= 0) {
+            do_outfont(icon);
+        }
+        break;
+    }
+#endif
     }
  
     return 1;
@@ -5299,7 +5406,19 @@ void jmessage_string_tRenderingProcessor::do_heightcenter() {
 void jmessage_string_tRenderingProcessor::do_strcat(char* i_str) {
     if (getLineCountNowPage() >= 0) {
         field_0x54e += strlen(i_str);
+#if TARGET_PC
+        // Original limit (0x210) unless the target text box has a larger buffer.
+        s32 limit = D_MSG_CLASS_CHAR_CNT_MAX;
+        if (mpReference->getPanePtr() != NULL) {
+            const s32 alloc = mpReference->getPanePtr()->getStringAllocByte();
+            if (alloc > limit) {
+                limit = alloc < (s32)ARRAY_SIZE(field_0x54) ? alloc : (s32)ARRAY_SIZE(field_0x54);
+            }
+        }
+        if (field_0x54e < limit) {
+#else
         if (field_0x54e < ARRAY_SIZE(field_0x54)) {
+#endif
             SAFE_STRCAT(field_0x54, i_str);
         } else {
             JUT_WARN(7531, "%s", "Message Alloc Byte Over!!");

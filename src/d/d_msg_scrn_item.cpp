@@ -12,6 +12,7 @@
 #include "d/d_msg_class.h"
 #include "d/d_meter2_info.h"
 #include "d/d_meter_HIO.h"
+#include "d/d_item.h"
 #include "d/d_item_data.h"
 #include "d/d_pane_class.h"
 #include "d/d_s_play.h"
@@ -344,6 +345,23 @@ dMsgScrnItem_c::dMsgScrnItem_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
 
 
 dMsgScrnItem_c::~dMsgScrnItem_c() {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        const int stampNo = dItem_tphdStampNo(mItemIndex);
+        if (stampNo >= 0) {
+            int count = 0;
+            for (int i = 0; i < 50; i++) {
+                if (dComIfGs_isStamp(i)) {
+                    count++;
+                }
+            }
+            if (count == 1 || count >= 49) {
+                extern u8 g_dMw_tphdStampAutoOpen;
+                g_dMw_tphdStampAutoOpen = 1;
+            }
+        }
+    }
+#endif
     for (int i = 0; i < 3; i++) {
         if (mpItemTex[i] != NULL) {
             field_0x138->free(mpItemTex[i]);

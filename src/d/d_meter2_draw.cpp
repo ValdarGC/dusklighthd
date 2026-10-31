@@ -21,11 +21,15 @@
 #include "d/d_msg_object.h"
 #include "d/d_pane_class.h"
 #include <cstring>
+#include <cstdio>
+#include <filesystem>
+#include "dusk/main.h"
 
 #if TARGET_PC
 #include "dusk/game_clock.h"
 #include "dusk/interp/frame_interpolation.h"
 #include "dusk/interp/user_interface.h"
+#include "dusk/logging.h"
 #include "dusk/settings.h"
 #include "dusk/ui/icon_provider.hpp"
 #include "dusk/version.hpp"
@@ -33,6 +37,21 @@
 #include "d/d_meter2.h"
 
 #include <algorithm>
+#include <cmath>
+
+#include "JSystem/J2DGraph/J2DPicture.h"
+#include "JSystem/J2DGraph/J2DMaterial.h"
+#include "JSystem/JKernel/JKRArchive.h"
+
+// Defined in d_s_logo.cpp: Wii U (Revo) HUD layout archive.
+extern JKRArchive* g_tphdMain2DRevoArchive;
+extern bool g_tphdItemScreenOpen;
+extern bool g_tphdItemExplainOpen;
+u16 g_hdUseButtonSnap = 0xFFFF;
+static bool hdUse(int bit) {
+    return (g_hdUseButtonSnap & bit) != 0;
+}
+extern bool g_hdTextOutline;
 
 namespace {
 f32 s_button_a_scale = 1.0f;
@@ -42,7 +61,12 @@ f32 s_button_b_scale = 1.0f;
 f32 s_button_b_text_scale = 1.0f;
 
 // Reads the user HUD scale setting, clamped to a safe range.
+bool s_hdRevoHud = false;  // real Wii U HUD (Revo layout) active
+
 f32 dGetUserHudScale() {
+    if (s_hdRevoHud) {
+        return 1.0f;  // the Wii U HUD has no user scale
+    }
     return std::clamp(dusk::getSettings().game.hudScale.getValue(), 0.5f, 2.0f);
 }
 
@@ -65,6 +89,1496 @@ void dAnchorHudScale(CPaneMgr* i_pane, HudCorner i_corner, f32* io_x, f32* io_y,
     *io_x += dirX * i_pane->getInitSizeX() * half * i_pull;
     *io_y += dirY * i_pane->getInitSizeY() * half;
 }
+
+// ---------------------------------------------------------------------------------------
+// TPHD (Wii U) HUD layout.
+//
+// The game logic still drives the GameCube pane set ("zelda_game_image.blo"), so instead of
+// loading a different layout we re-place those panes where the Wii U TV HUD puts them.
+// This must run right after the screen is loaded and BEFORE any CPaneMgr is created, since
+// CPaneMgr captures the initial pane position as its animation origin.
+//
+// Target coordinates below were measured from a 1920x1080 Wii U capture and converted to the
+// 780x448 reference space of the TPHD layout (x / 2.4615, y / 2.4107). X coordinates on the
+// right half of the screen are shifted by (780 - 604) because the GC screen is 604 wide and
+// the HUD stays glued to the screen edges.
+// ---------------------------------------------------------------------------------------
+// The Dusklight UI canvas on a 16:9 window is ~796.6 units wide (448 tall) with the 604-wide GC
+// layout centered in it, i.e. a margin of ~96.3 units on each side. The Wii U HUD is designed for
+// a 780x448 screen, so convert reference x coordinates into GC-layout space.
+constexpr f32 kHdCanvasW = 796.6f;
+constexpr f32 kHdRefW = 780.0f;
+constexpr f32 kHdMargin = (796.6f - 604.0f) * 0.5f;
+
+inline f32 hdX(f32 refX) {
+    return refX * (kHdCanvasW / kHdRefW) - kHdMargin;
+}
+
+f32 hdParentSumX(J2DPane* p) {
+    f32 s = 0.0f;
+    for (J2DPane* q = p->getParentPane(); q != NULL; q = q->getParentPane()) {
+        const f32 v = q->getBounds().i.x;
+        s += v;
+    }
+    return s;
+}
+
+f32 hdParentSumY(J2DPane* p) {
+    f32 s = 0.0f;
+    for (J2DPane* q = p->getParentPane(); q != NULL; q = q->getParentPane()) {
+        const f32 v = q->getBounds().i.y;
+        s += v;
+    }
+    return s;
+}
+
+// Moves the pane so its center lands on (refX, refY), given in the 780x448 Wii U space.
+void hdPlace(J2DScreen* scr, u64 tag, f32 refX, f32 refY) {
+    J2DPane* p = scr->search(tag);
+    if (p == NULL) {
+        return;
+    }
+    // Global top-left is the sum of getBounds().i up the tree. J2DPane::move() is relative to
+    // the parent's base point (its center for centered panes), so shift with add() instead,
+    // which moves the pane by exactly the given amount whatever the base positions are.
+    // getBounds() returns a shared static box: copy it before walking the parents.
+    const JGeometry::TBox2<f32> b = p->getBounds();
+    const f32 curX = hdParentSumX(p) + b.i.x;
+    const f32 curY = hdParentSumY(p) + b.i.y;
+    p->add(hdX(refX) - p->getWidth() * 0.5f - curX, refY - p->getHeight() * 0.5f - curY);
+}
+
+// Moves the pane so its top-left corner lands on (refX, refY).
+void hdPlaceTopLeft(J2DScreen* scr, u64 tag, f32 refX, f32 refY) {
+    J2DPane* p = scr->search(tag);
+    if (p == NULL) {
+        return;
+    }
+    // getBounds() returns a shared static box: copy it before walking the parents.
+    const JGeometry::TBox2<f32> b = p->getBounds();
+    const f32 curX = hdParentSumX(p) + b.i.x;
+    const f32 curY = hdParentSumY(p) + b.i.y;
+    p->add(hdX(refX) - curX, refY - curY);
+}
+
+void hdHide(J2DScreen* scr, u64 tag) {
+    J2DPane* p = scr->search(tag);
+    if (p != NULL) {
+        const f32 bx = p->getBounds().i.x;
+        p->add(-3000.0f - (hdParentSumX(p) + bx), 0.0f);
+    }
+}
+
+// Moves a whole group so that one of its children ends up centered on (refX, refY).
+void hdPlaceGroupByChild(J2DScreen* scr, u64 groupTag, u64 childTag, f32 refX, f32 refY) {
+    J2DPane* group = scr->search(groupTag);
+    J2DPane* child = scr->search(childTag);
+    if (group == NULL || child == NULL) {
+        return;
+    }
+    const JGeometry::TBox2<f32> cb = child->getBounds();
+    const f32 curX = hdParentSumX(child) + cb.i.x + child->getWidth() * 0.5f;
+    const f32 curY = hdParentSumY(child) + cb.i.y + child->getHeight() * 0.5f;
+    group->add(hdX(refX) - curX, refY - curY);
+}
+
+// ---------------------------------------------------------------------------------------
+// Wii U button art. The Wii U textures (tr_*_btn_00, midna64, tr_cross_btn) live in the Revo
+// layout archive (main2DR.arc, mounted by d_s_logo into g_tphdMain2DRevoArchive). The GC pane
+// set keeps driving the logic; we swap its textures and hide the GC-only decorations.
+// ---------------------------------------------------------------------------------------
+const ResTIMG* hdGetRevoTex(const char* name) {
+    if (g_tphdMain2DRevoArchive == NULL) {
+        return NULL;
+    }
+    const ResTIMG* t = (const ResTIMG*)g_tphdMain2DRevoArchive->getResource('TIMG', name);
+    if (t == NULL) {
+        DuskLog.warn("HDHUD: Revo texture not found: {}", name);
+    }
+    return t;
+}
+
+// Replaces the texture of a picture pane and resets its GC tint (the GC art is colored by TEV).
+void hdSwapTex(J2DScreen* scr, u64 tag, const char* texName, f32 size) {
+    J2DPane* p = scr->search(tag);
+    if (p == NULL || p->getTypeID() != 18) {
+        return;
+    }
+    const ResTIMG* t = hdGetRevoTex(texName);
+    if (t == NULL) {
+        return;
+    }
+    J2DPicture* pic = static_cast<J2DPicture*>(p);
+    pic->changeTexture(t, 0);
+    pic->setBlackWhite(JUtility::TColor(0, 0, 0, 0), JUtility::TColor(255, 255, 255, 255));
+    p->rotate(0.0f);  // the GC X/Y panes are slightly rotated
+    if (size > 0.0f) {
+        p->resize(size, size);
+    }
+}
+
+// Appends a new picture (Wii U art that has no GC counterpart) under an existing pane.
+void hdAddPic(J2DScreen* scr, u64 parentTag, u64 tag, const char* texName, f32 size) {
+    J2DPane* parent = scr->search(parentTag);
+    const ResTIMG* t = hdGetRevoTex(texName);
+    if (parent == NULL || t == NULL) {
+        return;
+    }
+    J2DPicture* pic = JKR_NEW J2DPicture(tag, JGeometry::TBox2<f32>(0.0f, 0.0f, size, size), t, NULL);
+    if (pic != NULL) {
+        parent->appendChild(pic);
+    }
+}
+
+void hdHideAll(J2DScreen* scr, const u64* tags, int n) {
+    for (int i = 0; i < n; i++) {
+        J2DPane* p = scr->search(tags[i]);
+        if (p != NULL) {
+            p->hide();
+        }
+    }
+}
+
+// One-time texture setup, per screen instance.
+void dInitTphdHudArt(J2DScreen* scr) {
+    if (scr->search(MULTI_CHAR('cross_p')) != NULL) {
+        return;  // already done for this screen instance
+    }
+    if (g_tphdMain2DRevoArchive == NULL) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            DuskLog.warn("HDHUD: Revo archive is not mounted, keeping GC button art");
+        }
+        return;
+    }
+    hdSwapTex(scr, MULTI_CHAR('a_btn'), "tr_a_btn_00.bti", 24.0f);
+    hdSwapTex(scr, MULTI_CHAR('b_btn'), "tr_b_btn_00.bti", 24.0f);
+    hdSwapTex(scr, MULTI_CHAR('x_btn'), "tr_x_btn_00.bti", 24.0f);
+    hdSwapTex(scr, MULTI_CHAR('y_btn'), "tr_y_btn_00.bti", 24.0f);
+    hdSwapTex(scr, MULTI_CHAR('zbtn'), "tr_zr_btn_00.bti", 24.0f);  // extra item = ZR
+    hdSwapTex(scr, MULTI_CHAR('midona'), "midona64.bti", 32.0f);
+    hdAddPic(scr, MULTI_CHAR('midona_n'), MULTI_CHAR('zl_btn'), "tr_zl_btn_00.bti", 24.0f);
+    hdAddPic(scr, MULTI_CHAR('juji_n'), MULTI_CHAR('cross_p'), "tr_cross_btn.bti", 36.0f);
+}
+
+// Positions are idempotent (absolute), so this can run every frame.
+void dApplyTphdHudLayout(J2DScreen* scr) {
+    dInitTphdHudArt(scr);
+
+    // --- Top left: hearts (two rows of 10), magic, Midna icon, dpad ------------------------
+    hdPlaceGroupByChild(scr, MULTI_CHAR('heart_n'), MULTI_CHAR('hpb_00'), 31.7f, 22.8f);
+    {
+        // Row spacing is 20 on Wii U (17 on GC).
+        J2DPane* upper = scr->search(MULTI_CHAR('heart_ln'));
+        J2DPane* lower = scr->search(MULTI_CHAR('heart_un'));
+        if (upper != NULL && lower != NULL) {
+            const f32 upperY = upper->getBounds().i.y;
+            lower->add(0.0f, upperY + 20.0f - lower->getBounds().i.y);
+        }
+    }
+    hdPlace(scr, MULTI_CHAR('magic_n'), 62.0f + 182.5f, 43.6f);
+
+    hdPlace(scr, MULTI_CHAR('midona'), 42.7f, 68.4f);
+    hdPlace(scr, MULTI_CHAR('zl_btn'), 56.0f, 83.0f);   // ZL badge next to the Midna icon
+    hdPlaceGroupByChild(scr, MULTI_CHAR('juji_n'), MULTI_CHAR('ju_p_n'), 42.7f, 120.3f);
+    hdPlace(scr, MULTI_CHAR('cross_p'), 42.7f, 120.3f);
+    hdPlace(scr, MULTI_CHAR('m_text_n'), 78.8f, 120.3f);   // "Minimap"
+    hdPlace(scr, MULTI_CHAR('i_text_n'), 43.5f, 149.3f);   // "Collection/Save"
+
+    // --- Top right: item buttons ------------------------------------------------------------
+    // The child pictures are centered directly: in the GC layout the children of item_*_n and
+    // *btn_n are centered on the parent's top-left corner, not on the parent's center.
+    hdPlace(scr, MULTI_CHAR('x_itm_p'), 696.7f, 37.3f);    // X
+    hdPlace(scr, MULTI_CHAR('r_itm_p'), 735.3f, 37.3f);    // extra item (ZR)
+    hdPlace(scr, MULTI_CHAR('y_itm_p'), 666.3f, 64.3f);    // Y
+    hdPlace(scr, MULTI_CHAR('b_itm_p'), 698.8f, 101.6f);   // B (sword)
+    hdPlace(scr, MULTI_CHAR('x_light'), 696.7f, 37.3f);
+    hdPlace(scr, MULTI_CHAR('r_light'), 735.3f, 37.3f);
+    hdPlace(scr, MULTI_CHAR('y_light'), 666.3f, 64.3f);
+    hdPlace(scr, MULTI_CHAR('b_light'), 698.8f, 101.6f);
+    hdPlace(scr, MULTI_CHAR('x_btn'), 702.8f, 53.1f);
+    hdPlace(scr, MULTI_CHAR('y_btn'), 676.4f, 76.7f);
+    hdPlace(scr, MULTI_CHAR('b_btn'), 694.7f, 98.7f);
+    hdPlace(scr, MULTI_CHAR('a_btn'), 719.0f, 75.9f);
+    hdPlace(scr, MULTI_CHAR('zbtn'), 741.4f, 53.1f);       // ZR badge
+    hdPlace(scr, MULTI_CHAR('a_text_n'), 747.5f, 79.6f);   // "Put away"
+    // The other buttons show no text on Wii U, nor the GC ring / Z badge.
+    hdHide(scr, MULTI_CHAR('x_text_n'));
+    hdHide(scr, MULTI_CHAR('y_text_n'));
+    hdHide(scr, MULTI_CHAR('b_text_n'));
+    hdHide(scr, MULTI_CHAR('z_text_n'));
+    hdHide(scr, MULTI_CHAR('uzu_n'));
+    {
+        // GC-only decorations: lights, letter overlays and the dpad rings/arrows.
+        static const u64 hideTags[] = {
+            MULTI_CHAR('a_btn_l'), MULTI_CHAR('b_btn_l'), MULTI_CHAR('x_btn_l'),
+            MULTI_CHAR('y_btn_l'), MULTI_CHAR('z_btnl'),  MULTI_CHAR('z_btn_t'),
+            MULTI_CHAR('b_text_a'), MULTI_CHAR('b_text_b'), MULTI_CHAR('b_text_x'),
+            MULTI_CHAR('b_text_y'), MULTI_CHAR('ju_ring1'), MULTI_CHAR('ju_ring2'),
+            MULTI_CHAR('ju_ring3'), MULTI_CHAR('ju_ring4'), MULTI_CHAR('juji_001'),
+            MULTI_CHAR('juji_002'), MULTI_CHAR('juji_003'), MULTI_CHAR('juji_004'),
+            MULTI_CHAR('yaji_00'), MULTI_CHAR('yaji_01'), MULTI_CHAR('yaji_02'),
+            MULTI_CHAR('yaji_03'),
+        };
+        if (g_tphdMain2DRevoArchive != NULL) {
+            hdHideAll(scr, hideTags, sizeof(hideTags) / sizeof(hideTags[0]));
+        }
+    }
+
+    // --- Bottom right: rupees ---------------------------------------------------------------
+    // The rupee icon sits ~54 units right / 8 down of r_k_n's top-left in the GC layout.
+    hdPlaceTopLeft(scr, MULTI_CHAR('r_k_n'), 644.0f, 376.0f);
+}
+
+// Logs the final global center of a few panes (every ~4 s) so the layout can be tuned from the log.
+void dLogTphdHud(J2DScreen* scr) {
+    static int s_frames = 0;
+    if (++s_frames % 240 != 0) {
+        return;
+    }
+    static const u64 tags[] = {
+        MULTI_CHAR('heart_n'), MULTI_CHAR('hpb_00'), MULTI_CHAR('cross_p'), MULTI_CHAR('zl_btn'),
+        MULTI_CHAR('m_text_n'), MULTI_CHAR('a_btn'), MULTI_CHAR('x_itm_p'), MULTI_CHAR('rupi'),
+    };
+    static const char* names[] = {"heart_n", "hpb_00", "cross_p", "zl_btn",
+                                  "m_text_n", "a_btn", "x_itm_p", "rupi"};
+    for (int i = 0; i < 8; i++) {
+        J2DPane* p = scr->search(tags[i]);
+        if (p == NULL) {
+            continue;
+        }
+        const JGeometry::TBox2<f32> lb = p->getBounds();
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Real Wii U HUD. When the Revo layout archive is mounted, the HUD screen is loaded from
+// "zelda_game_image_revo.blo" (+ "zelda_game_image_text.blo" for the button captions) instead
+// of the GameCube "zelda_game_image.blo". The GameCube logic still looks panes up by their GC
+// names, so the Revo panes that play the same role are re-tagged (alias table) and the few GC
+// panes that have no Revo counterpart get hidden stand-ins of the right type.
+// ---------------------------------------------------------------------------------------
+J2DScreen* s_hdTextScreen = NULL;
+
+// The Revo layout is 780 wide, the Dusklight 16:9 canvas ~796.6: center it (GC layout origin is
+// shifted by -kHdMargin already).
+constexpr f32 kHdRevoDrawX = -kHdMargin;
+constexpr f32 kHdRevoScaleX = kHdCanvasW / kHdRefW;
+
+u64 hdTag(const char* s) {
+    u64 v = 0;
+    for (; *s != '\0'; s++) {
+        v = (v << 8) | static_cast<u8>(*s);
+    }
+    return v;
+}
+
+struct HdAlias {
+    const char* gc;    // tag the GC logic searches for
+    const char* revo;  // Revo pane that takes that role
+};
+
+// Panes living in zelda_game_image_revo.blo. Applied before the text screen is grafted so that
+// these win over same-named panes of the text layout (abtn_n / bbtn_n).
+const HdAlias kHdMainAliases[] = {
+    // Item slots in the Wii U TV/Pro layout: itm_1 = X (badge itmBtn_1), itm_2 = Y (badge
+    // itmBtn_2, userInfo 'Y' in the blo), itm_3 = B, itm_4 = extra corner slot whose badge
+    // (itmBtn_4) the TV mode hides -> GC "R" slot, always hidden by drawButtonR.
+    {"x_itm_p", "itm_1_p"}, {"y_itm_p", "itm_2_p"}, {"b_itm_p", "itm_3_p"}, {"r_itm_p", "itm_4_p"},
+    {"item_x_n", "item_1_n"}, {"item_y_n", "item_2_n"}, {"item_b_n", "item_3_n"},
+    {"item_r_n", "item_4_n"}, {"b_light", "b_light2"}, {"y_light", "j_light"},
+    // d-pad captions: "Collection/Save" is the two-line box (cont_j06 / cont_j11).
+    {"cont_ju0", "cont_j06"}, {"cont_ju1", "cont_j11"},
+};
+
+// Captions of zelda_game_image_text.blo as the Wii U TV/Pro HUD uses them (TPHD RPX: the
+// dMeter2Draw_c ctor @ 0x02a2db6c takes 2 boxes per caption from the table at 0x10099b90, and
+// initButton @ 0x02a2b2fc hides a_text_n/b_text_n/x_text_n/y_text_n/r_text_n/l_text_n and uses
+// the "f" groups instead). Each group is a main box plus a black copy whose user info is 's_01'
+// (outlined by J2DTextBoxEx::drawSelf). The GC logic writes the same string into its 5 boxes, so
+// two of its tags go to the Wii U pair and the other three become hidden stand-ins.
+// GC z_text_n (mpTextXY[2]) is the Wii U r_text_n slot -> fr_textn.
+const char* const kHdWiiTextPanes[] = {
+    "a_text_n", "cont_at1", "cont_at2", "cont_at3", "cont_at4", "cont_at",
+    "b_text_n", "cont_bt1", "cont_bt2", "cont_bt3", "cont_bt4", "cont_bt",
+    "x_text_n", "cont_xt1", "cont_xt2", "cont_xt3", "cont_xt4", "cont_xt5",
+    "y_text_n", "cont_yt1", "cont_yt2", "cont_yt3", "cont_yt4", "cont_yt5",
+    "r_text_n", "l_text_n", "cont_zt1", "cont_zt2", "cont_zt3", "cont_zt4",
+};
+const HdAlias kHdTextAliases[] = {
+    {"a_text_n", "fa_tex_n"}, {"cont_at1", "cont_a16"}, {"cont_at", "cont_a11"},
+    {"b_text_n", "fb_textn"}, {"cont_bt1", "cont_bt6"}, {"cont_bt", "cont_bt5"},
+    {"x_text_n", "fx_textn"}, {"cont_xt1", "cont_xt7"}, {"cont_xt5", "cont_xt6"},
+    {"y_text_n", "fy_textn"}, {"cont_yt1", "cont_yt7"}, {"cont_yt5", "cont_yt6"},
+    {"z_text_n", "fr_textn"}, {"cont_zt1", "cont_z10"}, {"cont_rt", "cont_jt1"},
+};
+
+// Renames (and hides) the Wii Remote caption panes so the GC tags resolve to the Wii U ones.
+void hdRetireWiiText(J2DPane* root) {
+    for (const char* t : kHdWiiTextPanes) {
+        J2DPane* p = root->search(hdTag(t));
+        if (p == NULL) {
+            continue;
+        }
+        char buf[9] = {};
+        std::strncpy(buf, t, 8);
+        buf[0] = '#';
+        p->mInfoTag = hdTag(buf);
+        p->hide();
+    }
+}
+
+enum HdDummyKind { HD_PANE, HD_PIC, HD_TEXT };
+struct HdDummy {
+    const char* tag;
+    HdDummyKind kind;
+};
+
+// GC panes with no Revo counterpart: hidden, off-screen stand-ins so lookups never return NULL.
+const HdDummy kHdDummies[] = {
+    {"zbtn_n", HD_PANE}, {"uzu_n", HD_PANE}, {"item_j_n", HD_PANE},
+    {"z_btnl", HD_PIC}, {"z_btn_t", HD_PIC}, {"b_btn_l", HD_PIC},
+    {"scp_12", HD_PIC}, {"scp_13", HD_PIC}, {"scp_14", HD_PIC}, {"scp_15", HD_PIC},
+    {"sl_12", HD_PIC}, {"sl_13", HD_PIC}, {"sl_14", HD_PIC}, {"sl_15", HD_PIC},
+    {"s_12", HD_PIC}, {"s_13", HD_PIC}, {"s_14", HD_PIC}, {"s_15", HD_PIC},
+    {"cont_ju0", HD_TEXT}, {"cont_ju1", HD_TEXT}, {"cont_ju2", HD_TEXT},
+    {"cont_ju7", HD_TEXT}, {"cont_ju8", HD_TEXT}, {"cont_ju9", HD_TEXT},
+    {"cont_bt", HD_TEXT}, {"cont_rt", HD_TEXT},
+    {"cont_at2", HD_TEXT}, {"cont_at3", HD_TEXT}, {"cont_at4", HD_TEXT},
+    {"cont_bt2", HD_TEXT}, {"cont_bt3", HD_TEXT}, {"cont_bt4", HD_TEXT},
+    {"cont_xt2", HD_TEXT}, {"cont_xt3", HD_TEXT}, {"cont_xt4", HD_TEXT},
+    {"cont_yt2", HD_TEXT}, {"cont_yt3", HD_TEXT}, {"cont_yt4", HD_TEXT},
+    {"cont_zt2", HD_TEXT}, {"cont_zt3", HD_TEXT}, {"cont_zt4", HD_TEXT},
+};
+
+void hdApplyAliases(J2DScreen* scr, const HdAlias* table, int n) {
+    for (int i = 0; i < n; i++) {
+        const u64 gc = hdTag(table[i].gc);
+        if (scr->search(gc) != NULL) {
+            continue;  // GC name already present
+        }
+        J2DPane* p = scr->search(hdTag(table[i].revo));
+        if (p == NULL) {
+            DuskLog.warn("HDHUD alias: Revo pane '{}' not found (for '{}')", table[i].revo,
+                         table[i].gc);
+            continue;
+        }
+        p->mInfoTag = gc;
+    }
+}
+
+void hdAddDummy(J2DScreen* scr, const HdDummy& d) {
+    const u64 tag = hdTag(d.tag);
+    if (scr->search(tag) != NULL) {
+        return;
+    }
+    const JGeometry::TBox2<f32> box(-3000.0f, -3000.0f, -2999.0f, -2999.0f);
+    J2DPane* p = NULL;
+    if (d.kind == HD_PANE) {
+        p = JKR_NEW J2DPane(tag, box);
+    } else if (d.kind == HD_PIC) {
+        const ResTIMG* img = hdGetRevoTex("tr_a_btn_00.bti");
+        if (img != NULL) {
+            p = JKR_NEW J2DPicture(tag, box, img, NULL);
+        }
+    } else {
+        J2DTextBox* tb = JKR_NEW J2DTextBox();
+        if (tb != NULL) {
+            tb->mInfoTag = tag;
+            tb->setFont(mDoExt_getMesgFont());
+            p = tb;
+        }
+    }
+    if (p == NULL) {
+        DuskLog.warn("HDHUD dummy '{}' could not be created", d.tag);
+        return;
+    }
+    p->hide();
+    scr->appendChild(p);
+}
+
+// Wii U J2DPane::draw (0x02b34334): under the stretched screen a pane whose user info is 'n_43'
+// gets its local X axis squeezed by 608/orthoWidth, so its subtree (positions and glyphs) comes out
+// 1:1. Panes outside any 'n_43' group stay stretched; only their glyphs are compensated here.
+void hdCompensateText(J2DPane* pane, f32 sx);
+void hdApplyN43(J2DPane* pane, f32 sx) {
+    if (pane->getUserInfo() == hdTag("n_43")) {
+        pane->scale(pane->getScaleX() * sx, pane->getScaleY());
+        return;
+    }
+    if (pane->getTypeID() == 19) {
+        pane->scale(pane->getScaleX() * sx, pane->getScaleY());
+    }
+    for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+        hdApplyN43(c, sx);
+    }
+}
+
+void hdCompensateText(J2DPane* pane, f32 sx) {
+    if (pane->getTypeID() == 19) {
+        pane->scale(pane->getScaleX() * sx, pane->getScaleY());
+    }
+    for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+        hdCompensateText(c, sx);
+    }
+}
+
+// Loads zelda_game_image_text.blo and moves its top-level panes under the HUD screen so the
+// captions can be found with the same lookups. The text screen is kept alive (it owns the
+// materials of the moved panes) and freed after the HUD screen.
+void hdGraftTextScreen(J2DScreen* scr) {
+    J2DScreen* text = JKR_NEW J2DScreen();
+    if (text == NULL) {
+        return;
+    }
+    if (!text->setPriority("zelda_game_image_text.blo", 0x20000, g_tphdMain2DRevoArchive)) {
+        DuskLog.warn("HDHUD: zelda_game_image_text.blo failed to load");
+        JKR_DELETE(text);
+        return;
+    }
+    dPaneClass_showNullPane(text);
+    J2DPane* kids[16];
+    int n = 0;
+    for (J2DPane* c = text->getFirstChildPane(); c != NULL && n < 16; c = c->getNextChildPane()) {
+        kids[n++] = c;
+    }
+    // The Wii U draws this layout in a 608-wide space stretched over the 780-wide HUD; text
+    // boxes are compensated so the glyphs keep their aspect (the 'n_43' rule in J2DPane::draw).
+    const f32 kStretch = 780.0f / 608.0f;
+    J2DPane* wrap = JKR_NEW J2DPane(hdTag("hd_txtw"), JGeometry::TBox2<f32>(0.0f, 0.0f, 608.0f, 448.0f));
+    J2DPane* parent = scr;
+    if (wrap != NULL) {
+        scr->appendChild(wrap);
+        wrap->scale(kStretch, 1.0f);
+        parent = wrap;
+    }
+    for (int i = 0; i < n; i++) {
+        parent->appendChild(kids[i]);
+        // Wii U J2DPane::draw: a pane whose user info is 'n_43' has its local X axis squeezed by
+        // 608/orthoWidth, cancelling the screen stretch for its whole subtree (positions and
+        // glyphs). The text layout's only top-level group, cont_n, is 'n_43'.
+        hdApplyN43(kids[i], 1.0f / kStretch);
+    }
+    s_hdTextScreen = text;
+}
+
+// The GC logic reads the picture's texture info when it builds the item overlays; make sure the
+// Revo item pictures have one.
+void hdEnsurePictureTexture(J2DScreen* scr, const char* tag) {
+    J2DPane* p = scr->search(hdTag(tag));
+    if (p == NULL || p->getTypeID() != 18) {
+        return;
+    }
+    J2DPicture* pic = static_cast<J2DPicture*>(p);
+    if (pic->getTexture(0) == NULL) {
+        const ResTIMG* img = hdGetRevoTex("tr_a_btn_00.bti");
+        if (img != NULL) {
+            pic->changeTexture(img, 0);
+        }
+    }
+}
+
+// Text boxes loaded from the Revo layouts may reference fonts that are not in the archive; give
+// every one without a font the game's message font so drawing them can never dereference NULL.
+void hdFixTextFonts(J2DPane* pane) {
+    for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+        if (c->getTypeID() == 19) {
+            J2DTextBox* tb = static_cast<J2DTextBox*>(c);
+            if (tb->getFont() == NULL) {
+                tb->setFont(mDoExt_getMesgFont());
+                tb->setString(64, "");  // not driven by the game logic: keep it empty
+            }
+        }
+        hdFixTextFonts(c);
+    }
+}
+
+// zelda_game_image_kantera.blo comes from main2DR (TPHD layout).
+static bool s_hdKanteraRevo = false;
+
+// Values of the Wii U g_drawHIO (constructor at 0x02a5025c in the TPHD RPX) where they differ
+// from the GameCube ones: the Wii U HUD uses the layout positions as they are (all offsets 0),
+// unscaled items/buttons and opaque X badges.
+void hdApplyWiiUHio() {
+    dMeter_drawHIO_c& h = g_drawHIO;
+    h.mLifeTopPosX = 0.0f;
+    h.mLifeTopPosY = 0.0f;
+    h.mNoMagicPosY = 0.0f;
+    h.mLifeGaugePosX = 0.0f;
+    h.mLifeGaugePosY = 0.0f;
+    h.mMagicMeterScale = 1.0f;
+    h.mMagicMeterPosX = 0.0f;
+    h.mLanternMeterScale = 1.0f;
+    h.mLanternMeterPosX = 0.0f;
+    h.mLanternMeterPosY = 0.0f;
+    h.mOxygenMeterScale = 1.0f;
+    h.mOxygenMeterPosX = 0.0f;
+    h.mOxygenMeterPosY = 0.0f;
+    h.mMainHUDButtonsScale = 1.0f;
+    h.mRingHUDButtonsScale = 1.0f;
+    h.mMainHUDButtonsPosX = 0.0f;
+    h.mRingHUDButtonsPosX = 0.0f;
+    h.mMainHUDButtonsPosY = 0.0f;
+    h.mRingHUDButtonsPosY = 0.0f;
+    h.mButtonAScale = 1.0f;
+    h.mButtonAAlpha = 1.0f;  // Wii U +0xa4 / +0xec: both badges fully opaque
+    h.mButtonBAlpha = 1.0f;
+    // Wii U g_drawHIO (0x101680d8, A block at +0xa0): every talk scale is 1 and every talk
+    // offset 0, so the A badge and its caption never move or grow with the action.
+    h.mButtonAPosX = 0.0f;
+    h.mButtonAPosY = 0.0f;
+    h.mButtonATalkScale[0] = 1.0f;
+    h.mButtonATalkScale[1] = 1.0f;
+    h.mButtonATalkPosX[0] = 0.0f;
+    h.mButtonATalkAPosX[0] = 0.0f;
+    h.mButtonATalkAScale = 1.0f;
+    h.mButtonATextTalkAScale = 1.0f;
+    h.mButtonAVesselPosX = 0.0f;
+    h.mButtonAVesselPosY = 0.0f;
+    h.mButtonBTalkScale[0] = 1.0f;
+    h.mButtonBTalkScale[1] = 1.0f;
+    h.mButtonBTalkPosX[0] = 0.0f;
+    h.mButtonBWolfPosX = 0.0f;
+    h.mButtonBWolfPosY = 0.0f;
+    h.mButtonBVesselPosX = 0.0f;
+    h.mButtonBVesselPosY = 0.0f;
+    h.mButtonATalkPosX[1] = 0.0f;
+    h.mButtonATalkPosY[0] = 0.0f;
+    h.mButtonATalkPosY[1] = 0.0f;
+    h.mButtonATalkAPosX[1] = 0.0f;
+    h.mButtonATalkAPosY[0] = 0.0f;
+    h.mButtonATalkAPosY[1] = 0.0f;
+    h.mButtonBScale = 1.0f;
+    h.mButtonBPosX = 0.0f;
+    h.mButtonBPosY = 0.0f;
+    h.mButtonBTalkPosX[1] = 0.0f;
+    h.mButtonBTalkPosY[0] = 0.0f;
+    h.mButtonBTalkPosY[1] = 0.0f;
+    h.mMidnaIconScale = 1.0f;
+    h.field_0x134 = 1.0f;
+    h.mButtonXAlpha = 1.0f;
+    h.field_0x164 = 1.0f;
+    h.mButtonZAlpha = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        h.mButtonBItemPosX[i] = 0.0f;
+        h.mButtonBItemPosY[i] = 0.0f;
+        h.mButtonBItemRotation[i] = 0.0f;
+        h.mButtonBItemScale[i] = 1.0f;
+    }
+    h.mButtonXItemPosX = 0.0f;
+    h.mButtonXItemPosY = 0.0f;
+    h.mButtonXItemScale = 1.0f;
+    h.mButtonYItemScale = 1.0f;
+}
+
+// Panes the Wii U HUD keeps exactly at their layout pose, while the GC logic moves/scales them
+// (per-item offsets and scales, rupee/key scale, d-pad slide). Captured at attach, restored
+// every frame right before drawing.
+struct HdPin {
+    const char* tag;
+    f32 tx, ty, sx, sy;
+    bool valid;
+};
+HdPin s_hdPins[] = {
+    {"x_itm_p"}, {"y_itm_p"}, {"b_itm_p"}, {"rupi_n"}, {"key_n"}, {"juji_n"}, {"r_k_n"},
+    {"heart_n"}, {"midona_n"}, {"cont_n"}, {"m_text_n"}, {"i_text_n"}, {"juj_i_n"}, {"a_text_n"}, {"L_btn"}, {"b_text_n"},
+};
+
+void hdCapturePins(J2DScreen* scr) {
+    for (HdPin& pin : s_hdPins) {
+        J2DPane* p = scr->search(hdTag(pin.tag));
+        pin.valid = p != NULL;
+        if (p != NULL) {
+            pin.tx = p->getTranslateX();
+            pin.ty = p->getTranslateY();
+            pin.sx = p->getScaleX();
+            pin.sy = p->getScaleY();
+            // Wii U J2DPane::draw (0x02b34334) stretches every pane by orthoWidth/608 and squeezes
+            // the 'n_43' ones back. In zelda_game_image_revo.blo the d-pad captions (m_text_n,
+            // i_text_n) have no 'n_43' in their chain (juj_i_n, the icons, has it), so on the TV
+            // their glyphs come out 796.4/608 wider than the icons. Our HUD is drawn 1:1, so the
+            // stretch is applied to those groups here.
+            if (std::strcmp(pin.tag, "m_text_n") == 0 || std::strcmp(pin.tag, "i_text_n") == 0) {
+                pin.sx *= 796.4f / 608.0f;
+            }
+        }
+    }
+}
+
+// Group offsets measured against a 1920x1080 Wii U TV capture (780x448 units): where the Wii U
+// TV HUD shows these groups relative to their layout pose.
+void hdPinOffset(const char* tag, f32* dx, f32* dy) {
+    static const struct {
+        const char* tag;
+        f32 dx, dy;
+    } kOff[] = {
+        {"heart_n", 25.1f, 0.0f},
+        {"r_k_n", 71.7f, 0.0f},
+        {"juji_n", 7.3f, 1.0f},
+        {"midona_n", -2.1f, 0.0f},  // Midna centred on the d-pad column (TV capture)
+        {"juj_i_n", -2.5f, 0.0f},   // d-pad icon: 4 px right of the TV capture (overlapped "Mini-Map")
+        {"i_text_n", 19.6f, -1.0f},  // "Collection/Save" (measured: 48 px left / 2 px low vs the TV capture)
+        {"m_text_n", 8.3f, 0.0f},
+        {"b_text_n", 3.4f, -1.9f},  // "Attack" (wolf): measured against the Wii U 1920x1080 capture
+    };
+    for (const auto& o : kOff) {
+        if (std::strcmp(o.tag, tag) == 0) {
+            *dx = o.dx;
+            *dy = o.dy;
+            return;
+        }
+    }
+}
+
+void hdRestorePins(J2DScreen* scr) {
+    for (const HdPin& pin : s_hdPins) {
+        if (!pin.valid) {
+            continue;
+        }
+        J2DPane* p = scr->search(hdTag(pin.tag));
+        if (p == NULL) {
+            continue;
+        }
+        p->rotate(0.0f);
+        p->scale(pin.sx, pin.sy);
+        f32 dx = 0.0f;
+        f32 dy = 0.0f;
+        hdPinOffset(pin.tag, &dx, &dy);
+        // Absolute (not relative): a pane that ever got a non-finite translate must not keep it.
+        p->translate(pin.tx + dx, pin.ty + dy);
+    }
+}
+
+void hdSetVisible(J2DScreen* scr, const char* tag, bool v) {
+    J2DPane* p = scr->search(hdTag(tag));
+    if (p != NULL) {
+        if (v) {
+            p->show();
+        } else {
+            p->hide();
+        }
+    }
+}
+
+void hdSetAlpha(J2DScreen* scr, const char* tag, u8 a) {
+    J2DPane* p = scr->search(hdTag(tag));
+    if (p != NULL) {
+        p->setAlpha(a);
+    }
+}
+
+// Wii U initButton (0x02a2b2fc) + TV/Pro Controller mode switch (0x02a376e4).
+void hdApplyWiiUVisibility(J2DScreen* scr) {
+    hdSetAlpha(scr, "c_text_n", 0);
+    hdSetAlpha(scr, "Mapp", 0);
+    hdSetAlpha(scr, "juji_btn", 0xFF);
+    hdSetAlpha(scr, "juji_bt1", 0xFF);
+    static const char* const kOff[] = {"itmBtn_3", "itemBox3", "itemBox4",
+                                       "cont_ju3", "cont_ju4", "ju_ring4",
+                                       "j_light1"};
+    for (const char* t : kOff) {
+        hdSetVisible(scr, t, false);
+    }
+    hdSetVisible(scr, "L_btn", true);
+    hdSetVisible(scr, "atkBtnCP", true);
+}
+
+void hdTagStr(u64 tag, char* out) {
+    int n = 0;
+    for (int s = 56; s >= 0; s -= 8) {
+        const char c = static_cast<char>((tag >> s) & 0xFF);
+        if (c != 0) {
+            out[n++] = c;
+        }
+    }
+    out[n] = 0;
+}
+
+// Logs every pane that is drawn (visible chain, alpha > 0) with its on-screen box in 780x448
+// layout units, so stray elements on a screenshot can be identified.
+// Counter of the TPHD R item slot, drawn like the X/Y counters (same item rules as
+// dMeter2_c::moveButtonXY: bombs/bees by select num, arrows, slingshot seeds, bomb arrows).
+f32 hdCfgCount(int slot, bool y);
+f32 hdCountSize();
+f32 hdCountStep();
+#define kHdCountSize hdCountSize()
+#define kHdCountStep hdCountStep()
+bool hdCountPos(J2DScreen* scr, int slot, int nd, f32* x, f32* y);
+// Effective opacity (0..1) of a HUD pane: 0 if it or any ancestor is hidden, otherwise the product
+// of the alphas up the tree. The ammo digits are separate J2DPictures drawn after the screen, so
+// they must follow this themselves or they stay on screen over the sub menus.
+f32 hdChainAlpha(J2DPane* p) {
+    f32 a = 1.0f;
+    for (; p != NULL; p = p->getParentPane()) {
+        if (!p->isVisible()) {
+            return 0.0f;
+        }
+        a *= p->getAlpha() / 255.0f;
+    }
+    return a;
+}
+
+void hdDrawRSlotNum(J2DScreen* scr) {
+    static J2DPicture* s_num[3] = {};
+    J2DPane* node = scr->search(hdTag("item_r_n"));
+    J2DPane* pic = scr->search(hdTag("r_itm_p"));
+    if (node == NULL || pic == NULL || !node->isVisible() || !pic->isVisible() ||
+        daPy_py_c::checkNowWolf()) {
+        return;
+    }
+    const f32 chainA = hdChainAlpha(pic);
+    if (chainA <= 0.01f) {
+        return;
+    }
+    const u8 item = dComIfGp_getSelectItem(3);
+    int num = -1;
+    int max = 0;
+    switch (item) {
+    case 0x50: case 0x70: case 0x71: case 0x72: case 0x76:
+        num = dComIfGp_getSelectItemNum(3);
+        max = dComIfGp_getSelectItemMaxNum(3);
+        break;
+    case 0x43: case 0x53: case 0x54: case 0x55: case 0x56: case 0x5A:
+        num = dComIfGs_getArrowNum();
+        max = dComIfGs_getArrowMax();
+        break;
+    case 0x4B:
+        num = dComIfGs_getPachinkoNum();
+        max = dComIfGs_getPachinkoMax();
+        break;
+    case 0x59:
+        num = std::min<int>(dComIfGp_getSelectItemNum(3), dComIfGs_getArrowNum());
+        max = std::max<int>(dComIfGp_getSelectItemMaxNum(3), dComIfGs_getArrowMax());
+        break;
+    default:
+        return;
+    }
+    if (num > max) {
+        num = max;
+    }
+    if (s_num[0] == NULL) {
+        ResTIMG* t = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource(
+            'TIMG', dMeter2Info_getNumberTextureName(0));
+        for (int i = 0; i < 3; i++) {
+            s_num[i] = JKR_NEW J2DPicture(t);
+        }
+    }
+    JUtility::TColor black, white;
+    if (num == max) {
+        black.set(30, 30, 30, 0);
+        white.set(255, 200, 50, 255);
+    } else if (num == 0) {
+        black.set(30, 30, 30, 0);
+        white.set(180, 180, 180, 255);
+    } else {
+        black.set(0, 0, 0, 0);
+        white.set(255, 255, 255, 255);
+    }
+    const int nd = num >= 100 ? 3 : 2;
+    const int digits[3] = {nd == 3 ? num / 100 : (num / 10) % 10, nd == 3 ? (num / 10) % 10 : num % 10,
+                           num % 10};
+    const Vec v3 = pic->getGlbVtx(3);
+    const f32 sz = 7.6f;
+    for (int j = 0; j < nd; j++) {
+        s_num[j]->changeTexture((ResTIMG*)dComIfGp_getMain2DArchive()->getResource(
+                                    'TIMG', dMeter2Info_getNumberTextureName(digits[j])),
+                                0);
+        s_num[j]->setBlackWhite(black, white);
+        s_num[j]->setAlpha(static_cast<u8>(255.0f * chainA));
+        f32 cx, cy;
+        if (hdCountPos(scr, 2, nd, &cx, &cy)) {
+            s_num[j]->draw(cx + kHdCountStep * j, cy, kHdCountSize, kHdCountSize, false, false, false);
+        } else {
+            s_num[j]->draw(v3.x + 1.0f - sz * (nd - j), v3.y - sz - 1.0f, sz, sz, false, false, false);
+        }
+    }
+}
+
+void hdDumpVisible(J2DPane* p, bool chainVisible, u8 chainAlpha, int depth) {
+    for (J2DPane* c = p->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+        const bool vis = chainVisible && c->isVisible();
+        const u8 a = static_cast<u8>(chainAlpha * c->getAlpha() / 255);
+        if (vis && a > 0 && c->getTypeID() != 16) {
+            char name[9];
+            hdTagStr(c->mInfoTag, name);
+            const Vec v0 = c->getGlbVtx(0);
+            const Vec v3 = c->getGlbVtx(3);
+            if (c->getTypeID() == 19) {
+                J2DTextBox* tb = static_cast<J2DTextBox*>(c);
+                char ui[9];
+                hdTagStr(c->getUserInfo(), ui);
+            } else {
+            }
+        }
+        if (vis && a > 0) {
+            hdDumpVisible(c, vis, a, depth + 1);
+        }
+    }
+}
+
+// ---- confighud.txt -------------------------------------------------------------------------
+// One line per element: "name dx dy". Offsets are added to the current (default) position, in
+// layout units (+x right, +y down). Lines starting with # are ignored. The file lives in the
+// Dusklight config folder and is re-read automatically when it changes (no restart needed).
+struct HdCfgEntry {
+    const char* key;
+    const char* tag[2];  // panes moved together (second may be NULL)
+    f32 dx = 0.0f, dy = 0.0f;
+    f32 sc = 1.0f;  // optional 4th value: scale multiplier
+    f32 baseS[2] = {1, 1}, lastS[2] = {0, 0};
+    // bookkeeping: what was added to the pane and where the pane was left
+    J2DPane* pane[2] = {NULL, NULL};
+    f32 appX[2] = {0, 0}, appY[2] = {0, 0}, lastX[2] = {0, 0}, lastY[2] = {0, 0};
+    bool has[2] = {false, false};
+};
+
+HdCfgEntry g_hdCfg[] = {
+    // icons on the buttons
+    {"x_icon", {"x_itm_p", NULL}},
+    {"y_icon", {"y_itm_p", NULL}},
+    {"b_icon", {"b_itm_p", NULL}},
+    {"r_icon", {"r_itm_p", NULL}},
+    {"wolf_attack_icon", {"WolfAtk", "WolfAtk2"}},
+    {"wolf_dig_icon", {"WolfDig", "WolfDig2"}},
+    {"wolf_sense_icon", {"smell", NULL}},
+    // texts on the buttons
+    {"a_text", {"a_text_n", NULL}},
+    {"b_text", {"b_text_n", NULL}},
+    {"x_text", {"x_text_n", NULL}},
+    {"y_text", {"y_text_n", NULL}},
+    {"z_text", {"z_text_n", NULL}},
+    // item counters (arrows, bombs, seeds...)
+    {"x_count", {NULL, NULL}},
+    {"y_count", {NULL, NULL}},
+    {"r_count", {NULL, NULL}},
+    // digit size / spacing of the counters (0 = default)
+    {"count_size", {NULL, NULL}},
+};
+
+// Values tuned in-game with confighud.txt (TV captures of TPHD). They are the defaults: used when
+// the file is missing (it is then written with them) or a line is absent. File values replace them.
+struct HdCfgDefault {
+    const char* key;
+    f32 dx, dy, sc;
+};
+const HdCfgDefault kHdCfgDefaults[] = {
+    {"x_icon", 0.0f, 2.0f, 1.0f},     {"y_icon", 1.0f, 1.0f, 1.0f},
+    {"b_icon", -1.75f, -1.5f, 1.0f},  {"r_icon", 0.0f, 12.0f, 1.0f},
+    {"a_text", 0.8f, 0.0f, 1.0f},     {"b_text", -2.5f, 2.0f, 1.0f},
+    {"x_text", 1.0f, 0.0f, 1.0f},     {"y_text", 1.0f, 0.0f, 1.0f},
+    {"x_count", -1.3f, 0.0f, 1.0f},   {"y_count", -1.0f, -1.0f, 1.0f},
+    {"r_count", 4.0f, 5.0f, 1.0f},    {"count_size", 8.5f, 8.0f, 1.0f},
+};
+
+void hdCfgSetDefaults() {
+    for (HdCfgEntry& e : g_hdCfg) {
+        e.dx = e.dy = 0.0f;
+        e.sc = 1.0f;
+        for (const HdCfgDefault& d : kHdCfgDefaults) {
+            if (std::strcmp(d.key, e.key) == 0) {
+                e.dx = d.dx;
+                e.dy = d.dy;
+                e.sc = d.sc;
+            }
+        }
+    }
+}
+
+f32 hdCountSize() {
+    return g_hdCfg[15].dx > 0.0f ? g_hdCfg[15].dx : 8.5f;
+}
+f32 hdCountStep() {
+    return g_hdCfg[15].dy > 0.0f ? g_hdCfg[15].dy : 8.0f;
+}
+
+f32 hdCfgCount(int slot, bool y) {  // slot 0 = X, 1 = Y, 2 = R
+    const HdCfgEntry& e = g_hdCfg[12 + slot];
+    return y ? e.dy : e.dx;
+}
+
+void hdCfgLoad() {
+    static std::filesystem::file_time_type s_stamp{};
+    static bool s_init = false;
+    static int s_tick = 0;
+    if (s_init && (++s_tick % 30) != 0) {
+        return;
+    }
+    const std::filesystem::path path = dusk::ConfigPath / "confighud.txt";
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        if (FILE* f = std::fopen(path.string().c_str(), "w")) {
+            std::fputs("# confighud: name dx dy [scale]  (dx/dy added to the default position, layout units;\n"
+                       "# +x right, +y down; scale multiplies the default size, 1 = unchanged)\n", f);
+            hdCfgSetDefaults();
+            for (const HdCfgEntry& e : g_hdCfg) {
+                std::fprintf(f, "%s %g %g %g\n", e.key, e.dx, e.dy, e.sc);
+            }
+            std::fclose(f);
+        }
+    }
+    const auto stamp = std::filesystem::last_write_time(path, ec);
+    if (ec || (s_init && stamp == s_stamp)) {
+        s_init = true;
+        return;
+    }
+    s_init = true;
+    s_stamp = stamp;
+    if (FILE* f = std::fopen(path.string().c_str(), "r")) {
+        hdCfgSetDefaults();
+        char line[256];
+        while (std::fgets(line, sizeof(line), f)) {
+            char name[64];
+            float dx, dy, sc = 1.0f;
+            if (line[0] != '#' && std::sscanf(line, "%63s %f %f %f", name, &dx, &dy, &sc) >= 3) {
+                for (HdCfgEntry& e : g_hdCfg) {
+                    if (std::strcmp(e.key, name) == 0) {
+                        e.dx = dx;
+                        e.dy = dy;
+                        e.sc = sc > 0.05f ? sc : 1.0f;
+                    }
+                }
+            }
+        }
+        std::fclose(f);
+    }
+}
+
+// Item icons on X / Y / R. The Wii U HUD keeps the lower right corner of an item icon at a fixed
+// point next to its badge, so icons of any size grow up / left from there (TV captures: X items
+// end ~22 px right / 12 px below the X badge centre, Y items ~8 px right / 24 px below). The GC
+// logic centres them instead, so the corner is re-anchored here every frame. The confighud
+// values x_icon / y_icon / r_icon move that corner (canvas units, ~2.4 px at 1080p) and scale the
+// icon.
+struct HdAnchor {
+    int cfg;            // index in g_hdCfg
+    const char* item;
+    const char* badge;
+    f32 ax, ay;         // corner relative to the badge centre, canvas units
+    f32 baseS = 1.0f, lastS = 0.0f;
+    f32 lastTx = 0.0f, lastTy = 0.0f;  // translate the pane was drawn with last frame
+    bool has = false;
+    J2DPane* pane = NULL;  // the meter screen is rebuilt on stage changes
+    int wait = 0;          // frames until the new pane has valid global matrices (drawn once)
+};
+HdAnchor g_hdAnchor[] = {
+    {0, "x_itm_p", "itmBtn_1", 9.2f, 5.0f},
+    {1, "y_itm_p", "itmBtn_2", 3.3f, 10.0f},
+    {3, "r_itm_p", "itmBtn_4", 9.2f, 5.0f},
+};
+
+Vec hdCenter(J2DPane* q) {
+    const Vec a = q->getGlbVtx(0);
+    const Vec b = q->getGlbVtx(3);
+    return Vec{(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, 0.0f};
+}
+
+void hdAnchorItems(J2DScreen* scr) {
+    for (HdAnchor& a : g_hdAnchor) {
+        J2DPane* p = scr->search(hdTag(a.item));
+        J2DPane* b = scr->search(hdTag(a.badge));
+        if (p == NULL || b == NULL || p->getWidth() <= 0.0f) {
+            continue;
+        }
+        if (p != a.pane) {
+            // New meter screen (stage change): its global matrices are not valid until the
+            // screen has been drawn once, and the previous frame state belongs to the old pane.
+            a.pane = p;
+            a.has = false;
+            a.lastS = 0.0f;
+            a.wait = 2;
+        }
+        if (a.wait > 0) {
+            a.wait--;
+            continue;
+        }
+        const HdCfgEntry& c = g_hdCfg[a.cfg];
+        if (p->getScaleX() != a.lastS) {
+            a.baseS = p->getScaleX();  // the game set a new scale
+        }
+        p->scale(a.baseS * c.sc, a.baseS * c.sc);
+        a.lastS = p->getScaleX();
+        // The global matrices are those of the last draw: correct the corner for any translate
+        // change made since then (game logic / pins reset the pane every frame).
+        const Vec bc = hdCenter(b);
+        const Vec v0 = p->getGlbVtx(0);
+        Vec v3 = p->getGlbVtx(3);
+        // global units per local unit of the parent
+        const f32 k = (v3.x - v0.x) / (p->getWidth() * p->getScaleX());
+        if (!(k > 0.0f) || !std::isfinite(k) || !std::isfinite(v3.x) || !std::isfinite(v3.y) ||
+            !std::isfinite(bc.x) || !std::isfinite(bc.y)) {
+            a.has = false;
+            continue;
+        }
+        if (a.has) {
+            v3.x += (p->getTranslateX() - a.lastTx) * k;
+            v3.y += (p->getTranslateY() - a.lastTy) * k;
+        }
+        const f32 tx = bc.x + a.ax + c.dx;
+        const f32 ty = bc.y + a.ay + c.dy;
+        const f32 ddx = (tx - v3.x) / k;
+        const f32 ddy = (ty - v3.y) / k;
+        if (!std::isfinite(ddx) || !std::isfinite(ddy) || std::fabs(ddx) > 1000.0f ||
+            std::fabs(ddy) > 1000.0f) {
+            a.has = false;
+            continue;
+        }
+        p->add(ddx, ddy);
+        a.lastTx = p->getTranslateX();
+        a.lastTy = p->getTranslateY();
+        a.has = true;
+    }
+}
+
+// Item counters: centred under the badge like on Wii U (digits ~16 px tall, ~13 px apart).
+bool hdCountPos(J2DScreen* scr, int slot, int nd, f32* x, f32* y) {
+    static const char* const kBadge[3] = {"itmBtn_1", "itmBtn_2", "itmBtn_4"};
+    J2DPane* b = scr->search(hdTag(kBadge[slot]));
+    if (b == NULL) {
+        return false;
+    }
+    const Vec c = hdCenter(b);
+    *x = c.x - kHdCountStep * nd * 0.5f - (kHdCountSize - kHdCountStep) * 0.5f + hdCfgCount(slot, false);
+    *y = c.y + 3.0f + hdCfgCount(slot, true);
+    return true;
+}
+
+// Called last in hdRevoFrame: whatever the game / bridge did to the pane this frame (reset to its
+// default position, or left where the previous frame put it) is detected and the offset is
+// re-applied on top, so the file values are always relative to the default position.
+void hdCfgApply(J2DScreen* scr) {
+    hdCfgLoad();
+    for (HdCfgEntry& e : g_hdCfg) {
+        if (&e == &g_hdCfg[0] || &e == &g_hdCfg[1] || &e == &g_hdCfg[3]) {
+            continue;  // item icons: hdAnchorItems
+        }
+        for (int i = 0; i < 2; i++) {
+            if (e.tag[i] == NULL) {
+                continue;
+            }
+            J2DPane* p = scr->search(hdTag(e.tag[i]));
+            if (p == NULL) {
+                continue;
+            }
+            if (p != e.pane[i]) {
+                e.pane[i] = p;
+                e.has[i] = false;
+                e.appX[i] = e.appY[i] = 0.0f;
+            }
+            if (e.has[i] && (p->getTranslateX() != e.lastX[i] || p->getTranslateY() != e.lastY[i])) {
+                e.appX[i] = e.appY[i] = 0.0f;  // the pane was moved by someone else
+            }
+            p->add(e.dx - e.appX[i], e.dy - e.appY[i]);
+            // scale: the game sets its own scale now and then; take that as the new base
+            if (p->getScaleX() != e.lastS[i]) {
+                e.baseS[i] = p->getScaleX();
+            }
+            if (e.sc != 1.0f || e.lastS[i] != 0.0f) {
+                p->scale(e.baseS[i] * e.sc, e.baseS[i] * e.sc);
+                e.lastS[i] = p->getScaleX();
+            }
+            e.appX[i] = e.dx;
+            e.appY[i] = e.dy;
+            e.lastX[i] = p->getTranslateX();
+            e.lastY[i] = p->getTranslateY();
+            e.has[i] = true;
+        }
+    }
+}
+
+// Some Revo pictures ignore their pane alpha: their material takes alpha from the vertex colours
+// without the "material alpha calc" flag (badges), or they do not inherit the alpha of their
+// parents (Mapp, R slot). Make the pane alpha and the HUD fade (alpha of `stop`, e.g. cont_n)
+// reach them: alpha calc on, and every pane between them and `stop` alpha-influenced.
+// NOTE: their parent nodes are transparent in the blo (the panes do not inherit on purpose), so
+// the HUD fade is applied by hand: hdHudFade() = alpha of n_all * alpha of cont_n.
+void hdAlphaCalcOn(J2DScreen* scr, const char* tag) {
+    J2DPane* p = scr->search(hdTag(tag));
+    if (p != NULL && p->getTypeID() == 18) {
+        if (J2DMaterial* m = static_cast<J2DPicture*>(p)->getMaterial()) {
+            m->mMaterialAlphaCalc = 1;
+        }
+    }
+}
+
+f32 hdHudFade(J2DScreen* scr) {
+    f32 r = 1.0f;
+    for (const char* t : {"n_all", "cont_n"}) {
+        if (J2DPane* p = scr->search(hdTag(t))) {
+            r *= p->getAlpha() / 255.0f;
+        }
+    }
+    return r;
+}
+
+// Per-frame Wii U visibility rules that have no GameCube counterpart.
+void hdRevoFrame(J2DScreen* scr) {
+    hdApplyWiiUHio();
+    hdRestorePins(scr);
+    // The Wii U third item slot (itm_2 + its badge/glow) does not exist in the GC game.
+    static const char* const kOff[] = {"itmBtn_3"};
+    // ZL badge follows the Midna icon.
+    if (J2DPane* zl = scr->search(hdTag("L_btn"))) {
+        J2DPane* mid = scr->search(hdTag("midona_n"));
+        const bool on = mid != NULL && mid->isVisible() && mid->getAlpha() > 0;
+        zl->show();
+        zl->setAlpha(on ? mid->getAlpha() : 0);
+    }
+    for (const char* t : kOff) {
+        J2DPane* p = scr->search(hdTag(t));
+        if (p != NULL) {
+            p->setAlpha(0);
+        }
+    }
+    // Wii (Remote) layout parts that the Wii U TV/Pro HUD never shows but the GC logic drives.
+    static const char* const kWiiOnly[] = {
+        "xbtn_n", "ybtn_n", "rbtn_n", "j_ya_n", "tri_Null", "juji_cp", "map_n", "item_n",
+        "do_btn", "atk_btn", "b_text_a", "b_text_b", "b_text_s", "b_texb_s", "b_text_x",
+        "b_text_y", "b_texr_r", "r_btn", "n_ganon0", "rupi_s", "r_n_1_s", "r_n_2_s", "r_n_3_s",
+        "r_n_4_s", "itemBox1", "itemBox2", "itemBox3", "itemBox4", "bac_bt_n", "a_btn_l",
+        "x_btn_l", "y_btn_l", "b_light1", "b_lights",
+        // found with the HDVIS dump: Wii Remote d-pad cluster, wolf action icons, rings,
+        // GC d-pad pieces and captions the TV/Pro HUD does not show
+        "j_scal_n", "ju_ring1",
+        "ju_ring2", "ju_ring3", "ju_ring5", "ju_ring6", "ju_ring7", "ju_ring8", "ju_p_n",
+        "cont_j01", "cont_j10", "cross", "cont_j12", "cont_j13",
+    };
+    for (const char* t : kWiiOnly) {
+        J2DPane* p = scr->search(hdTag(t));
+        if (p != NULL) {
+            p->hide();
+        }
+    }
+    // Wolf action icons. They sit on the B / X / Y slots in zelda_game_image_revo.blo; the TV/Pro
+    // mode switch (0x02a376e4) enables them and the button logic decides each frame:
+    //  - WolfAtk/WolfAtk2 (B): drawButtonB (0x02a2a2e0) shows them when Link is a wolf and the B
+    //    action is not 0x2a / 0x27.
+    //  - smell (X) / WolfDig (Y): shown with the wolf "Sense" (R action) and "Dig" captions.
+    {
+        const bool wolf = daPy_py_c::checkNowWolf();
+        const u8 bAct = dComIfGp_getAStatus();
+        const bool atk = wolf && bAct != 0x2a && bAct != 0x27;
+        auto captionOn = [&](const char* group, const char* box) {
+            J2DPane* g = scr->search(hdTag(group));
+            J2DPane* b = scr->search(hdTag(box));
+            if (g == NULL || b == NULL || !g->isVisible() || b->getTypeID() != 19) {
+                return false;
+            }
+            const char* str = static_cast<J2DTextBox*>(b)->getStringPtr();
+            return str != NULL && str[0] != '\0';
+        };
+        const bool sense = wolf && captionOn("z_text_n", "cont_rt");
+        const bool dig = wolf && captionOn("y_text_n", "cont_yt5");
+        hdSetVisible(scr, "WolfAtk", atk);
+        hdSetVisible(scr, "WolfAtk2", atk);
+        hdSetVisible(scr, "smell", sense);
+        // TPHD dMeter2Draw_c keeps "smell" as the item pane of this slot (ctor 0x02a2892c stores it
+        // in the item-pane table), so the collected scent (dComIfGs_getCollectSmell) is drawn in
+        // it like an item icon; with no scent it keeps the blo's swirl texture.
+        {
+            static alignas(32) u8 s_smellTex[0xC00];
+            static J2DPane* s_smellPane = NULL;
+            static const ResTIMG* s_smellDefault = NULL;
+            static u8 s_smell = 0xFE;
+            J2DPane* sp = scr->search(hdTag("smell"));
+            if (sp != NULL && sp->getTypeID() == 18) {
+                J2DPicture* pic = static_cast<J2DPicture*>(sp);
+                if (sp != s_smellPane) {
+                    s_smellPane = sp;
+                    s_smell = 0xFE;
+                    s_smellDefault =
+                        pic->getTexture(0) != NULL ? pic->getTexture(0)->getTexInfo() : NULL;
+                }
+                const u8 smell = dComIfGs_getCollectSmell();
+                if (smell != s_smell) {
+                    s_smell = smell;
+                    if (smell != dItemNo_NONE_e && smell != 0) {
+                        dMeter2Info_readItemTexture(smell, s_smellTex, pic, NULL, NULL, NULL, NULL,
+                                                    NULL, NULL, -1);
+                    } else if (s_smellDefault != NULL) {
+                        pic->changeTexture(s_smellDefault, 0);
+                    }
+                    const ResTIMG* t = reinterpret_cast<const ResTIMG*>(s_smellTex);
+                }
+                // Something re-applies the blo texture (pane rebuilt by the Revo attach / HIO):
+                // keep the scent on it.
+                if (smell != dItemNo_NONE_e && smell != 0 && pic->getTexture(0) != NULL &&
+                    pic->getTexture(0)->getTexInfo() != reinterpret_cast<const ResTIMG*>(s_smellTex)) {
+                    static int s_warn = 0;
+                    if (s_warn++ < 3) {
+                    }
+                    pic->changeTexture(reinterpret_cast<const ResTIMG*>(s_smellTex), 0);
+                }
+            }
+        }
+        hdSetVisible(scr, "WolfDig", dig);
+        hdSetVisible(scr, "WolfDig2", dig);
+    }
+    // TPHD R item slot (select-item index 3, assigned with the "Use Item (R slot)" binding in the
+    // item ring). The GC logic has no such slot: its R pane (r_itm_p = itm_4_p) only carries the
+    // wolf scent and drawButtonR hides item_r_n, so the bridge drives it here.
+    {
+        static alignas(32) u8 s_rTex[2][0xC00];
+        static int s_rBuf = 0;
+        static u8 s_rItem = 0xFE;
+        dComIfGp_setSelectItem(3);
+        u8 item = dComIfGp_getSelectItem(3);
+        if (item == dItemNo_LIGHT_ARROW_e) {
+            item = dItemNo_BOW_e;
+        }
+        J2DPane* node = scr->search(hdTag("item_r_n"));
+        J2DPane* pic = scr->search(hdTag("r_itm_p"));
+        // The meter screen is rebuilt on every stage change (entering a house...): its fresh
+        // r_itm_p shows the blo's default texture (green rupee) until the icon is loaded again.
+        static J2DPane* s_rPic = NULL;
+        if (pic != s_rPic) {
+            s_rPic = pic;
+            s_rItem = 0xFE;
+        }
+        if (node != NULL && pic != NULL && pic->getTypeID() == 18) {
+            // Item 0 (green rupee) is never an equippable item: the GC XY code hides it too.
+            const bool on = !daPy_py_c::checkNowWolf() && item != dItemNo_NONE_e && item != 0;
+            {
+                static int s_rLogItem = -2;
+                const int cur = on ? item : -1;
+                if (cur != s_rLogItem) {
+                    s_rLogItem = cur;
+                }
+            }
+            if (on) {
+                J2DPicture* p = static_cast<J2DPicture*>(pic);
+                // A rebuilt screen (houses, shops...) can get the same pane address back, with the
+                // blo's default green rupee texture: reload whenever the pane does not show ours.
+                static int s_rCheckWait = 0;
+                if (s_rCheckWait > 0) {
+                    s_rCheckWait--;
+                } else if (item == s_rItem) {
+                    const JUTTexture* cur = p->getTexture(0);
+                    if (cur == NULL ||
+                        cur->getTexInfo() != reinterpret_cast<const ResTIMG*>(s_rTex[s_rBuf])) {
+                        s_rItem = 0xFE;
+                        s_rCheckWait = 30;  // never reload more than twice a second
+                    }
+                }
+                if (item != s_rItem) {
+                    s_rBuf ^= 1;
+                    static alignas(32) u8 s_rTex2[2][0xC00];
+                    J2DPane* pp = scr->search(hdTag("r_itm_pp"));
+                    J2DPicture* p2 = (pp != NULL && pp->getTypeID() == 18) ? static_cast<J2DPicture*>(pp) : NULL;
+                    const int nTex = dMeter2Info_readItemTexture(item, s_rTex[s_rBuf], p,
+                                                                 p2 ? s_rTex2[s_rBuf] : NULL, p2, NULL,
+                                                                 NULL, NULL, NULL, -1);
+                    if (pp != NULL) {
+                        if (nTex > 1) {
+                            pp->show();
+                            pp->setAlpha(255);
+                        } else {
+                            pp->hide();
+                        }
+                    }
+                    s_rItem = item;
+                    // Same sizing rule as changeTextureItemXY (48 px icons at 100 %); the second
+                    // layer (r_itm_pp, created from the pane's default rupee texture) gets the same
+                    // size, like mpItemXYPane[i] does for X / Y.
+                    const ResTIMG* t = reinterpret_cast<const ResTIMG*>(s_rTex[s_rBuf]);
+                    const f32 sc = dItem_data::getTexScale(item) / 100.0f;
+                    const f32 rw = sc * t->width * 26.0f / 48.0f;
+                    const f32 rh = sc * t->height * 26.0f / 48.0f;
+                    p->resize(rw, rh);
+                    if (pp != NULL) {
+                        pp->resize(rw, rh);
+                    }
+                }
+                // Position: see hdAnchorItems (run at the end of the frame).
+                // The Revo blo panes of this slot are not flagged as alpha-influenced; follow the
+                // HUD fade like the X / Y icons do.
+                pic->setInfluencedAlpha(true, false);
+                if (J2DPane* pp = scr->search(hdTag("r_itm_pp"))) {
+                    pp->setInfluencedAlpha(true, false);
+                }
+                node->show();
+                pic->show();
+                pic->setAlpha(255);
+            } else {
+                // Empty slot: nothing of it may be drawn (hidden and fully transparent, so no
+                // other code path can bring back the default rupee texture of the blo).
+                pic->hide();
+                pic->setAlpha(0);
+                if (J2DPane* pp = scr->search(hdTag("r_itm_pp"))) {
+                    pp->hide();
+                    pp->setAlpha(0);
+                }
+                s_rItem = 0xFE;  // reload the icon (and its second layer) when the slot is used again
+            }
+        }
+    }
+    // Map icon above the d-pad (Mapp): TPHD dMeter2_c (0x02a1e304) shows it whenever the stage
+    // allows the map, i.e. the stag info "up button" field (stag info +0xa & 7, the same one the
+    // GC dMeterMap_c::isMapOpenCheck reads) is not 2 or 7 (0x02a52020 / 0x02a52118). The pane is
+    // faded by the same HUD alpha as the rest of the d-pad cluster, so it must inherit the alpha
+    // of its parents (the Revo blo does not flag it as influenced).
+    {
+        s32 ub = 7;
+        if (dComIfGp_getStage() != NULL && dComIfGp_getStage()->getStagInfo() != NULL) {
+            ub = dStage_stagInfo_GetUpButton(dComIfGp_getStage()->getStagInfo());
+        }
+        if (J2DPane* mp = scr->search(hdTag("Mapp"))) {
+            mp->setInfluencedAlpha(true, false);
+            mp->setAlpha((ub != 2 && ub != 7) ? 255 : 0);
+        }
+    }
+    // Empty X / Y slot: only the badge is shown.
+    static const char* const kSlot[2] = {"x_itm_p", "y_itm_p"};
+    for (int i = 0; i < 2; i++) {
+        if (dComIfGp_getSelectItem(i) == 0xFF) {
+            J2DPane* p = scr->search(hdTag(kSlot[i]));
+            if (p != NULL) {
+                p->setAlpha(0);
+            }
+        }
+    }
+    // Wii U badges dim (not vanish) when their button cannot be used, like the GC logic does for
+    // its own (hidden here) button panes in setButtonIcon*Alpha: same tests, same dim alpha.
+    // The R badge is not shown for wolf Link (TV captures) and is dim while the slot is empty.
+    {
+        const u8 dim = g_drawHIO.mButtonXYBaseDimAlpha;
+        const bool wolf = daPy_py_c::checkNowWolf();
+        for (const char* t : {"doBtn_cp", "atkBtnCP", "itmBtn_1", "itmBtn_2", "itmBtn_4"}) {
+            hdAlphaCalcOn(scr, t);
+        }
+        const f32 fade = hdHudFade(scr);
+        auto setA = [&](const char* t, u8 a) { hdSetAlpha(scr, t, static_cast<u8>(a * fade)); };
+        // A / B badges: the GC logic fades the button group (cont_n) out during talks and
+        // choices but keeps A / B (abtn_n / bbtn_n, setAlphaButtonAAnimeMax) and their captions;
+        // in the Revo blo the badges sit under cont_n, so they follow n_all * abtn_n / bbtn_n.
+        auto btnFade = [&](const char* grp) {
+            f32 r = 1.0f;
+            if (J2DPane* p = scr->search(hdTag("n_all"))) {
+                r *= p->getAlpha() / 255.0f;
+            }
+            if (J2DPane* p = scr->search(hdTag(grp))) {
+                r *= p->getAlpha() / 255.0f;
+            }
+            return r;
+        };
+        const f32 fadeA = btnFade("abtn_n");
+        const f32 fadeB = btnFade("bbtn_n");
+        hdSetAlpha(scr, "doBtn_cp",
+                   static_cast<u8>(((hdUse(1) || dComIfGp_isDoSetFlag(4)) ? 255 : dim) * fadeA));
+        // B is lit whenever it has a caption (talks, shops: "Quit", "Back"...), like A.
+        bool bCaption = false;
+        if (J2DPane* bt = scr->search(hdTag("b_text_n"))) {
+            if (bt->isVisible()) {
+                if (J2DPane* tb = scr->search(hdTag("cont_bt")); tb != NULL && tb->getTypeID() == 19) {
+                    const char* str = static_cast<J2DTextBox*>(tb)->getStringPtr();
+                    bCaption = str != NULL && str[0] != 0;
+                }
+            }
+        }
+        // Wii U setButtonIconBAlpha (RPX 0x02a347b0): the B badge dims to the HIO base dim alpha
+        // whenever the B bit of isUseButton is clear; it stays lit while it has a caption
+        // (talks, shops: "Quit", "Back"...). In shops, vendor talk keeps B lit constantly.
+        const bool bLit = hdUse(2) || bCaption || dMeter2Info_isShopTalkFlag();
+        hdSetAlpha(scr, "atkBtnCP",
+                   static_cast<u8>((bLit ? 255.0f : static_cast<f32>(dim)) * std::max(fade, fadeB)));
+        if (!wolf) {
+            setA("itmBtn_1", hdUse(4) ? 255 : dim);
+            setA("itmBtn_2", hdUse(8) ? 255 : dim);
+        } else {
+            setA("itmBtn_1", 255);
+            setA("itmBtn_2", 255);
+        }
+        hdSetVisible(scr, "itmBtn_4", !wolf);
+        const u8 ri = dComIfGp_getSelectItem(3);
+        const bool rItem = ri != dItemNo_NONE_e && ri != 0;
+        const bool rUse = rItem && (hdUse(4) || hdUse(8));
+        setA("itmBtn_4", rUse ? 255 : dim);
+        {
+            static int s_dbg = 0;
+            if (++s_dbg % 60 == 0) {
+                J2DPane* b = scr->search(hdTag("atkBtnCP"));
+                J2DPane* r = scr->search(hdTag("itmBtn_4"));
+                J2DPane* na = scr->search(hdTag("n_all"));
+                J2DPane* cn = scr->search(hdTag("cont_n"));
+            }
+        }
+        if (rItem && !wolf) {
+            setA("r_itm_p", rUse ? 255 : g_drawHIO.mButtonXYItemDimAlpha);
+            // r_itm_pp is a child of r_itm_p and inherits its alpha (dim + fade)
+        }
+    }
+    hdCfgApply(scr);
+    hdAnchorItems(scr);
+}
+
+// Logs translate / scale / alpha / global center of key Revo panes every ~4 s (HDREVO lines).
+void hdLogRevo(J2DScreen* scr) {
+    static int s_frames = 0;
+    if (++s_frames % 240 != 0) {
+        return;
+    }
+    static const char* const kTags[] = {
+        "heart_n", "hpb_00", "r_k_n", "rupi_n", "rupi", "r_n_1", "cont_n", "x_itm_p", "y_itm_p",
+        "b_itm_p", "itmBtn_1", "itmBtn_4", "doBtn_cp", "atkBtnCP", "juji_n", "juji_btn",
+        "midona", "cont_ju5", "cont_ju0", "a_text_n", "cont_at", "magic_n", "key_n",
+    };
+    for (const char* t : kTags) {
+        J2DPane* p = scr->search(hdTag(t));
+        if (p == NULL) {
+            continue;
+        }
+        const Vec v0 = p->getGlbVtx(0);
+        const Vec v3 = p->getGlbVtx(3);
+    }
+}
+
+void dTphdRevoAttach(J2DScreen* scr) {
+    // The Revo "y_light" belongs to the Wii Remote layout (off screen); the TV Y slot glow is
+    // j_light, so free the name for the alias.
+    if (J2DPane* wl = scr->search(hdTag("y_light"))) {
+        wl->mInfoTag = hdTag("y_lt_wii");
+    }
+    hdApplyAliases(scr, kHdMainAliases, sizeof(kHdMainAliases) / sizeof(kHdMainAliases[0]));
+    hdGraftTextScreen(scr);
+    if (J2DPane* wrap = scr->search(hdTag("hd_txtw"))) {
+        hdRetireWiiText(wrap);
+    }
+    hdApplyAliases(scr, kHdTextAliases, sizeof(kHdTextAliases) / sizeof(kHdTextAliases[0]));
+    g_hdTextOutline = true;  // Wii U J2DTextBoxEx text rules (outline of 's_01' boxes, TEXC->ONE)
+    for (const HdDummy& d : kHdDummies) {
+        hdAddDummy(scr, d);
+    }
+    // Pro Controller badges: L (Midna) on L_btn, R (extra item slot) on itmBtn_4.
+    hdSwapTex(scr, hdTag("L_btn"), "tr_l_btn_00.bti", 0.0f);  // keep the blo size (35x35)
+    hdSwapTex(scr, hdTag("itmBtn_4"), "tr_r_btn_00.bti", 0.0f);
+    if (J2DPane* zr = scr->search(hdTag("itmBtn_4"))) {
+        zr->show();
+    }
+    hdCapturePins(scr);
+    hdFixTextFonts(scr);
+    hdApplyWiiUHio();
+    hdApplyWiiUVisibility(scr);
+    hdEnsurePictureTexture(scr, "x_itm_p");
+    hdEnsurePictureTexture(scr, "y_itm_p");
+    hdEnsurePictureTexture(scr, "b_itm_p");
+    hdEnsurePictureTexture(scr, "r_itm_p");
+
+
+    // Report every tag the GC HUD code looks up that is still missing.
+    static const char* const kCheck[] = {
+        "n_all", "heart_n", "r_k_n", "key_n", "magic_n", "cont_n", "juji_n", "midona_n",
+        "x_btn", "y_btn", "a_btn", "b_btn", "zbtn", "a_text_n", "b_text_n", "x_text_n", "y_text_n",
+        "cont_at", "cont_bt", "cont_xt1", "cont_yt1", "cont_zt1", "i_text_n", "m_text_n",
+        "x_itm_p", "y_itm_p", "b_itm_p", "r_itm_p", "x_light", "y_light", "r_light",
+        "abtn_n", "bbtn_n", "xbtn_n", "ybtn_n", "zbtn_n", "uzu_n",
+    };
+    for (const char* t : kCheck) {
+        if (scr->search(hdTag(t)) == NULL) {
+            DuskLog.warn("HDHUD: pane '{}' still missing after Revo attach", t);
+        }
+    }
+}
+
 }  // namespace
 
 #include "d_meter2_draw_vdt.inc"
@@ -116,9 +1630,37 @@ dMeter2Draw_c::dMeter2Draw_c(JKRExpHeap* mp_heap) {
 
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpScreen != NULL);
-    bool fg = mpScreen->setPriority("zelda_game_image.blo", 0x20000, dComIfGp_getMain2DArchive());
+    bool fg = false;
+#if TARGET_PC
+    bool hdRevo = false;
+    s_hdRevoHud = false;
+    if (dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL) {
+        fg = mpScreen->setPriority("zelda_game_image_revo.blo", 0x20000,
+                                   g_tphdMain2DRevoArchive);
+        if (fg) {
+            hdRevo = true;
+            s_hdRevoHud = true;
+        } else {
+            DuskLog.warn("HDHUD: zelda_game_image_revo.blo failed to load, using GC layout");
+            JKR_DELETE(mpScreen);
+            mpScreen = JKR_NEW J2DScreen();
+        }
+    }
+    if (!hdRevo)
+#endif
+    {
+        fg = mpScreen->setPriority("zelda_game_image.blo", 0x20000, dComIfGp_getMain2DArchive());
+    }
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpScreen);
+
+#if TARGET_PC
+    if (hdRevo) {
+        dTphdRevoAttach(mpScreen);
+    } else if (dusk::tphd_active()) {
+        dApplyTphdHudLayout(mpScreen);
+    }
+#endif
 
     mpScreen->search(MULTI_CHAR('ju_ring5'))->hide();
     field_0x73c = 0.0f;
@@ -130,8 +1672,23 @@ dMeter2Draw_c::dMeter2Draw_c(JKRExpHeap* mp_heap) {
 
     mpKanteraScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpKanteraScreen != NULL);
+#if TARGET_PC
+    // Wii U ctor (0x02a2xxxx, hud_dMeter2Draw.c line ~5841) loads it from DAT_1014b534 =
+    // main2DR: there magic_n sits at (236, 30), centred at the top of the screen (GC (38, 53),
+    // under the hearts).
+    JKRArchive* kanteraArc = dComIfGp_getMain2DArchive();
+    s_hdKanteraRevo = false;
+    if (dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL &&
+        JKRGetNameResource("zelda_game_image_kantera.blo", g_tphdMain2DRevoArchive) != NULL)
+    {
+        kanteraArc = g_tphdMain2DRevoArchive;
+        s_hdKanteraRevo = true;
+    }
+    fg = mpKanteraScreen->setPriority("zelda_game_image_kantera.blo", 0x20000, kanteraArc);
+#else
     fg = mpKanteraScreen->setPriority("zelda_game_image_kantera.blo", 0x20000,
                                       dComIfGp_getMain2DArchive());
+#endif
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpKanteraScreen);
 
@@ -196,7 +1753,7 @@ dMeter2Draw_c::dMeter2Draw_c(JKRExpHeap* mp_heap) {
 
     J2DTextBox::TFontSize font_size;
 #if TARGET_PC || VERSION != VERSION_GCN_JPN
-    IF_DUSK_BLOCK(!dusk::version::isRegionJpn())
+    IF_DUSK_BLOCK(!dusk::version::isRegionJpn() && !s_hdRevoHud)  // Wii U keeps the layout's sizes
     font_size.mSizeX = 17.0f;
     font_size.mSizeY = 20.0f;
     for (int i = 0; i < 5; i++) {
@@ -239,6 +1796,13 @@ dMeter2Draw_c::~dMeter2Draw_c() {
 
     JKR_DELETE(mpScreen);
     mpScreen = NULL;
+#if TARGET_PC
+    if (s_hdTextScreen != NULL) {
+        JKR_DELETE(s_hdTextScreen);
+        s_hdTextScreen = NULL;
+    }
+    s_hdRevoHud = false;
+#endif
 
     JKR_DELETE(mpKanteraScreen);
     mpKanteraScreen = NULL;
@@ -505,7 +2069,7 @@ void dMeter2Draw_c::init() {
     }
 
     field_0x61c = 0.0f;
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < DUSK_IF_ELSE((dusk::tphd_active() ? 12 : 16), 16); i++) {
         field_0x62c[i] = 0.0f;
         field_0x66c[i] = 0.0f;
     }
@@ -650,13 +2214,19 @@ void dMeter2Draw_c::exec(u32 i_status) {
         f32 ringPosX = g_drawHIO.mRingHUDButtonsPosX;
         f32 ringPosY = g_drawHIO.mRingHUDButtonsPosY;
         dAnchorHudScale(mpButtonParent, HudCorner::TopRight, &ringPosX, &ringPosY);
+        if (dusk::tphd_active()) {
+            // Wii U keeps the button cluster where it is while the item ring is open.
+            ringPosX = 0.0f;
+            ringPosY = 0.0f;
+        }
         if (mButtonsPosX != ringPosX || mButtonsPosY != ringPosY) {
             mButtonsPosX = ringPosX;
             mButtonsPosY = ringPosY;
             mpButtonParent->paneTrans(ringPosX, ringPosY);
         }
 
-        const f32 ringButtonsScale = g_drawHIO.mRingHUDButtonsScale * userHudScale;
+        const f32 ringButtonsScale =
+            dusk::tphd_active() ? 1.0f : g_drawHIO.mRingHUDButtonsScale * userHudScale;
         if (mButtonsScale != ringButtonsScale) {
             mButtonsScale = ringButtonsScale;
             mpButtonParent->scale(ringButtonsScale, ringButtonsScale);
@@ -665,13 +2235,19 @@ void dMeter2Draw_c::exec(u32 i_status) {
         f32 mainPosX = g_drawHIO.mMainHUDButtonsPosX;
         f32 mainPosY = g_drawHIO.mMainHUDButtonsPosY;
         dAnchorHudScale(mpButtonParent, HudCorner::TopRight, &mainPosX, &mainPosY);
+        if (dusk::tphd_active()) {
+            // Children are placed absolutely by dApplyTphdHudLayout.
+            mainPosX = 0.0f;
+            mainPosY = 0.0f;
+        }
         if (mButtonsPosX != mainPosX || mButtonsPosY != mainPosY) {
             mButtonsPosX = mainPosX;
             mButtonsPosY = mainPosY;
             mpButtonParent->paneTrans(mainPosX, mainPosY);
         }
 
-        const f32 mainButtonsScale = g_drawHIO.mMainHUDButtonsScale * userHudScale;
+        const f32 mainButtonsScale =
+            dusk::tphd_active() ? 1.0f : g_drawHIO.mMainHUDButtonsScale * userHudScale;
         if (mButtonsScale != mainButtonsScale) {
             mButtonsScale = mainButtonsScale;
             mpButtonParent->scale(mainButtonsScale, mainButtonsScale);
@@ -731,7 +2307,35 @@ void dMeter2Draw_c::draw() {
     }
 #endif
 
-    mpScreen->draw(0.0f, 0.0f, graf_ctx);
+#if TARGET_PC
+    f32 hudDrawX = 0.0f;
+    if (s_hdRevoHud) {
+        // The Wii U HUD spans the whole screen: map its 780 units onto the current canvas.
+        const f32 minX = mDoGph_gInf_c::getMinXF();
+        const f32 maxX = mDoGph_gInf_c::getMaxXF();
+        hudDrawX = minX;
+        mpScreen->scale((maxX - minX) / kHdRefW, 1.0f);
+        hdRevoFrame(mpScreen);
+        hdLogRevo(mpScreen);
+    } else if (dusk::tphd_active()) {
+        // The game re-places several of these panes every frame (paneTrans from HIO values),
+        // so re-apply the Wii U layout right before drawing.
+        dApplyTphdHudLayout(mpScreen);
+        dLogTphdHud(mpScreen);
+    }
+#else
+    const f32 hudDrawX = 0.0f;
+#endif
+
+    mpScreen->draw(hudDrawX, 0.0f, graf_ctx);
+#if TARGET_PC
+    if (s_hdRevoHud) {
+        static int s_hdDumpFrames = 0;
+        if (++s_hdDumpFrames % 600 == 0 && s_hdDumpFrames <= 3000) {
+            hdDumpVisible(mpScreen, true, 255, 0);
+        }
+    }
+#endif
     drawKanteraScreen(1);
     drawKanteraScreen(2);
 
@@ -745,6 +2349,35 @@ void dMeter2Draw_c::draw() {
                 Vec vtx0 = mpItemXY[i]->getPanePtr()->getGlbVtx(0);
                 Vec vtx3 = mpItemXY[i]->getPanePtr()->getGlbVtx(3);
 
+#if TARGET_PC
+                if (s_hdRevoHud) {
+                    // Wii U: small digits anchored to the lower right corner of the item icon.
+                    const bool three = mpItemNumTex[i][2] != NULL && mpItemNumTex[i][2]->isVisible();
+                    const int nd = three ? 3 : 2;
+                    if (j >= nd) {
+                        continue;
+                    }
+                    const f32 chainA = hdChainAlpha(mpItemXY[i]->getPanePtr());
+                    if (chainA <= 0.01f) {
+                        continue;
+                    }
+                    // The digit alpha is set by setItemNum when the count changes; scale a copy
+                    // for this draw only and put it back, so it does not decay frame after frame.
+                    const u8 numA = mpItemNumTex[i][j]->getAlpha();
+                    mpItemNumTex[i][j]->setAlpha(static_cast<u8>(std::min(255.0f, numA * chainA)));
+                    const f32 sz = 7.6f;
+                    f32 cx, cy;
+                    if (hdCountPos(mpScreen, i, nd, &cx, &cy)) {
+                        mpItemNumTex[i][j]->draw(cx + kHdCountStep * j, cy, kHdCountSize,
+                                                 kHdCountSize, false, false, false);
+                    } else {
+                        mpItemNumTex[i][j]->draw(vtx3.x + 1.0f - sz * (nd - j), vtx3.y - sz - 1.0f,
+                                                 sz, sz, false, false, false);
+                    }
+                    mpItemNumTex[i][j]->setAlpha(numA);
+                    continue;
+                }
+#endif
                 mpItemNumTex[i][j]->draw(mItemParams[i].num_pos_x +
                                              (((vtx0.x + vtx3.x) * 0.5f) + (temp_f30 * j)),
                                          mItemParams[i].num_pos_y +
@@ -754,10 +2387,59 @@ void dMeter2Draw_c::draw() {
         }
     }
 
+#if TARGET_PC
+    if (s_hdRevoHud) {
+        hdDrawRSlotNum(mpScreen);
+    }
+#endif
+
     for (int i = 0; i < 2; i++) {
         mpKanteraMeter[i]->drawSelf();
     }
 
+#if TARGET_PC
+    if (s_hdRevoHud && !dComIfGp_isPauseFlag() && mpButtonParent->getAlphaRate() != 0.0f) {
+        // The GC flash anchors (b_text_a / b_text_b / b_text_x / b_text_y) are Wii Remote
+        // layout panes in the Revo blo (bottom left of the screen). On the Wii U TV HUD the
+        // flash goes on the button badges.
+        auto badge = [&](const char* tag, Vec* c) -> bool {
+            J2DPane* p = mpScreen->search(hdTag(tag));
+            if (p == NULL || !p->isVisible()) {
+                return false;
+            }
+            *c = hdCenter(p);
+            return true;
+        };
+        Vec c;
+        // Wii U dMeter_drawHIO_c ctor (RPX 0x02a4f8c4, same offsets as the GC): the A / B flash
+        // back outer colour is white (255,255,255,0), not the GC green (A) / red (B).
+        const JUtility::TColor hdFlashBackOuter(255, 255, 255, 0);
+        // Wii U dMeter_drawHIO_c ctor (0x02a4f8c4): the A / B / X / Y flash scales (+0x3c4,
+        // +0x3c8, +0x3dc) are all 1.0 (GC: 1.5 / 0.7 / 1.2), the flash was too big.
+        const f32 hdFlashScale = 1.0f;
+        if (field_0x608 > 0.0f && badge("doBtn_cp", &c)) {
+            drawPikari(c.x, c.y, &field_0x608, hdFlashScale,
+                       g_drawHIO.mButtonAPikariFrontOuter, g_drawHIO.mButtonAPikariFrontInner,
+                       hdFlashBackOuter, g_drawHIO.mButtonAPikariBackInner,
+                       g_drawHIO.mButtonAPikariAnimSpeed, field_0x759);
+        }
+        if (field_0x60c > 0.0f && badge("atkBtnCP", &c)) {
+            drawPikari(c.x, c.y, &field_0x60c, hdFlashScale,
+                       g_drawHIO.mButtonBPikariFrontOuter, g_drawHIO.mButtonBPikariFrontInner,
+                       hdFlashBackOuter, g_drawHIO.mButtonBPikariBackInner,
+                       g_drawHIO.mButtonBPikariAnimSpeed, field_0x75a);
+        }
+        static const char* const kXY[2] = {"itmBtn_1", "itmBtn_2"};
+        for (int i = 0; i < 2; i++) {
+            if (field_0x620[i] > 0.0f && badge(kXY[i], &c)) {
+                drawPikari(c.x, c.y, &field_0x620[i], hdFlashScale,
+                           g_drawHIO.mButtonXYPikariFrontOuter, g_drawHIO.mButtonXYPikariFrontInner,
+                           g_drawHIO.mButtonXYPikariBackOuter, g_drawHIO.mButtonXYPikariBackInner,
+                           g_drawHIO.mButtonXYPikariAnimSpeed, field_0x75c[i]);
+            }
+        }
+    } else
+#endif
     if (!dComIfGp_isPauseFlag() && mpButtonParent->getAlphaRate() != 0.0f) {
         if (field_0x608 > 0.0f) {
             drawPikari(mpBTextA, &field_0x608, g_drawHIO.mButtonAPikariScale,
@@ -790,7 +2472,7 @@ void dMeter2Draw_c::draw() {
 
         if (field_0x756 >= 0) {
             var_f29 = g_drawHIO.mLightDrop.mDropPikariAnimSpeed_Completed;
-            int temp_r5_2 = g_drawHIO.mLightDrop.mPikariInterval * 15;
+            int temp_r5_2 = g_drawHIO.mLightDrop.mPikariInterval * DUSK_IF_ELSE((dusk::tphd_active() ? 11 : 15), 15);
             if (field_0x756 <= temp_r5_2) {
                 int temp_r4 = (IF_DUSK((int))field_0x756 % g_drawHIO.mLightDrop.mPikariInterval);
                 int temp_r3_5 = IF_DUSK((int))field_0x756 / g_drawHIO.mLightDrop.mPikariInterval;
@@ -805,12 +2487,12 @@ void dMeter2Draw_c::draw() {
                 int temp_r5_3 = temp_r5_2 + 1;
 
                 if (field_0x756 DUSK_IF_ELSE(< temp_r5_3 + 1, == temp_r5_3)) {
-                    if (field_0x62c[15] == 0.0f) {
+                    if (field_0x62c[DUSK_IF_ELSE((dusk::tphd_active() ? 11 : 15), 15)] == 0.0f) {
                         DUSK_IF_ELSE(field_0x756 += dusk::game_clock::original_frames(), field_0x756++);
                     }
                     var_f28 = g_drawHIO.mLightDrop.mPikariScaleComplete;
                 } else if (field_0x756 >= g_drawHIO.mLightDrop.field_0x54 + temp_r5_3) {
-                    for (int i = 0; i < 16; i++) {
+                    for (int i = 0; i < DUSK_IF_ELSE((dusk::tphd_active() ? 12 : 16), 16); i++) {
                         field_0x62c[i] = 18.0f - var_f29;
                         field_0x66c[i] = 18.0f - g_drawHIO.mLightDrop.mPikariLoopAnimSpeed;
                     }
@@ -822,7 +2504,7 @@ void dMeter2Draw_c::draw() {
             }
         }
 
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < DUSK_IF_ELSE((dusk::tphd_active() ? 12 : 16), 16); i++) {
             if (field_0x66c[i] > 0.0f) {
                 drawPikari(mpSIParts[i][1], &g_drawHIO.mLightDrop.mPikariLoopBackStopFrame,
                            g_drawHIO.mLightDrop.mPikariLoopBackScale,
@@ -847,7 +2529,7 @@ void dMeter2Draw_c::draw() {
             }
         }
 
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < DUSK_IF_ELSE((dusk::tphd_active() ? 12 : 16), 16); i++) {
             if (field_0x62c[i] > 0.0f) {
                 drawPikari(mpSIParts[i][1], &field_0x62c[i], var_f28,
                            g_drawHIO.mLightDrop.mDropPikariFrontOuter,
@@ -860,14 +2542,28 @@ void dMeter2Draw_c::draw() {
 
 #if TARGET_PC
     if (!touchControlsEnabled && field_0x738 > 0.0f) {
+        if (dusk::tphd_active()) {
+            if (dusk::frame_interp::get_ui_tick_pending()) {
+                field_0x738 += g_drawHIO.mMidnaIconPikariAnimSpeed;
+                if (field_0x738 > 28.0f) {
+                    field_0x738 = 18.0f;
+                }
+            }
+        } else {
+            drawPikari(mpButtonMidona, &field_0x738, g_drawHIO.mMidnaIconPikariScale,
+                       g_drawHIO.mMidnaIconPikariFrontOuter, g_drawHIO.mMidnaIconPikariFrontInner,
+                       g_drawHIO.mMidnaIconPikariBackOuter, g_drawHIO.mMidnaIconPikariBackInner,
+                       g_drawHIO.mMidnaIconPikariAnimSpeed, 3);
+        }
+    }
 #else
     if (field_0x738 > 0.0f) {
-#endif
         drawPikari(mpButtonMidona, &field_0x738, g_drawHIO.mMidnaIconPikariScale,
                    g_drawHIO.mMidnaIconPikariFrontOuter, g_drawHIO.mMidnaIconPikariFrontInner,
                    g_drawHIO.mMidnaIconPikariBackOuter, g_drawHIO.mMidnaIconPikariBackInner,
                    g_drawHIO.mMidnaIconPikariAnimSpeed, 3);
     }
+#endif
 }
 
 void dMeter2Draw_c::initLife() {
@@ -1381,15 +3077,15 @@ void dMeter2Draw_c::initButtonCross() {
     static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju4')))->setString(0x40, "");
 
     dMeter2Info_getString(
-        0x61, static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju0')))->getStringPtr(), NULL);
+        DUSK_IF_ELSE(dusk::tphd_active() ? 0x961u : 0x61u, 0x61), static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju0')))->getStringPtr(), NULL);
     dMeter2Info_getString(
-        0x61, static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju1')))->getStringPtr(), NULL);
+        DUSK_IF_ELSE(dusk::tphd_active() ? 0x961u : 0x61u, 0x61), static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju1')))->getStringPtr(), NULL);
     dMeter2Info_getString(
-        0x61, static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju2')))->getStringPtr(), NULL);
+        DUSK_IF_ELSE(dusk::tphd_active() ? 0x961u : 0x61u, 0x61), static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju2')))->getStringPtr(), NULL);
     dMeter2Info_getString(
-        0x61, static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju3')))->getStringPtr(), NULL);
+        DUSK_IF_ELSE(dusk::tphd_active() ? 0x961u : 0x61u, 0x61), static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju3')))->getStringPtr(), NULL);
     dMeter2Info_getString(
-        0x61, static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju4')))->getStringPtr(), NULL);
+        DUSK_IF_ELSE(dusk::tphd_active() ? 0x961u : 0x61u, 0x61), static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju4')))->getStringPtr(), NULL);
 
     static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju5')))->setFont(mDoExt_getMesgFont());
     static_cast<J2DTextBox*>(mpScreen->search(MULTI_CHAR('cont_ju6')))->setFont(mDoExt_getMesgFont());
@@ -1682,6 +3378,11 @@ void dMeter2Draw_c::drawLife(s16 i_maxLife, s16 i_life, f32 i_posX, f32 i_posY) 
 #if TARGET_PC
     f32 lifePosX = i_posX;
     f32 lifePosY = i_posY;
+    if (dusk::tphd_active()) {
+        // Wii U layout: the pane origin is set by dApplyTphdHudLayout, not by GC HIO offsets.
+        lifePosX = 0.0f;
+        lifePosY = 0.0f;
+    }
     // The heart row sits inset from its box's left edge, so use a partial horizontal pull
     // to keep it from jamming against the screen edge.
     dAnchorHudScale(mpLifeParent, HudCorner::TopLeft, &lifePosX, &lifePosY, 0.6f);
@@ -1818,6 +3519,10 @@ void dMeter2Draw_c::drawKanteraScreen(u8 i_meterType) {
 
     f32 magicPosX = field_0x5e4[i_meterType];
     f32 magicPosY = field_0x5f0[i_meterType];
+    if (dusk::tphd_active()) {
+        magicPosX = 0.0f;
+        magicPosY = 0.0f;
+    }
     // The oil/magic bar sits inset within its pane box, so use a reduced horizontal pull
     // (like the heart row) to keep it from overshooting off the left edge when shrunk.
     dAnchorHudScale(mpMagicParent, HudCorner::TopLeft, &magicPosX, &magicPosY, 0.3f);
@@ -1828,6 +3533,15 @@ void dMeter2Draw_c::drawKanteraScreen(u8 i_meterType) {
     mpMagicParent->paneTrans(field_0x5e4[i_meterType], field_0x5f0[i_meterType]);
 #endif
 
+#if TARGET_PC
+    if (s_hdKanteraRevo) {
+        // 608-wide layout stretched to the TV like every Revo screen (J2DPane::draw 0x02b34334).
+        const f32 minX = mDoGph_gInf_c::getMinXF();
+        mpKanteraScreen->scale((mDoGph_gInf_c::getMaxXF() - minX) / 608.0f, 1.0f);
+        mpKanteraScreen->draw(minX, 0.0f, graf_ctx);
+        return;
+    }
+#endif
     mpKanteraScreen->draw(0.0f, 0.0f, graf_ctx);
 }
 
@@ -2064,6 +3778,33 @@ void dMeter2Draw_c::setAlphaOxygenAnimeMax() {
 
 void dMeter2Draw_c::drawLightDrop(u8 i_num, u8 i_needNum, f32 i_posX, f32 i_posY, f32 i_vesselScale,
                                   f32 param_5, u8 param_6) {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        static u64 const tuta_0[] = {
+            's_00',
+            's_01',
+            's_02',
+            's_03',
+            's_04',
+            's_05',
+            's_06',
+            's_07',
+            's_08',
+            's_09',
+            's_10',
+            's_11',
+            's_12',
+            's_13',
+            's_14',
+            's_15',
+        };
+
+        for (int i = 12; i < 16; i++) {
+            mpScreen->search(tuta_0[i])->hide();
+        }
+    }
+#endif
+
     for (int i = 0; i < 16; i++) {
         if (mpSIParts[i][0] != NULL) {
             mpSIParts[i][0]->scale(g_drawHIO.mLightDrop.mDropScale,
@@ -2241,7 +3982,31 @@ void dMeter2Draw_c::drawRupee(s16 i_rupeeNum) {
     int digit_3 = i_rupeeNum / 1000;
     int num = i_rupeeNum % 1000;
 
+    // TPHD drawRupeeKey (0x02a279f0): the thousands digit is shown whenever the wallet is not the
+    // first one (status A wallet size != 0, "0052" with the big wallets), never with the first
+    // wallet, whose rupee icon then moves 10 units right (r_n_4 hidden).
+#if TARGET_PC
+    if (s_hdRevoHud) {
+        const bool four = dComIfGs_getWalletSize() != 0;
+        static J2DPane* s_rupi[2] = {NULL, NULL};
+        static f32 s_rupiX[2] = {0.0f, 0.0f};
+        const u64 rupiTag[2] = {MULTI_CHAR('rupi'), MULTI_CHAR('rupi_s')};
+        for (int k = 0; k < 2; k++) {
+            J2DPane* rp = mpScreen->search(rupiTag[k]);
+            if (rp == NULL) {
+                continue;
+            }
+            if (rp != s_rupi[k]) {
+                s_rupi[k] = rp;
+                s_rupiX[k] = rp->getTranslateX();
+            }
+            rp->translate(s_rupiX[k] + (four ? 0.0f : 10.0f), rp->getTranslateY());
+        }
+    }
+    if (s_hdRevoHud ? dComIfGs_getWalletSize() == 0 : i_rupeeNum < 1000) {
+#else
     if (i_rupeeNum < 1000) {
+#endif
         mpRupeeTexture[3][0]->hide();
         mpRupeeTexture[3][1]->hide();
     } else {
@@ -2277,6 +4042,10 @@ void dMeter2Draw_c::drawRupee(s16 i_rupeeNum) {
 
     f32 rupeeKeyPosX = g_drawHIO.mRupeeKeyPosX;
     f32 rupeeKeyPosY = g_drawHIO.mRupeeKeyPosY;
+    if (dusk::tphd_active()) {
+        rupeeKeyPosX = 0.0f;
+        rupeeKeyPosY = 0.0f;
+    }
     // Rupees/keys read better anchored to the bottom-right corner than the top-right.
     dAnchorHudScale(mpRupeeKeyParent, HudCorner::BottomRight, &rupeeKeyPosX, &rupeeKeyPosY);
     mpRupeeKeyParent->paneTrans(rupeeKeyPosX, rupeeKeyPosY);
@@ -2582,7 +4351,15 @@ void dMeter2Draw_c::drawButtonB(u8 i_action, bool param_1, f32 i_posX, f32 i_pos
         field_0x762 = 7;
     }
 
-    if (*mp_string != 0 && i_action != 0 && i_action != 0x2E &&
+#if TARGET_PC
+    // Wii U item screen: B shows the sword, without the "Back" text, also while the item explain
+    // is open (ZeldaItemScreen input 0x02b000bc sets the A / do status DAT_1014b62d = 0x12
+    // "Back" and the B status DAT_1014b655 = 0).
+    const bool hdItemScreen = dusk::tphd_active() && g_tphdItemScreenOpen;
+#else
+    const bool hdItemScreen = false;
+#endif
+    if (!hdItemScreen && *mp_string != 0 && i_action != 0 && i_action != 0x2E &&
         ((dComIfGp_getDoStatus() == 0 ||
           (dComIfGp_getDoStatus() != dComIfGp_getAStatus() &&
            dComIfGp_getDoStatus() != dComIfGp_getAStatusForce())) ||
@@ -2618,7 +4395,7 @@ void dMeter2Draw_c::drawButtonB(u8 i_action, bool param_1, f32 i_posX, f32 i_pos
         mpScreen->search(MULTI_CHAR('item_b_n'))->hide();
     } else
 #endif
-    if (i_action == 0x26 || i_action == 0x2E) {
+    if (i_action == 0x26 || i_action == 0x2E || hdItemScreen) {
         mpScreen->search(MULTI_CHAR('item_b_n'))->show();
         var_r31 = 1;
 
@@ -3960,9 +5737,29 @@ void dMeter2Draw_c::drawKanteraMeter(u8 i_button, f32 i_alphaRate) {
 
 #if TARGET_PC
     const f32 oilUserScale = dGetUserHudScale();
-    mpKanteraMeter[i_button]->setPos(((vtx0.x + vtx3.x) * 0.5f) + 9.0f * oilUserScale + sp10[i_button],
-                                     vtx3.y + sp8[i_button]);
-    mpKanteraMeter[i_button]->setScale(0.6f * oilUserScale, 0.6f * oilUserScale);
+    if (dusk::tphd_active()) {
+        // Wii U dMeter2Draw_c::drawKanteraMeter (RPX 0x02a3621c): the gauge layout
+        // (zelda_kantera_icon_mater.blo, kan_m_n is 'n_43') is placed at
+        //   x = centre of the item pane in TV ortho units + 9 + {-87.5, -97, -81, -81}[button]
+        //   y = bottom of the item pane + {1, 1.5, 1, 1}[button]
+        // with scale 0.5 * item pane scale / base scale (+0x430 / +0x828, taken as 1 here), then
+        // drawn through the root stretch 808 / 608 of J2DPane::draw. The per-button offsets turn
+        // the TV x back into layout x. Our screen ortho is W = maxX - minX wide (centred on 304).
+        // The Wii U x offsets {-87.5, -97, -81, -81} (0x10099dec) only turn its TV x back into
+        // layout x; the result on the TV is the gauge centred under the item (checked on Wii U
+        // captures with the lantern on X and on Y), so it is centred directly here.
+        static const f32 l_offY[4] = {1.0f, 1.5f, 1.0f, 1.0f};  // 0x10099dfc
+        const f32 sx = (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+        const int k = i_button < 4 ? i_button : 0;
+        mpKanteraMeter[i_button]->setPos((vtx0.x + vtx3.x) * 0.5f, vtx3.y + l_offY[k] * oilUserScale);
+        // n_43: 1:1 in TV units, i.e. 796.4 / 808 of our (square) ortho units at 16:9.
+        const f32 scale = 0.5f * oilUserScale * (sx * 608.0f) / 808.0f;
+        mpKanteraMeter[i_button]->setScale(scale, scale);
+    } else {
+        mpKanteraMeter[i_button]->setPos(((vtx0.x + vtx3.x) * 0.5f) + 9.0f * oilUserScale + sp10[i_button],
+                                         vtx3.y + sp8[i_button]);
+        mpKanteraMeter[i_button]->setScale(0.6f * oilUserScale, 0.6f * oilUserScale);
+    }
 #else
     mpKanteraMeter[i_button]->setPos(((vtx0.x + vtx3.x) * 0.5f) + 9.0f + sp10[i_button],
                                      vtx3.y + sp8[i_button]);
@@ -4053,6 +5850,14 @@ void dMeter2Draw_c::setItemParamX(u8 i_itemNo) {
             break;
         }
     }
+#if TARGET_PC
+    if (s_hdRevoHud) {
+        mItemParams[SELECT_X_e].pos_x = 0.0f;
+        mItemParams[SELECT_X_e].pos_y = 0.0f;
+        mItemParams[SELECT_X_e].scale = 1.0f;
+        mItemParams[SELECT_X_e].rotation = 0.0f;
+    }
+#endif
 }
 
 void dMeter2Draw_c::setItemParamY(u8 i_itemNo) {
@@ -4132,6 +5937,14 @@ void dMeter2Draw_c::setItemParamY(u8 i_itemNo) {
             break;
         }
     }
+#if TARGET_PC
+    if (s_hdRevoHud) {
+        mItemParams[SELECT_Y_e].pos_x = 0.0f;
+        mItemParams[SELECT_Y_e].pos_y = 0.0f;
+        mItemParams[SELECT_Y_e].scale = 1.0f;
+        mItemParams[SELECT_Y_e].rotation = 0.0f;
+    }
+#endif
 }
 
 void dMeter2Draw_c::setItemParamZ(u8 i_itemNo) {
@@ -4408,3 +6221,11 @@ static u64 const tag_7759[] = {
     MULTI_CHAR('item_y_n'),
     MULTI_CHAR('item_j_n'),
 };
+
+#if TARGET_PC
+// Real Wii U HUD (zelda_game_image_revo.blo) active: used by the sub-HUDs that load their Revo
+// layouts (dMeterHakusha_c).
+bool dMeter2Draw_isHdRevoHud() {
+    return s_hdRevoHud;
+}
+#endif

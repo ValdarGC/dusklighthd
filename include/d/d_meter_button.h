@@ -136,6 +136,9 @@ public:
     void hide_button(u8);
     void pikariCheck();
     void paneTrans(CPaneMgr*, f32, f32, u8);
+#if TARGET_PC
+    void screenInitButtonRevo();
+#endif
 
     virtual void draw();
     virtual ~dMeterButton_c();

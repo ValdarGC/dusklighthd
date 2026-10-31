@@ -11,6 +11,9 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/version.hpp"
 #endif
+#include "dusk/interp/frame_interpolation.h"
+#include "dusk/settings.h"
+extern JKRArchive* g_tphdMain2DRevoArchive;
 
 COutFontSet_c::COutFontSet_c() {
     initialize();
@@ -25,7 +28,7 @@ void COutFontSet_c::initialize() {
     mSizeX = 1.0f;
     mSizeY = 1.0f;
     mAlpha = 255;
-    mType = 0x47;
+    mType = OUTFONT_TYPE_NONE;
 }
 
 void COutFontSet_c::drawFont(J2DTextBox* i_textbox, u8 i_type, f32 i_posX, f32 i_posY, f32 i_sizeX,
@@ -47,7 +50,7 @@ COutFont_c::COutFont_c(u8 param_0) {
         mpOfs[i] = JKR_NEW COutFontSet_c();
     }
 
-    for (int i = 0; i < 70; i++) {
+    for (int i = 0; i < OUTFONT_PANE_NUM; i++) {
         mpPane[i] = NULL;
         field_0x1b4[i] = 0;
     }
@@ -68,7 +71,7 @@ COutFont_c::~COutFont_c() {
     if (field_0x240) {
         field_0x240 = 0;
 
-        for (int i = 0; i < 70; i++) {
+        for (int i = 0; i < OUTFONT_PANE_NUM; i++) {
             if (mpPane[i] != NULL) {
                 JKR_DELETE(mpPane[i]);
                 mpPane[i] = NULL;
@@ -82,7 +85,7 @@ COutFont_c::~COutFont_c() {
 }
 
 void COutFont_c::setPane(J2DPicture* i_pic) {
-    for (int i = 0; i < 70; i++) {
+    for (int i = 0; i < OUTFONT_PANE_NUM; i++) {
         mpPane[i] = i_pic;
         i_pic++;
     }
@@ -93,43 +96,67 @@ void COutFont_c::setPane(J2DPicture* i_pic) {
 void COutFont_c::createPane() {
     ResTIMG* img;
 
-    for (int i = 0; i < 70; i++) {
+    for (int i = 0; i < OUTFONT_PANE_NUM; i++) {
+#if TARGET_PC
+        // The Wii U icons 70..77 only exist in the TPHD main2DR archive.
+        if (i >= 70 && !dusk::tphd_active()) {
+            mpPane[i] = NULL;
+            continue;
+        }
+#endif
+        const char* btiName = getBtiName(i);
         if (i == 41) {
-            img = (ResTIMG*)dComIfGp_getItemIconArchive()->getResource('TIMG', getBtiName(i));
+            img = (ResTIMG*)dComIfGp_getItemIconArchive()->getResource('TIMG', btiName);
         } else {
-            img = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', getBtiName(i));
+            img = NULL;
+            if (dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL) {
+                img = (ResTIMG*)g_tphdMain2DRevoArchive->getResource('TIMG', btiName);
+            }
+            if (img == NULL) {
+                img = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', btiName);
+            }
         }
 
         mpPane[i] = JKR_NEW J2DPicture(img);
         switch (i) {
         case 0:
-            mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
-                                     JUtility::TColor(98, 163, 46, 255));
+            if (!dusk::tphd_active()) {
+                mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
+                                         JUtility::TColor(98, 163, 46, 255));
+            }
             break;
         case 1:
-            mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
-                                     JUtility::TColor(200, 39, 39, 255));
+            if (!dusk::tphd_active()) {
+                mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
+                                         JUtility::TColor(200, 39, 39, 255));
+            }
             break;
         case 2:
-            mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
-                                     JUtility::TColor(255, 200, 50, 255));
+            if (!dusk::tphd_active()) {
+                mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
+                                         JUtility::TColor(255, 200, 50, 255));
+            }
             break;
         case 3:
         case 4:
         case 5:
         case 6:
         case 8:
-            if (field_0x242 == 0x1) {
-                mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
-                                         JUtility::TColor(120, 120, 120, 255));
-            } else {
-                mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
-                                         JUtility::TColor(200, 200, 200, 255));
+            if (!dusk::tphd_active()) {
+                if (field_0x242 == 0x1) {
+                    mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
+                                             JUtility::TColor(120, 120, 120, 255));
+                } else {
+                    mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
+                                             JUtility::TColor(200, 200, 200, 255));
+                }
             }
             break;
         case 7:
-            mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
-                                     JUtility::TColor(80, 70, 165, 255));
+            if (!dusk::tphd_active()) {
+                mpPane[i]->setBlackWhite(JUtility::TColor(255, 255, 255, 0),
+                                         JUtility::TColor(80, 70, 165, 255));
+            }
             break;
         case 9:
         case 0xe:
@@ -138,11 +165,25 @@ void COutFont_c::createPane() {
         case 0x11:
         case 0x12:
         case 0x13:
-            img = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "font_07_02.bti");
-            mpPane[i]->append(img, 1.0f);
-            mpPane[i]->setBlendRatio(1.0f, 0.0f);
-            mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
-                                     JUtility::TColor(200, 200, 200, 255));
+            if (dusk::tphd_active()) {
+                img = NULL;
+                if (g_tphdMain2DRevoArchive != NULL) {
+                    img = (ResTIMG*)g_tphdMain2DRevoArchive->getResource('TIMG', "font_48_02.bti");
+                }
+                if (img == NULL) {
+                    img = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "font_48_02.bti");
+                }
+                if (img != NULL) {
+                    mpPane[i]->append(img, 1.0f);
+                    mpPane[i]->setBlendRatio(1.0f, 0.0f);
+                }
+            } else {
+                img = (ResTIMG*)dComIfGp_getMain2DArchive()->getResource('TIMG', "font_07_02.bti");
+                mpPane[i]->append(img, 1.0f);
+                mpPane[i]->setBlendRatio(1.0f, 0.0f);
+                mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
+                                         JUtility::TColor(200, 200, 200, 255));
+            }
             break;
         case 0x14:
             mpPane[i]->setBlackWhite(JUtility::TColor(0, 0, 0, 0),
@@ -299,7 +340,7 @@ void COutFont_c::drawFont(J2DTextBox* i_textbox, u8 i_type, f32 i_posX, f32 i_po
     IF_DUSK_BLOCK_END;
 #endif
     for (int i = 0; i < 35; i++) {
-        if (mpOfs[i]->getType() == 0x47) {
+        if (mpOfs[i]->getType() == OUTFONT_TYPE_NONE) {
             mpOfs[i]->drawFont(i_textbox, i_type, i_posX, i_posY, i_sizeX, i_sizeY, i_color,
                                i_alpha);
             return;
@@ -312,9 +353,9 @@ void COutFont_c::setAlphaRatio(f32 i_ratio) {
 }
 
 void COutFont_c::draw(J2DTextBox* i_textbox, f32 param_1, f32 param_2, f32 param_3) {
-    DUSK_IF_ELSE(f32, s16) sp256[70];
+    DUSK_IF_ELSE(f32, s16) sp256[OUTFONT_PANE_NUM];
 
-    for (int i = 0; i < 70; i++) {
+    for (int i = 0; i < OUTFONT_PANE_NUM; i++) {
         sp256[i] = field_0x1b4[i];
     }
 
@@ -322,7 +363,7 @@ void COutFont_c::draw(J2DTextBox* i_textbox, f32 param_1, f32 param_2, f32 param
         u8 type = mpOfs[i]->getType();
         J2DTextBox* tbox = mpOfs[i]->getTextBoxPtr();
 
-        if (i_textbox == tbox && type != 0x47) {
+        if (i_textbox == tbox && type != OUTFONT_TYPE_NONE && mpPane[type] != NULL) {
             f32 scale_x = 1.0f;
             f32 scale_y = 1.0f;
 
@@ -694,6 +735,19 @@ void COutFont_c::draw(J2DTextBox* i_textbox, f32 param_1, f32 param_2, f32 param
                     mpPane[type]->draw(posX, -3.0f + posY, sizeX, 1.25f * sizeY, false, false,
                                        false);
                     break;
+#if TARGET_PC
+                case 76:
+                    // Wii U draw 0x02a6da9c: font_nfc takes the colours of the text box.
+                    mpPane[type]->setBlackWhite(
+                        JUtility::TColor(i_textbox->getGradColor().r, i_textbox->getGradColor().g,
+                                         i_textbox->getGradColor().b, 0),
+                        i_textbox->getCharColor());
+                    mpPane[type]->draw(posX, posY, sizeX, sizeY, false, false, false);
+                    break;
+                case 77:
+                    mpPane[type]->draw(posX, posY, sizeX, sizeY, false, false, false);
+                    break;
+#endif
                 default:
                     JUtility::TColor black = mpPane[type]->getBlack();
                     JUtility::TColor white = mpPane[type]->getWhite();
@@ -743,6 +797,96 @@ void COutFont_c::setBlendAnime(J2DPicture* i_pic, DUSK_IF_ELSE(f32, s16) param_1
 }
 
 const char* COutFont_c::getBtiName(int i_nameIdx) {
+    if (dusk::tphd_active()) {
+        static const char* mpIconNameHD[] = {
+            "font_00.bti",
+            "font_01.bti",
+            "font_38.bti",
+            "font_04.bti",
+            "font_05.bti",
+            "font_02.bti",
+            "font_03.bti",
+            "font_37.bti",
+            "font_08.bti",
+            "font_48_01.bti",
+            "font_10.bti",
+            "font_10.bti",
+            "font_10.bti",
+            "font_10.bti",
+            "font_48_01.bti",
+            "font_48_01.bti",
+            "font_48_01.bti",
+            "font_48_01.bti",
+            "font_48_01.bti",
+            "font_48_01.bti",
+            "font_15.bti",
+            "font_15.bti",
+            "font_15.bti",
+            "font_12.bti",
+            "font_15.bti",
+            "im_map_icon_portal_4ia_40_05.bti",
+            "font_16_backlight.bti",
+            "font_13.bti",
+            "font_14.bti",
+            "font_10.bti",
+            "im_zelda_item_icon_rupy_13.bti",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "st_bompoach_lv1.bti",
+            "font_46.bti",
+            "font_47.bti",
+            "font_35.bti",
+            "font_36.bti",
+            "font_19.bti",
+            "font_20.bti",
+            "font_19.bti",
+            "font_22.bti",
+            "font_23.bti",
+            "font_24.bti",
+            "font_25.bti",
+            "font_40.bti",
+            "font_39.bti",
+            "font_29.bti",
+            "font_28.bti",
+            "font_30.bti",
+            "font_31.bti",
+            "font_29.bti",
+            "font_28.bti",
+            "font_32.bti",
+            "font_33.bti",
+            "font_41.bti",
+            "font_42.bti",
+            "font_50.bti",
+            "font_49.bti",
+            "font_51.bti",
+            "font_52.bti",
+            "font_53.bti",
+            // Wii U 0x10124d98[70..77] (group 7 message tags, do_tag 0x02a5c674 / 0x02a60498)
+            "font_54.bti",
+            "font_55.bti",
+            "font_56.bti",
+            "font_58.bti",
+            "font_57.bti",
+            "font_59.bti",
+            "font_nfc.bti",
+            "font_amiibo.bti",
+        };
+
+        if (i_nameIdx >= 31 && i_nameIdx <= 40) {
+            return dMeter2Info_getNumberTextureName(i_nameIdx - 31);
+        }
+
+        return mpIconNameHD[i_nameIdx];
+    }
+
     static const char* mpIconName[] = {
         "font_00.bti",
         "font_01.bti",

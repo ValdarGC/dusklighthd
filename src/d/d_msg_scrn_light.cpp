@@ -11,6 +11,12 @@
 #include "dusk/interp/user_interface.h"
 #endif
 
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+extern JKRArchive* g_tphdMain2DRevoArchive;
+#endif
+
 class dMsgScrnLight_HIO_c {
 public:
     dMsgScrnLight_HIO_c();
@@ -130,20 +136,26 @@ dMsgScrnLight_c::dMsgScrnLight_c(u8 i_colorType, u8 param_1) {
 
     g_MsgScrnLight_HIO_c.updateColor(i_colorType);
 
+    JKRArchive* arc = dComIfGp_getMain2DArchive();
+#if TARGET_PC
+    if (dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL) {
+        arc = g_tphdMain2DRevoArchive;
+    }
+#endif
+
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpScreen != NULL);
-    bool fg = mpScreen->setPriority("zelda_message_window_text_light.blo", 0x20000,
-                                    dComIfGp_getMain2DArchive());
+    bool fg = mpScreen->setPriority("zelda_message_window_text_light.blo", 0x20000, arc);
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpScreen);
 
     OSInitFastCast();
     mpBck = (J2DAnmTransform*)J2DAnmLoaderDataBase::load(
-        JKRGetNameResource("zelda_message_window_text_light.bck", dComIfGp_getMain2DArchive()));
+        JKRGetNameResource("zelda_message_window_text_light.bck", arc));
     mBckFrame = 0.0f;
 
     mpBpk = (J2DAnmColorKey*)J2DAnmLoaderDataBase::load(
-        JKRGetNameResource("zelda_message_window_text_light.bpk", dComIfGp_getMain2DArchive()));
+        JKRGetNameResource("zelda_message_window_text_light.bpk", arc));
     mpBpk->searchUpdateMaterialID(mpScreen);
     mBpkFrame = 0.0f;
 
@@ -189,8 +201,14 @@ void dMsgScrnLight_c::draw(f32* i_anmFrame, f32 i_posX, f32 i_posY, f32 i_scaleX
         }
     } else {
         if (mColorType == 0) {
+            u8 alpha = 160;
+#if TARGET_PC
+            if (dusk::tphd_active()) {
+                alpha = 210;
+            }
+#endif
             mpParent_c->setBlackWhite(JUtility::TColor(160, 135, 20, 0),
-                                      JUtility::TColor(225, 210, 110, 160));
+                                      JUtility::TColor(225, 210, 110, alpha));
         } else if (mColorType == 2) {
             mpParent_c->setBlackWhite(JUtility::TColor(255, 255, 150, 0),
                                       JUtility::TColor(255, 255, 110, 210));
@@ -265,12 +283,34 @@ void dMsgScrnLight_c::drawCommon(f32 i_posX, f32 i_posY, f32 i_scaleX, f32 i_sca
         mpScreen->animation();
     }
 
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        const f32 n43 = dusk::tphd::wiiuTvN43();
+        // Wii U dMsgScrnLight_c::drawCommon (RPX 0x02a836cc):
+        // posX = (posX - 304.0f) * scaleX + 304.0f
+        i_posX = (i_posX - 304.0f) * n43 + 304.0f;
+    }
+#endif
+
     mpParent_c->translate(i_posX, i_posY);
 
     f32 init_scale_x = mpParent_c->getInitScaleX();
     f32 init_scale_y = mpParent_c->getInitScaleY();
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        const f32 n43 = dusk::tphd::wiiuTvN43();
+        mpParent_c->scale(init_scale_x * i_scaleX * n43, init_scale_y * i_scaleY);
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        mpScreen->scale(sx, 1.0f);
+        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_ctx);
+    } else {
+        mpParent_c->scale(init_scale_x * i_scaleX, init_scale_y * i_scaleY);
+        mpScreen->draw(0.0f, 0.0f, graf_ctx);
+    }
+#else
     mpParent_c->scale(init_scale_x * i_scaleX, init_scale_y * i_scaleY);
     mpScreen->draw(0.0f, 0.0f, graf_ctx);
+#endif
 
     if (i_alpha != 1.0f) {
         mpParent_c->setAlphaRate(alpha_rate);

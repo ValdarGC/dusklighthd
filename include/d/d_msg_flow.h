@@ -175,6 +175,15 @@ public:
     int event041(mesg_flow_node_event*, fopAc_ac_c*);
     int event042(mesg_flow_node_event*, fopAc_ac_c*);
 
+#if TARGET_PC
+    // HD additions
+    u16 query054(mesg_flow_node_branch*, fopAc_ac_c*, int);
+    u16 query055(mesg_flow_node_branch*, fopAc_ac_c*, int);
+    int event043(mesg_flow_node_event*, fopAc_ac_c*);
+    int event044(mesg_flow_node_event*, fopAc_ac_c*);
+    int event045(mesg_flow_node_event*, fopAc_ac_c*);
+#endif
+
     void initWord(fopAc_ac_c*, const char*, u8, int, fopAc_ac_c**);
 
 #if DEBUG
@@ -188,8 +197,8 @@ public:
     void setMsg(u32 msg) { mMsg = msg; }
     bool checkEndFlow() { return (u32)field_0x26 == 1; }
 
-    static DUSK_GAME_DATA queryFunc mQueryList[53];
-    static DUSK_GAME_DATA eventFunc mEventList[43];
+    static DUSK_GAME_DATA queryFunc mQueryList[DUSK_IF_ELSE(55, 53)];
+    static DUSK_GAME_DATA eventFunc mEventList[DUSK_IF_ELSE(46, 43)];
 
     /* 0x04 */ u8* mFlow_p;
     /* 0x08 */ u8* mLabelInfo_p;

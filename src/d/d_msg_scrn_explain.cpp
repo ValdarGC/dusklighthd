@@ -19,6 +19,35 @@
 #include "dusk/version.hpp"
 #endif
 
+#if TARGET_PC
+#include "dusk/tphd/HdSubscreen.hpp"
+
+extern JKRArchive* g_tphdMsgRes1RevoArchive;
+extern JKRArchive* g_tphdMsgComRevoArchive;
+
+// TPHD explain window (ctor RPX 0x02a76a9c, draw 0x02a7793c): zelda_message_window_new_revo.blo
+// from msgres01R.arc and the Revo zelda_message_window_text.blo from msgcomR.arc (19 pt text, text
+// boxes moved right, n_all / mg_null tagged 'n_43'). The draw itself is the GC one, the TV stretch
+// with the n_43 squeeze does the rest.
+static bool hdExplainRevo() {
+    static int s_state = -1;
+    if (!dusk::tphd_active() || g_tphdMsgRes1RevoArchive == NULL || g_tphdMsgComRevoArchive == NULL) {
+        return false;
+    }
+    if (s_state < 0) {
+        s_state = JKRGetNameResource("zelda_message_window_new_revo.blo", g_tphdMsgRes1RevoArchive) != NULL &&
+                  JKRGetNameResource("zelda_message_window_text.blo", g_tphdMsgComRevoArchive) != NULL &&
+                  JKRGetNameResource("zelda_message_window_save_road_text_revo.blo",
+                                     g_tphdMsgComRevoArchive) != NULL;
+    }
+    return s_state == 1;
+}
+
+static JKRArchive* hdExplainTextArc() {
+    return hdExplainRevo() ? g_tphdMsgComRevoArchive : dComIfGp_getMsgCommonArchive();
+}
+#endif
+
 #if TARGET_PC || VERSION == VERSION_GCN_JPN
 #define STR_BUF_LEN 528
 #else
@@ -69,7 +98,13 @@ dMsgScrnExplain_c::dMsgScrnExplain_c(STControl* i_stick, u8 param_1, bool i_isUs
     #define MSG_WINDOW_BLO_FILENAME "zelda_message_window_new_revo.blo"
     #endif
 
+#if TARGET_PC
+    bool fg = hdExplainRevo()
+                  ? mpScreen->setPriority("zelda_message_window_new_revo.blo", 0x20000, g_tphdMsgRes1RevoArchive)
+                  : mpScreen->setPriority(MSG_WINDOW_BLO_FILENAME, 0x20000, dComIfGp_getMsgArchive(1));
+#else
     bool fg = mpScreen->setPriority(MSG_WINDOW_BLO_FILENAME, 0x20000, dComIfGp_getMsgArchive(1));
+#endif
     JUT_ASSERT(98, fg != false);
     dPaneClass_showNullPane(mpScreen);
 
@@ -83,7 +118,15 @@ dMsgScrnExplain_c::dMsgScrnExplain_c(STControl* i_stick, u8 param_1, bool i_isUs
         #else
         #define MSG_WINDOW_TXT_SAVEROAD_BLO_FILENAME "zelda_message_window_save_road_text_revo.blo"
         #endif
+#if TARGET_PC
+        fg = hdExplainRevo()
+                 ? mpTxScreen->setPriority("zelda_message_window_save_road_text_revo.blo", 0x20000,
+                                           hdExplainTextArc())
+                 : mpTxScreen->setPriority(MSG_WINDOW_TXT_SAVEROAD_BLO_FILENAME, 0x20000,
+                                           dComIfGp_getMsgCommonArchive());
+#else
         fg = mpTxScreen->setPriority(MSG_WINDOW_TXT_SAVEROAD_BLO_FILENAME, 0x20000, dComIfGp_getMsgCommonArchive());
+#endif
         JUT_ASSERT(119, fg != false);
         dPaneClass_showNullPane(mpTxScreen);
 
@@ -113,8 +156,12 @@ dMsgScrnExplain_c::dMsgScrnExplain_c(STControl* i_stick, u8 param_1, bool i_isUs
 #endif
         field_0x4c = 0.0f;
     } else {
+#if TARGET_PC
+        fg = mpTxScreen->setPriority("zelda_message_window_text.blo", 0x20000, hdExplainTextArc());
+#else
         fg = mpTxScreen->setPriority("zelda_message_window_text.blo", 0x20000,
                                      dComIfGp_getMsgCommonArchive());
+#endif
         JUT_ASSERT(153, fg != false);
         dPaneClass_showNullPane(mpTxScreen);
 
@@ -380,14 +427,44 @@ void dMsgScrnExplain_c::draw(J2DOrthoGraph* i_graf) {
         mpBackTex->draw(0.0f, 0.0f, FB_WIDTH_BASE, FB_HEIGHT_BASE, false, false, false);
     }
 
+#if TARGET_PC
+    if (hdExplainRevo()) {
+        // Wii U J2DPane::draw on the TV: the layout is stretched to the screen width and every
+        // 'n_43' pane (n_all here, mg_null of the text screen) is squeezed back, pivoting on its translation. n_all
+        // keeps the HIO box scale it got in move() (the Wii U multiplies the local matrix).
+        const f32 n43 = dusk::tphd::wiiuTvN43();
+        if (J2DPane* all = mpScreen->search(MULTI_CHAR('n_all'))) {
+            if (all->getRotateZ() == 0.0f) {
+                all->mRotateOffsetX = -all->mBounds.i.x;
+            }
+            all->scale(g_MsgObject_HIO_c.mBoxTalkScaleX * n43, g_MsgObject_HIO_c.mBoxTalkScaleY);
+        }
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        if (field_0x66 != 2 && field_0x66 != 3) {
+            mpScreen->scale(sx, 1.0f);
+            mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, (J2DGrafContext*)i_graf);
+        }
+    } else if (field_0x66 != 2 && field_0x66 != 3) {
+        mpScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graf);
+    }
+#else
     if (field_0x66 != 2 && field_0x66 != 3) {
         mpScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graf);
     }
+#endif
 
     char string_buf[STR_BUF_LEN];
     SAFE_STRCPY(string_buf, ((J2DTextBox*)mpTm_c[0]->getPanePtr())->getStringPtr());
 
+#if TARGET_PC
+    if (hdExplainRevo()) {
+        dusk::tphd::drawRevoScreen(mpTxScreen, (J2DGrafContext*)i_graf, 0.0f, 0.0f, true);
+    } else {
+        mpTxScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graf);
+    }
+#else
     mpTxScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graf);
+#endif
 #if TARGET_PC
     if (dusk::version::isRegionJpn()) {
         mpString_c->getString(mOpenMsgId, (J2DTextBox*)mpTm_c[0]->getPanePtr(), NULL, NULL, NULL, 12);

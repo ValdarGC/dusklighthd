@@ -1001,7 +1001,7 @@ int dMsgFlow_c::getParam(u8* params) {
     return *(BE(int)*)params;
 }
 
-DUSK_GAME_DATA queryFunc dMsgFlow_c::mQueryList[53] = {
+DUSK_GAME_DATA queryFunc dMsgFlow_c::mQueryList[DUSK_IF_ELSE(55, 53)] = {
     &dMsgFlow_c::query005, &dMsgFlow_c::query001, &dMsgFlow_c::query002, &dMsgFlow_c::query003,
     &dMsgFlow_c::query006, &dMsgFlow_c::query007, &dMsgFlow_c::query004, &dMsgFlow_c::query008,
     &dMsgFlow_c::query009, &dMsgFlow_c::query010, &dMsgFlow_c::query011, &dMsgFlow_c::query012,
@@ -1016,6 +1016,11 @@ DUSK_GAME_DATA queryFunc dMsgFlow_c::mQueryList[53] = {
     &dMsgFlow_c::query045, &dMsgFlow_c::query046, &dMsgFlow_c::query047, &dMsgFlow_c::query048,
     &dMsgFlow_c::query049, &dMsgFlow_c::query050, &dMsgFlow_c::query051, &dMsgFlow_c::query052,
     &dMsgFlow_c::query053,
+
+#if TARGET_PC
+    &dMsgFlow_c::query054,
+    &dMsgFlow_c::query055,
+#endif
 };
 
 #if DEBUG
@@ -1986,7 +1991,7 @@ u16 dMsgFlow_c::query053(mesg_flow_node_branch* i_flowNode_p, fopAc_ac_c* i_spea
     return ret;
 }
 
-DUSK_GAME_DATA eventFunc dMsgFlow_c::mEventList[43] = {
+DUSK_GAME_DATA eventFunc dMsgFlow_c::mEventList[DUSK_IF_ELSE(46, 43)] = {
     &dMsgFlow_c::event000, &dMsgFlow_c::event001, &dMsgFlow_c::event002, &dMsgFlow_c::event003,
     &dMsgFlow_c::event004, &dMsgFlow_c::event005, &dMsgFlow_c::event006, &dMsgFlow_c::event007,
     &dMsgFlow_c::event008, &dMsgFlow_c::event009, &dMsgFlow_c::event010, &dMsgFlow_c::event011,
@@ -1998,6 +2003,12 @@ DUSK_GAME_DATA eventFunc dMsgFlow_c::mEventList[43] = {
     &dMsgFlow_c::event032, &dMsgFlow_c::event033, &dMsgFlow_c::event034, &dMsgFlow_c::event035,
     &dMsgFlow_c::event036, &dMsgFlow_c::event037, &dMsgFlow_c::event038, &dMsgFlow_c::event039,
     &dMsgFlow_c::event040, &dMsgFlow_c::event041, &dMsgFlow_c::event042,
+
+#if TARGET_PC
+    &dMsgFlow_c::event043,
+    &dMsgFlow_c::event044,
+    &dMsgFlow_c::event045,
+#endif
 };
 
 int dMsgFlow_c::event000(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speaker_p) {
@@ -2589,7 +2600,11 @@ int dMsgFlow_c::event028(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speak
     if (dComIfGs_getItem((u8)(SLOT_15 + BombBag), true) != dItemNo_BOMB_ARROW_e) {
         dComIfGs_setItem((u8)(SLOT_15 + BombBag), dItemNo_BOMB_BAG_LV1_e);
     } else {
+#if TARGET_PC
+        for (int i = 0; i < 4; i++) {  // 3: TPHD R item slot
+#else
         for (int i = 0; i < 3; i++) {
+#endif
             if (SLOT_15 + BombBag == dComIfGs_getSelectItemIndex(i)) {
                 u8 mix_item = dComIfGs_getMixItemIndex(i);
 
@@ -2843,3 +2858,37 @@ int dMsgFlow_c::event041(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speak
 int dMsgFlow_c::event042(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speaker_p) {
     return 1;
 }
+
+#if TARGET_PC
+// HD additions
+u16 dMsgFlow_c::query054(mesg_flow_node_branch* i_flowNode_p, fopAc_ac_c* i_speaker_p, int param_2) {
+    // stub
+    return 1;
+}
+
+u16 dMsgFlow_c::query055(mesg_flow_node_branch* i_flowNode_p, fopAc_ac_c* i_speaker_p, int param_2) {
+    // stub
+    return 1;
+}
+
+int dMsgFlow_c::event043(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speaker_p) {
+    // stub
+    return 1;
+}
+
+int dMsgFlow_c::event044(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speaker_p) {
+    // stub
+    // runs when choosing to "withdraw" from cave of shadows
+
+    daAlink_c* player = daAlink_getAlinkActorClass();
+    player->seStartOnlyReverb(Z2SE_WOLF_WARP_OUT);
+
+    JUTGamePad::C3ButtonReset::sResetSwitchPushing = true;
+    return 1;
+}
+
+int dMsgFlow_c::event045(mesg_flow_node_event* i_flowNode_p, fopAc_ac_c* i_speaker_p) {
+    // stub
+    return 1;
+}
+#endif

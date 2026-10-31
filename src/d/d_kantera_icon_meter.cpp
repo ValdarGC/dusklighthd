@@ -6,6 +6,11 @@
 #include "d/d_com_inf_game.h"
 #include "d/d_meter_HIO.h"
 #include "d/d_pane_class.h"
+#include "dusk/settings.h"
+
+#if TARGET_PC
+extern JKRArchive* g_tphdMain2DRevoArchive;
+#endif
 
 dKantera_icon_c::dKantera_icon_c() {
     initiate();
@@ -27,7 +32,16 @@ void dKantera_icon_c::initiate() {
     mpKanteraIcon = JKR_NEW dDlst_KanteraIcon_c();
 
     J2DScreen* scrn = JKR_NEW J2DScreen();
-    scrn->setPriority("zelda_kantera_icon_mater.blo", 0x20000, dComIfGp_getMain2DArchive());
+    JKRArchive* arc = dComIfGp_getMain2DArchive();
+#if TARGET_PC
+    // Wii U ctor 0x0299e30c loads the gauge from DAT_1014b534 (main2DR, HD textures).
+    if (dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL &&
+        JKRGetNameResource("zelda_kantera_icon_mater.blo", g_tphdMain2DRevoArchive) != NULL)
+    {
+        arc = g_tphdMain2DRevoArchive;
+    }
+#endif
+    scrn->setPriority("zelda_kantera_icon_mater.blo", 0x20000, arc);
     dPaneClass_showNullPane(scrn);
     mpKanteraIcon->setScreen(scrn);
 

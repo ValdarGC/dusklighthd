@@ -50,6 +50,98 @@ bool advance_repeat_hit(f32& frame, u8& cycle, f32 period, f32& elapsedFrames) {
 #define STR_BUF_LEN 512
 #endif
 
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/logging.h"
+#include "m_Do/m_Do_graphic.h"
+
+// ---- TPHD (Wii U TV) interaction prompt --------------------------------------------------------
+// TPHD dMeterButton_c uses /res/LayoutRevo/buttonR.arc -> zelda_game_image_button_info_revo.blo
+// (screenSet 0x02a3e848, updateButton 0x02a3d914, getCenterPosCalc 0x02a49c68, setString
+// 0x02a4a808, trans_button 0x02a47388). The class logic is the GC one; the differences are the
+// layout (pane names / positions), the EmpButton HIO defaults (ctor 0x02a4ed14) and trans_button,
+// which on the TV puts every regular button on the LEFT of its caption with a 10-unit gap.
+extern JKRArchive* g_tphdButtonRevoArchive;
+namespace {
+bool s_btnRevo = false;
+
+u64 btnRevoTag(u64 tag) {
+    if (!s_btnRevo) {
+        return tag;
+    }
+    static const u64 kMap[][2] = {
+        {MULTI_CHAR('abtn_n'), MULTI_CHAR('abtn_r_n')}, {MULTI_CHAR('bbtn_n'), MULTI_CHAR('bbtn_r_n')},
+        {MULTI_CHAR('rbtn_n'), MULTI_CHAR('r_btn_n')},  {MULTI_CHAR('zbtn_n'), MULTI_CHAR('l_btn_n')},
+        {MULTI_CHAR('cbtn_n'), MULTI_CHAR('jujbtn_n')}, {MULTI_CHAR('xbtn_n'), MULTI_CHAR('x_btn_n')},
+        {MULTI_CHAR('ybtn_n'), MULTI_CHAR('y_btn_n')},  {MULTI_CHAR('as_b_n'), MULTI_CHAR('rs_btn_n')},
+        {'zbtn', MULTI_CHAR('l_btn_n')},                {MULTI_CHAR('z_btnl'), MULTI_CHAR('l_txt')},
+        {MULTI_CHAR('yaji_un'), MULTI_CHAR('red_00')},  {MULTI_CHAR('yaji_ln'), MULTI_CHAR('red_01')},
+        {MULTI_CHAR('yaji_dn'), MULTI_CHAR('red_02')},  {MULTI_CHAR('yaji_rn'), MULTI_CHAR('red_03')},
+        {MULTI_CHAR('a_btn1'), MULTI_CHAR('a_btn_c2')}, {MULTI_CHAR('b_btn'), MULTI_CHAR('b_btn_cp')},
+        {MULTI_CHAR('r_btn_b'), MULTI_CHAR('r_txt')},   {MULTI_CHAR('c_btn'), MULTI_CHAR('juji_btn')},
+        {MULTI_CHAR('x_btn'), MULTI_CHAR('x_txt')},     {MULTI_CHAR('y_btn'), MULTI_CHAR('y_txt')},
+        // captions: TPHD has a main box + an 's_01' outline copy per slot and language
+        {MULTI_CHAR('fnfo_ar0'), MULTI_CHAR('fnfo_a4')}, {MULTI_CHAR('fnfo_ar1'), MULTI_CHAR('fnfo_a3')},
+        {MULTI_CHAR('fnfo_ar2'), MULTI_CHAR('fnfo_a4')}, {MULTI_CHAR('fnfo_ar3'), MULTI_CHAR('fnfo_a3')},
+        {MULTI_CHAR('fnfo_ar4'), MULTI_CHAR('fnfo_a4')}, {MULTI_CHAR('fnfo_ar5'), MULTI_CHAR('fnfo_a9')},
+        {MULTI_CHAR('fnfo_ar6'), MULTI_CHAR('fnfo_a8')}, {MULTI_CHAR('fnfo_ar7'), MULTI_CHAR('fnfo_a9')},
+        {MULTI_CHAR('fnfo_ar8'), MULTI_CHAR('fnfo_a8')}, {MULTI_CHAR('fnfo_ar9'), MULTI_CHAR('fnfo_a9')},
+        {MULTI_CHAR('info_ar0'), MULTI_CHAR('info_ar4')}, {MULTI_CHAR('info_ar1'), MULTI_CHAR('info_ar3')},
+        {MULTI_CHAR('info_ar2'), MULTI_CHAR('info_ar4')}, {MULTI_CHAR('info_ar3'), MULTI_CHAR('info_ar3')},
+        {MULTI_CHAR('info_ar4'), MULTI_CHAR('info_ar4')}, {MULTI_CHAR('info_ar5'), MULTI_CHAR('info_ar5')},
+        {MULTI_CHAR('info_ar6'), MULTI_CHAR('info_ar6')}, {MULTI_CHAR('info_ar7'), MULTI_CHAR('info_ar5')},
+        {MULTI_CHAR('info_ar8'), MULTI_CHAR('info_ar6')}, {MULTI_CHAR('info_ar9'), MULTI_CHAR('info_ar5')},
+    };
+    for (const auto& m : kMap) {
+        if (m[0] == tag) {
+            return m[1];
+        }
+    }
+    return tag;
+}
+
+J2DPane* btnSearch(J2DScreen* scr, u64 tag) {
+    J2DPane* p = scr->search(btnRevoTag(tag));
+    if (p == NULL && s_btnRevo) {
+        // panes of the GC layout with no TPHD counterpart (Wii remote only): harmless stand-in
+        static J2DPane* s_dummy = NULL;
+        if (s_dummy == NULL) {
+            s_dummy = new J2DPane();
+            s_dummy->hide();
+        }
+        return s_dummy;
+    }
+    return p;
+}
+
+// TPHD dMeter_drawEmpButtonHIO_c defaults (ctor 0x02a4ed14, struct = GC layout - 4 bytes) where they
+// differ from the GC ones: the revo layout already holds the prompt at the bottom of the screen.
+void btnApplyRevoHio() {
+    dMeter_drawEmpButtonHIO_c& h = g_drawHIO.mEmpButton;
+    h.mEmpButtonPosX = 0.0f;
+    h.mEmpButtonPosY = 0.0f;
+    h.mEmpButtonScale = 1.0f;
+    h.mSButtonPosY = 0.0f;
+    h.mSButtonScale = 1.0f;
+    h.mViewChangePosX = 0.0f;
+    h.mViewChangePosY = 0.0f;
+    h.mText1PosX = h.mText2PosX = 0.0f;
+    h.mText1PosY = h.mText2PosY = 0.0f;
+    h.mItemPosX = 0.0f;
+    h.mDisplaySpace = 70.0f;
+}
+
+f32 btnRevoScaleX() {
+    return (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+}
+}  // namespace
+#define BTN_SEARCH(scr, tag) btnSearch(scr, tag)
+#define BTN_TAG(tag) btnRevoTag(tag)
+#else
+#define BTN_SEARCH(scr, tag) (scr)->search(tag)
+#define BTN_TAG(tag) (tag)
+#endif
+
 dMeterButton_c::dMeterButton_c() {
     _create();
 }
@@ -62,6 +154,11 @@ int dMeterButton_c::_create() {
     OS_REPORT("dMeterButton_c::_create\n");
     screenInitButton();
     screenInitText();
+#if TARGET_PC
+    if (s_btnRevo) {
+        screenInitButtonRevo();
+    }
+#endif
     return cPhs_COMPLEATE_e;
 }
 
@@ -172,42 +269,42 @@ int dMeterButton_c::_execute(u32 i_flags, bool i_drawA, bool i_drawB, bool i_dra
         u8 dir_3D = dComIfGp_get3DDirection();
 
         if (dir_3D & DIR_LEFT_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_l_n'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_l_n'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_l_n'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_l_n'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_l_n'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_l_n'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_l_n'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_l_n'))->hide();
             }
         }
 
         if (dir_3D & DIR_UP_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_u_n'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_u_n'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_u_n'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_u_n'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_u_n'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_u_n'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_u_n'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_u_n'))->hide();
             }
         }
 
         if (dir_3D & DIR_DOWN_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_d_n'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_d_n'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_d_n'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_d_n'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_d_n'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_d_n'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_d_n'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_d_n'))->hide();
             }
         }
 
         if (dir_3D & DIR_RIGHT_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_r_n'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_r_n'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_r_n'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_r_n'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_r_n'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_r_n'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_r_n'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_r_n'))->hide();
             }
         }
     }
@@ -216,39 +313,39 @@ int dMeterButton_c::_execute(u32 i_flags, bool i_drawA, bool i_drawB, bool i_dra
         u8 dir_c = dComIfGp_getCStickDirection();
 
         if (dir_c & DIR_LEFT_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_ln'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_ln'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_ln'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_ln'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_ln'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_ln'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_ln'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_ln'))->hide();
             }
         }
 
         if (dir_c & DIR_UP_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_un'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_un'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_un'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_un'))->show();
             }
         } else {
-            if (mpButtonScreen->search(MULTI_CHAR('yaji_un'))->isVisible() == true) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_un'))->hide();
+            if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_un'))->isVisible() == true) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_un'))->hide();
             }
         }
 
         if (dir_c & DIR_DOWN_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_dn'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_dn'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_dn'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_dn'))->show();
             }
-        } else if (mpButtonScreen->search(MULTI_CHAR('yaji_dn'))->isVisible() == true) {
-            mpButtonScreen->search(MULTI_CHAR('yaji_dn'))->hide();
+        } else if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_dn'))->isVisible() == true) {
+            BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_dn'))->hide();
         }
 
         if (dir_c & DIR_RIGHT_e) {
-            if (!mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->isVisible()) {
-                mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->show();
+            if (!BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->isVisible()) {
+                BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->show();
             }
-        } else if (mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->isVisible() == true) {
-            mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->hide();
+        } else if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->isVisible() == true) {
+            BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->hide();
         }
     }
 
@@ -291,7 +388,24 @@ void dMeterButton_c::draw() {
     }
 #endif
 
+#if TARGET_PC
+    if (s_btnRevo) {
+        // 604-unit canvas stretched to the screen width; info_n carries user info 'n_43', so (as in
+        // Wii U J2DPane::draw 0x02b34334) its subtree stays 1:1 around its anchor.
+        const f32 sx = btnRevoScaleX();
+        J2DPane* info = mpParent->getPanePtr();
+        const f32 keepX = info->getScaleX();
+        info->scale(keepX / sx, info->getScaleY());
+        mpButtonScreen->scale(sx, 1.0f);
+        mpButtonScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_ctx);
+        info->scale(keepX, info->getScaleY());
+        mpButtonScreen->scale(1.0f, 1.0f);
+    } else {
+        mpButtonScreen->draw(0.0f, 0.0f, graf_ctx);
+    }
+#else
     mpButtonScreen->draw(0.0f, 0.0f, graf_ctx);
+#endif
     if (field_0x00c != NULL) {
         field_0x00c->draw(0.0f, 0.0f, graf_ctx);
     }
@@ -372,7 +486,8 @@ void dMeterButton_c::draw() {
                     (dComIfGp_getDoStatus() == 0x3B || dComIfGp_getDoStatus() == 0x3F ||
                      dComIfGp_getDoStatus() == 0x40) &&
                     DUSK_IF_ELSE(blinkA, dMeter2Info_isBlinkButton(1))) ||
-                   (field_0x4be[i] == BUTTON_B_e && dComIfGp_getAStatus() == 0x3A &&
+                   ((field_0x4be[i] == BUTTON_B_e || (s_btnRevo && field_0x4be[i] == BUTTON_Y_e)) &&
+                    dComIfGp_getAStatus() == 0x3A &&
                     DUSK_IF_ELSE(blinkB, dMeter2Info_isBlinkButton(2))))
         {
             var_r22 = 1;
@@ -429,6 +544,42 @@ void dMeterButton_c::draw() {
             }
 
             if (var_r3) {
+#if TARGET_PC
+                if (s_btnRevo) {
+                    // Exact button center in 2D screen space:
+                    // When trans_button runs, the button sits on the left of the text with gap 10.
+                    // The combined prompt (button + caption) is centered horizontally at screenCenter.
+                    // Thus the button center is at:
+                    //   x = screenCenter - half
+                    // where half = (mButtonWidth[btn_id] + field_0x29c[i] + gap) * 0.5f - mButtonWidth[btn_id] * 0.5f.
+                    // In Y, info_n Y + button Y + half button height gives the exact center.
+                    CPaneMgr* pane = NULL;
+                    switch (field_0x4be[i]) {
+                    case BUTTON_A_e: pane = mpButtonA; break;
+                    case BUTTON_B_e: pane = mpButtonB; break;
+                    case BUTTON_R_e: pane = mpButtonR; break;
+                    case BUTTON_Z_e: pane = mpButtonZ; break;
+                    case BUTTON_3D_e: pane = mpButton3D; break;
+                    case BUTTON_C_e: pane = mpButtonC; break;
+                    case BUTTON_S_e: pane = mpButtonS; break;
+                    case BUTTON_X_e: pane = mpButtonX; break;
+                    case BUTTON_Y_e: pane = mpButtonY; break;
+                    case BUTTON_BIN_e: pane = mpButtonBin; break;
+                    default: break;
+                    }
+                    if (pane != NULL && pane->getPanePtr() != NULL && mpParent != NULL && mpParent->getPanePtr() != NULL) {
+                        const f32 screenCenter = (mDoGph_gInf_c::getMinXF() + mDoGph_gInf_c::getMaxX()) * 0.5f;
+                        const f32 gap = dusk::version::isRegionJpn() ? 0.0f : 10.0f;
+                        const u8 btn_id = field_0x4be[i];
+                        const f32 pair = mButtonWidth[btn_id] + field_0x29c[i] + gap;
+                        const f32 half = pair * 0.5f - mButtonWidth[btn_id] * 0.5f;
+                        vtx.x = screenCenter - half;
+                        vtx.y = mpParent->getPanePtr()->getBounds().i.y +
+                                pane->getPanePtr()->getBounds().i.y +
+                                pane->getPanePtr()->getHeight() * 0.5f;
+                    }
+                }
+#endif
                 if (var_r22) {
                     if (field_0x2e8[i] == 18.0f) {
                         mDoAud_seStart(Z2SE_SY_HINT_BUTTON_BLINK, NULL, 0, 0);
@@ -470,11 +621,23 @@ void dMeterButton_c::draw() {
                         g_drawHIO.mEmpButton.mPikariFastBackInner,
                         g_drawHIO.mEmpButton.mPikariFastAnimSpeed, 0);
                 } else {
+#if TARGET_PC
+                    // Wii U dMeter_drawEmpButtonHIO_c ctor (RPX 0x02a4ed18): the outer colours of
+                    // the button flash are white (255,255,255,0), not the GC greens.
+                    const bool hd_white = dusk::tphd_active();
+                    const JUtility::TColor front_outer =
+                        hd_white ? JUtility::TColor(255, 255, 255, 0) : g_drawHIO.mEmpButton.mPikariFrontOuter;
+                    const JUtility::TColor back_outer =
+                        hd_white ? JUtility::TColor(255, 255, 255, 0) : g_drawHIO.mEmpButton.mPikariBackOuter;
+#else
+                    const JUtility::TColor front_outer = g_drawHIO.mEmpButton.mPikariFrontOuter;
+                    const JUtility::TColor back_outer = g_drawHIO.mEmpButton.mPikariBackOuter;
+#endif
                     dMeter2Info_getMeterClass()->getMeterDrawPtr()->drawPikari(
                         vtx.x, vtx.y, &field_0x2e8[i], g_drawHIO.mEmpButton.mPikariScale,
-                        g_drawHIO.mEmpButton.mPikariFrontOuter,
+                        front_outer,
                         g_drawHIO.mEmpButton.mPikariFrontInner,
-                        g_drawHIO.mEmpButton.mPikariBackOuter,
+                        back_outer,
                         g_drawHIO.mEmpButton.mPikariBackInner,
                         g_drawHIO.mEmpButton.mPikariAnimSpeed, 0);
                 }
@@ -1070,17 +1233,34 @@ void dMeterButton_c::screenInitButton() {
 
     OS_REPORT("load zelda_game_image_button_info.blo");
 
+#if TARGET_PC
+    s_btnRevo = dusk::tphd_active() && g_tphdButtonRevoArchive != NULL;
+    if (s_btnRevo) {
+        btnApplyRevoHio();
+    }
+    bool fg = s_btnRevo ? mpButtonScreen->setPriority("zelda_game_image_button_info_revo.blo",
+                                                      0x20000, g_tphdButtonRevoArchive)
+                        : mpButtonScreen->setPriority("zelda_game_image_button_info.blo", 0x20000,
+                                                      dComIfGp_getMeterButtonArchive());
+#else
     bool fg = mpButtonScreen->setPriority("zelda_game_image_button_info.blo", 0x20000,
                                           dComIfGp_getMeterButtonArchive());
+#endif
     JUT_ASSERT(1857, fg != false);
     if (!fg) {
         OS_REPORT("[%s] %d\n", __FILE__, 1859);
     }
 
+#if TARGET_PC
+    if (!s_btnRevo) {
+        dPaneClass_showNullPane(mpButtonScreen);
+    }
+#else
     dPaneClass_showNullPane(mpButtonScreen);
+#endif
     field_0x00c = NULL;
 
-    mpParent = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('info_n'), 0, NULL);
+    mpParent = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('info_n')), 0, NULL);
     if (mpParent == NULL)
         OS_REPORT("[%s] %d\n", __FILE__, 1867);
     JUT_ASSERT(1868, mpParent != NULL);
@@ -1105,7 +1285,7 @@ void dMeterButton_c::screenInitButton() {
     mParentCenterX = (FB_WIDTH_BASE / 2.0f) - mpParent->getInitCenterPosX();
     paneTrans(mpParent, mParentCenterX, 0.0f, 0xFF);
 
-    mpButtonA = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('abtn_n'), 2, NULL);
+    mpButtonA = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('abtn_n')), 2, NULL);
     if (mpButtonA == NULL) {
         OS_REPORT("[%s] %d\n", __FILE__, 1902);
     }
@@ -1113,7 +1293,7 @@ void dMeterButton_c::screenInitButton() {
     mpButtonA->setAlphaRate(0.0f);
     mpButtonA->show();
 
-    mpButtonB = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('bbtn_n'), 2, NULL);
+    mpButtonB = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('bbtn_n')), 2, NULL);
     if (mpButtonB == NULL) {
         OS_REPORT("[%s] %d\n", __FILE__, 1914);
     }
@@ -1121,7 +1301,7 @@ void dMeterButton_c::screenInitButton() {
     mpButtonB->setAlphaRate(0.0f);
     mpButtonB->show();
 
-    mpButtonR = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('rbtn_n'), 2, NULL);
+    mpButtonR = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('rbtn_n')), 2, NULL);
     if (mpButtonR == NULL) {
         OS_REPORT("[%s] %d\n", __FILE__, 1932);
     }
@@ -1129,7 +1309,7 @@ void dMeterButton_c::screenInitButton() {
     mpButtonR->setAlphaRate(0.0f);
     mpButtonR->show();
 
-    mpMidona = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('midona'), 0, NULL);
+    mpMidona = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('midona')), 0, NULL);
     JUT_ASSERT(1939, mpMidona != NULL);
     if (mpMidona == NULL) {
         OS_REPORT("[%s] %d\n", __FILE__, 1941);
@@ -1140,13 +1320,13 @@ void dMeterButton_c::screenInitButton() {
     }
 
     #if DEBUG
-    if (mpButtonScreen->search('zbtn') == 0) OS_REPORT("[%s] %d\n", __FILE__, 1947);
-    if (mpButtonScreen->search(MULTI_CHAR('z_btnl')) == 0) OS_REPORT("[%s] %d\n", __FILE__, 1948);
+    if (BTN_SEARCH(mpButtonScreen, 'zbtn') == 0) OS_REPORT("[%s] %d\n", __FILE__, 1947);
+    if (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('z_btnl')) == 0) OS_REPORT("[%s] %d\n", __FILE__, 1948);
     #endif
-    mpButtonScreen->search('zbtn')->show();
-    mpButtonScreen->search(MULTI_CHAR('z_btnl'))->show();
+    BTN_SEARCH(mpButtonScreen, 'zbtn')->show();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('z_btnl'))->show();
 
-    mpButtonZ = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('zbtn_n'), 2, NULL);
+    mpButtonZ = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('zbtn_n')), 2, NULL);
     if (mpButtonZ == NULL) {
         OS_REPORT("[%s] %d\n", __FILE__, 1954);
     }
@@ -1154,35 +1334,35 @@ void dMeterButton_c::screenInitButton() {
     mpButtonZ->setAlphaRate(0.0f);
     mpButtonZ->show();
 
-    mpButton3D = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('asbtn_n'), 2, NULL);
+    mpButton3D = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('asbtn_n')), 2, NULL);
     JUT_ASSERT(1964, mpButton3D != NULL);
     mpButton3D->setAlphaRate(0.0f);
     mpButton3D->show();
 
-    mpButtonScreen->search(MULTI_CHAR('yaji_l_n'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_u_n'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_d_n'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_r_n'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_l_n'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_u_n'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_d_n'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_r_n'))->hide();
 
-    mpButtonC = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('cbtn_n'), 2, NULL);
+    mpButtonC = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('cbtn_n')), 2, NULL);
     JUT_ASSERT(1992, mpButtonC != NULL);
     mpButtonC->setAlphaRate(0.0f);
     mpButtonC->show();
 
-    mpButtonScreen->search(MULTI_CHAR('yaji_ln'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_un'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_dn'))->hide();
-    mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_ln'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_un'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_dn'))->hide();
+    BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->hide();
 
-    mpButtonS = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('sbtn_n'), 2, NULL);
+    mpButtonS = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('sbtn_n')), 2, NULL);
     JUT_ASSERT(2002, mpButtonS != NULL);
     mpButtonS->setAlphaRate(0.0f);
 
-    mpButtonX = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('xbtn_n'), 2, NULL);
+    mpButtonX = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('xbtn_n')), 2, NULL);
     JUT_ASSERT(2048, mpButtonX != NULL);
     mpButtonX->setAlphaRate(0.0f);
 
-    mpButtonY = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('ybtn_n'), 2, NULL);
+    mpButtonY = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('ybtn_n')), 2, NULL);
     JUT_ASSERT(2052, mpButtonY != NULL);
     mpButtonY->setAlphaRate(0.0f);
 
@@ -1191,7 +1371,7 @@ void dMeterButton_c::screenInitButton() {
     mpButtonRemo2 = NULL;
     mpButtonAR = NULL;
 
-    mpButton3DB = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('as_b_n'), 2, NULL);
+    mpButton3DB = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('as_b_n')), 2, NULL);
     JUT_ASSERT(2060, mpButton3DB != NULL);
     mpButton3DB->setAlphaRate(0.0f);
 
@@ -1203,19 +1383,19 @@ void dMeterButton_c::screenInitButton() {
     mpButtonNunZ = NULL;
     mpButtonNunC = NULL;
 
-    mpButtonBin = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('bottl_n'), 2, NULL);
+    mpButtonBin = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('bottl_n')), 2, NULL);
     JUT_ASSERT(2071, mpButtonBin != NULL);
     mpButtonBin->setAlphaRate(0.0f);
 
-    mpText[0] = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('text_n'), 2, NULL);
+    mpText[0] = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('text_n')), 2, NULL);
     JUT_ASSERT(2075, mpText[0] != NULL);
     mpText[0]->setAlphaRate(0.0f);
 
-    mpText[1] = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('text2_n'), 2, NULL);
+    mpText[1] = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('text2_n')), 2, NULL);
     JUT_ASSERT(2079, mpText[1] != NULL);
     mpText[1]->setAlphaRate(0.0f);
 
-    mpItem_c = JKR_NEW CPaneMgr(mpButtonScreen, MULTI_CHAR('fishing'), 0, NULL);
+    mpItem_c = JKR_NEW CPaneMgr(mpButtonScreen, BTN_TAG(MULTI_CHAR('fishing')), 0, NULL);
     JUT_ASSERT(2083, mpItem_c != NULL);
     mpItem_c->setAlphaRate(0.0f);
 
@@ -1240,20 +1420,20 @@ void dMeterButton_c::screenInitButton() {
     for (int i = 0; i < 10; i++) {
 #if TARGET_PC
         if (dusk::version::isJpnOrLessThanWiiJpn()) {
-            mpTextBox[i] = (J2DTextBox*)mpButtonScreen->search(text_tag[i]);
+            mpTextBox[i] = (J2DTextBox*)BTN_SEARCH(mpButtonScreen, text_tag[i]);
             if (dusk::version::getGameVersion() >= dusk::version::GameVersion::WiiJpn) {
-                mpButtonScreen->search(ftext_tag[i])->hide();
+                BTN_SEARCH(mpButtonScreen, ftext_tag[i])->hide();
             }
         } else {
-            mpTextBox[i] = (J2DTextBox*)mpButtonScreen->search(ftext_tag[i]);
-            mpButtonScreen->search(text_tag[i])->hide();
+            mpTextBox[i] = (J2DTextBox*)BTN_SEARCH(mpButtonScreen, ftext_tag[i]);
+            BTN_SEARCH(mpButtonScreen, text_tag[i])->hide();
         }
 #elif VERSION == VERSION_GCN_JPN
-        mpTextBox[i] = (J2DTextBox*)mpButtonScreen->search(text_tag[i]);
-        mpButtonScreen->search(ftext_tag[i])->hide();
+        mpTextBox[i] = (J2DTextBox*)BTN_SEARCH(mpButtonScreen, text_tag[i]);
+        BTN_SEARCH(mpButtonScreen, ftext_tag[i])->hide();
 #else
-        mpTextBox[i] = (J2DTextBox*)mpButtonScreen->search(ftext_tag[i]);
-        mpButtonScreen->search(text_tag[i])->hide();
+        mpTextBox[i] = (J2DTextBox*)BTN_SEARCH(mpButtonScreen, ftext_tag[i]);
+        BTN_SEARCH(mpButtonScreen, text_tag[i])->hide();
 #endif
 
         mpTextBox[i]->setFont(mDoExt_getMesgFont());
@@ -1290,10 +1470,10 @@ void dMeterButton_c::screenInitButton() {
     {
         CPaneMgr pane;
         Mtx m, m2;
-        Vec sp108 = pane.getGlobalVtx(mpButtonScreen->search('zbtn'), &m, 0, false, 0);
-        Vec spFC = pane.getGlobalVtx(mpButtonScreen->search('zbtn'), &m, 3, false, 0);
-        Vec spF0 = pane.getGlobalVtx(mpButtonScreen->search(MULTI_CHAR('midona')), &m2, 0, false, 0);
-        Vec spE4 = pane.getGlobalVtx(mpButtonScreen->search(MULTI_CHAR('midona')), &m2, 3, false, 0);
+        Vec sp108 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, 'zbtn'), &m, 0, false, 0);
+        Vec spFC = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, 'zbtn'), &m, 3, false, 0);
+        Vec spF0 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, MULTI_CHAR('midona')), &m2, 0, false, 0);
+        Vec spE4 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, MULTI_CHAR('midona')), &m2, 3, false, 0);
 
         f32 var_f2;
         if (sp108.x > spF0.x) {
@@ -1471,6 +1651,103 @@ void dMeterButton_c::screenInitButton() {
     OS_REPORT("exit dMeterButton_c::screenInitButton\n");
 }
 
+#if TARGET_PC
+// TPHD screenSet (0x02a3e848) specifics applied on top of the shared GC initialisation.
+void dMeterButton_c::screenInitButtonRevo() {
+    J2DScreen* scr = mpButtonScreen;
+    if (!scr) return;
+
+    auto hideTree = [](J2DPane* p, auto& self) -> void {
+        if (!p) return;
+        p->hide();
+        p->setAlpha(0);
+        for (JSUTree<J2DPane>* node = p->getFirstChild(); node != NULL; node = node->getNextChild()) {
+            self(node->getObject(), self);
+        }
+    };
+
+    auto hidePane = [&](u64 tag) {
+        if (J2DPane* p = scr->search(tag)) {
+            hideTree(p, hideTree);
+        }
+    };
+
+    auto setVis = [scr](u64 tag, bool vis) {
+        if (J2DPane* p = scr->search(tag)) {
+            if (vis) {
+                p->show();
+            } else {
+                p->hide();
+            }
+        }
+    };
+
+    // 1. Root-level Wii Remote / Nunchuk panes sitting in the screen centre (434..479, 208):
+    static const u64 kRootHide[] = {
+        MULTI_CHAR('nstick_1'), MULTI_CHAR('nuncha_1'), MULTI_CHAR('ny_mae_1'),
+    };
+    for (u64 t : kRootHide) {
+        hidePane(t);
+    }
+
+    // 2. Icon groups and motion/nunchuk trees under info_n that are unused on the TV Pro Controller:
+    static const u64 kHideGroups[] = {
+        MULTI_CHAR('nstick_n'), MULTI_CHAR('action_n'), MULTI_CHAR('rimoco_n'), MULTI_CHAR('a_to_r_n'),
+        MULTI_CHAR('nu_re_n'),  MULTI_CHAR('n_kuru_n'), MULTI_CHAR('AB_null'),  MULTI_CHAR('n_only_n'),
+        MULTI_CHAR('tate_n'),   MULTI_CHAR('a_btn_n'),  MULTI_CHAR('b_btn_n'),  MULTI_CHAR('p_btn_n'),
+        MULTI_CHAR('m_btn_n'),  MULTI_CHAR('z_btn_n'),  MULTI_CHAR('zl_btn_n'), MULTI_CHAR('zr_btn_n'),
+        MULTI_CHAR('ls_btn_n'), MULTI_CHAR('rs_btn_n'), MULTI_CHAR('midna_n'), MULTI_CHAR('c_btn_n'),
+    };
+    for (u64 t : kHideGroups) {
+        hidePane(t);
+    }
+
+    // 3. Pro Controller icon selections within active button groups:
+    setVis(MULTI_CHAR('a_btn_c2'), false);
+    setVis(MULTI_CHAR('a_btn'), false);
+    setVis(MULTI_CHAR('b_text_a'), false);
+    setVis(MULTI_CHAR('b_text_2'), true);   // tr_a_btn_00
+
+    setVis(MULTI_CHAR('b_btn1'), false);
+    setVis(MULTI_CHAR('b_btn_cp'), false);
+    setVis(MULTI_CHAR('b_texb_s'), false);
+    setVis(MULTI_CHAR('b_text_b'), true);   // tr_b_btn_00
+
+    setVis(MULTI_CHAR('as_btn1'), false);   // GamePad
+    setVis(MULTI_CHAR('as_btn2'), false);   // right stick
+    setVis(MULTI_CHAR('as_btn'), true);     // left stick
+    setVis(MULTI_CHAR('yaji_l_n'), false);
+    setVis(MULTI_CHAR('yaji_u_n'), false);
+    setVis(MULTI_CHAR('yaji_d_n'), false);
+    setVis(MULTI_CHAR('yaji_r_n'), false);
+
+    setVis(MULTI_CHAR('a_btn2'), false);
+    setVis(MULTI_CHAR('a_btn_l2'), false);
+    setVis(MULTI_CHAR('a_btn_t1'), true);   // tr_plus
+
+    setVis(MULTI_CHAR('juji_btn'), true);
+    setVis(MULTI_CHAR('red_00'), false);
+    setVis(MULTI_CHAR('red_01'), false);
+    setVis(MULTI_CHAR('red_02'), false);
+    setVis(MULTI_CHAR('red_03'), false);
+
+    setVis(MULTI_CHAR('rs_txt'), false);
+
+    // Bottle prompt ("Scoop"...): the group and its bottle picture are hidden in the blo; the
+    // alpha animation of mpButtonBin makes them appear like the other buttons.
+    setVis(MULTI_CHAR('bottl_n'), true);
+    setVis(MULTI_CHAR('bottle'), true);
+
+    // Button centres as screenSet stores them (0x26c..0x2c4): Z / Midna = l_btn_n centre, and the
+    // X / Y entries are 0 (their panes sit 304 units left of the centre in the layout).
+    field_0x244[3] = mpButtonZ->getGlobalVtxCenter(false, 0).x;
+    field_0x244[7] = 0.0f;
+    field_0x244[8] = 0.0f;
+    field_0x244[13] = 0.0f;
+    updateButton();
+}
+#endif
+
 void dMeterButton_c::screenInitText() {
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(2442, mpScreen != NULL);
@@ -1638,6 +1915,11 @@ void dMeterButton_c::screenInitText() {
 }
 
 void dMeterButton_c::updateButton() {
+#if TARGET_PC
+    if (s_btnRevo) {
+        btnApplyRevoHio();
+    }
+#endif
     f32 parent_x_offset = 0.0f;
     f32 parent_y_offset = 0.0f;
     f32 parent_scale_factor = 1.0f;
@@ -3141,7 +3423,7 @@ void dMeterButton_c::setString(char* i_string, u8 i_button, u8 param_2, u8 param
 }
 
 void dMeterButton_c::hideAll() {
-    mpButtonScreen->search('ROOT')->hide();
+    BTN_SEARCH(mpButtonScreen, 'ROOT')->hide();
 
     if (field_0x00c != NULL) {
         field_0x00c->search('ROOT')->hide();
@@ -3160,7 +3442,7 @@ f32 dMeterButton_c::getCenterPosCalc(u8 i_button, char* i_string, int param_2) {
         (mTextScale[param_2] * dMeter2Info_getStringLength(mpTextBox[0], i_string)) * temp_f0;
 
     if (field_0x4d9 == param_2 && field_0x4be[param_2] == 1) {
-        field_0x1e4[param_2] = mButtonBScale * mpButtonScreen->search(MULTI_CHAR('fishing'))->getWidth();
+        field_0x1e4[param_2] = mButtonBScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('fishing'))->getWidth();
     }
 
     field_0x29c[param_2] = field_0x1e4[param_2];
@@ -3173,15 +3455,15 @@ f32 dMeterButton_c::getCenterPosCalc(u8 i_button, char* i_string, int param_2) {
 
     switch (i_button) {
     case BUTTON_A_e:
-        mButtonWidth[i_button] = mButtonAScale * mpButtonScreen->search(MULTI_CHAR('a_btn1'))->getWidth();
+        mButtonWidth[i_button] = mButtonAScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('a_btn1'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_B_e:
-        mButtonWidth[i_button] = mButtonBScale * mpButtonScreen->search(MULTI_CHAR('b_btn'))->getWidth();
+        mButtonWidth[i_button] = mButtonBScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('b_btn'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_R_e:
-        mButtonWidth[i_button] = mButtonRScale * mpButtonScreen->search(MULTI_CHAR('r_btn_b'))->getWidth();
+        mButtonWidth[i_button] = mButtonRScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('r_btn_b'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_Z_e:
@@ -3189,10 +3471,10 @@ f32 dMeterButton_c::getCenterPosCalc(u8 i_button, char* i_string, int param_2) {
         {
             CPaneMgr pane;
             Mtx m, m2;
-            Vec sp124 = pane.getGlobalVtx(mpButtonScreen->search('zbtn'), &m, 0, false, 0);
-            Vec sp130 = pane.getGlobalVtx(mpButtonScreen->search('zbtn'), &m, 3, false, 0);
-            Vec sp13C = pane.getGlobalVtx(mpButtonScreen->search(MULTI_CHAR('midona')), &m2, 0, false, 0);
-            Vec sp148 = pane.getGlobalVtx(mpButtonScreen->search(MULTI_CHAR('midona')), &m2, 3, false, 0);
+            Vec sp124 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, 'zbtn'), &m, 0, false, 0);
+            Vec sp130 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, 'zbtn'), &m, 3, false, 0);
+            Vec sp13C = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, MULTI_CHAR('midona')), &m2, 0, false, 0);
+            Vec sp148 = pane.getGlobalVtx(BTN_SEARCH(mpButtonScreen, MULTI_CHAR('midona')), &m2, 3, false, 0);
 
             f32 var_f2;
             if (sp124.x > sp13C.x) {
@@ -3214,47 +3496,47 @@ f32 dMeterButton_c::getCenterPosCalc(u8 i_button, char* i_string, int param_2) {
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_3D_e:
-        mButtonWidth[i_button] = mButton3DScale * mpButtonScreen->search(MULTI_CHAR('as_btn1'))->getWidth();
+        mButtonWidth[i_button] = mButton3DScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('as_btn1'))->getWidth();
 
         if (dComIfGp_get3DDirection() & DIR_LEFT_e) {
-            mButtonWidth[i_button] += mButton3DScale * mpButtonScreen->search(MULTI_CHAR('yaji04'))->getWidth();
+            mButtonWidth[i_button] += mButton3DScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji04'))->getWidth();
         }
 
         if (dComIfGp_get3DDirection() & DIR_RIGHT_e) {
-            mButtonWidth[i_button] += mButton3DScale * mpButtonScreen->search(MULTI_CHAR('yaji02'))->getWidth();
+            mButtonWidth[i_button] += mButton3DScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji02'))->getWidth();
         }
 
         field_0x304[i_button] = 0.0f;
         break;
     case BUTTON_C_e:
         if (dComIfGp_checkCameraAttentionStatus(0, 8)) {
-            mButtonWidth[i_button] = mButtonCScale * mpButtonScreen->search(MULTI_CHAR('c_btn'))->getWidth();
+            mButtonWidth[i_button] = mButtonCScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('c_btn'))->getWidth();
             field_0x304[i_button] = 0.0f;
         } else {
             mButtonWidth[i_button] =
-                mButtonCScale * (mpButtonScreen->search(MULTI_CHAR('yaji_rn'))->getWidth() +
-                                 mpButtonScreen->search(MULTI_CHAR('c_btn'))->getWidth());
+                mButtonCScale * (BTN_SEARCH(mpButtonScreen, MULTI_CHAR('yaji_rn'))->getWidth() +
+                                 BTN_SEARCH(mpButtonScreen, MULTI_CHAR('c_btn'))->getWidth());
             field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         }
         break;
     case BUTTON_S_e:
-        mButtonWidth[i_button] = mButtonSScale * mpButtonScreen->search(MULTI_CHAR('a_btn2'))->getWidth();
+        mButtonWidth[i_button] = mButtonSScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('a_btn2'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_X_e:
-        mButtonWidth[i_button] = mButtonXScale * mpButtonScreen->search(MULTI_CHAR('x_btn'))->getWidth();
+        mButtonWidth[i_button] = mButtonXScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('x_btn'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_Y_e:
-        mButtonWidth[i_button] = mButtonYScale * mpButtonScreen->search(MULTI_CHAR('y_btn'))->getWidth();
+        mButtonWidth[i_button] = mButtonYScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('y_btn'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_3DB_e:
-        mButtonWidth[i_button] = mButton3DBScale * mpButtonScreen->search(MULTI_CHAR('as_b_n'))->getWidth();
+        mButtonWidth[i_button] = mButton3DBScale * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('as_b_n'))->getWidth();
         field_0x304[i_button] = field_0x1e4[param_2] + mButtonWidth[i_button];
         break;
     case BUTTON_BIN_e:
-        mButtonWidth[i_button] = field_0x5f0 * mpButtonScreen->search(MULTI_CHAR('bottl_n'))->getWidth();
+        mButtonWidth[i_button] = field_0x5f0 * BTN_SEARCH(mpButtonScreen, MULTI_CHAR('bottl_n'))->getWidth();
         field_0x304[i_button] = 0.0f;
         break;
     }
@@ -3289,6 +3571,60 @@ f32 dMeterButton_c::getCenterPosCalc(u8 i_button, char* i_string, int param_2) {
 
 void dMeterButton_c::trans_button(int i_idx, f32 param_1) {
     u8 button = field_0x4be[i_idx];
+#if TARGET_PC
+    if (s_btnRevo) {
+        // TPHD trans_button (0x02a47388, TV mode): gap 10 (0 for Japanese); the regular buttons
+        // (A, B, R, stick, d-pad, +, X, Y, bottle) get the offset negated -> button LEFT of the
+        // caption (text "type 0", without the field_0x360 term on the TV); Midna (L) keeps the GC
+        // "type 1" layout, NURE "type 2".
+        if (button == BUTTON_NONE_e) {
+            return;
+        }
+        const f32 screenCenter = (mDoGph_gInf_c::getMinXF() + mDoGph_gInf_c::getMaxX()) * 0.5f;
+        const f32 gap = dusk::version::isRegionJpn() ? 0.0f : 10.0f;
+        field_0x18c[button] = screenCenter - field_0x244[button];
+        const f32 pair = mButtonWidth[button] + field_0x29c[i_idx] + gap;
+        const f32 half = pair * 0.5f - mButtonWidth[button] * 0.5f;
+        bool neg = false;
+        int type = 0;
+        CPaneMgr* pane = NULL;
+        f32 px = 0.0f, py = 0.0f;
+        switch (button) {
+        case BUTTON_A_e: neg = true; pane = mpButtonA; px = mButtonAPosX; py = mButtonAPosY; break;
+        case BUTTON_B_e: neg = true; pane = mpButtonB; px = mButtonBPosX; py = mButtonBPosY; break;
+        case BUTTON_R_e: neg = true; pane = mpButtonR; px = mButtonRPosX; py = mButtonRPosY; break;
+        case BUTTON_Z_e: type = 1; pane = mpButtonZ; px = mButtonZPosX; py = mButtonZPosY; break;
+        case BUTTON_3D_e: neg = true; pane = mpButton3D; px = mButton3DPosX; py = mButton3DPosY; break;
+        case BUTTON_C_e: neg = true; pane = mpButtonC; px = mButtonCPosX; py = mButtonCPosY; break;
+        case BUTTON_S_e: neg = true; pane = mpButtonS; px = mButtonSPosX; py = mButtonSPosY; break;
+        case BUTTON_X_e: neg = true; pane = mpButtonX; px = mButtonXPosX; py = mButtonXPosY; break;
+        case BUTTON_Y_e: neg = true; pane = mpButtonY; px = mButtonYPosX; py = mButtonYPosY; break;
+        case BUTTON_BIN_e: neg = true; pane = mpButtonBin; px = mButtonBinPosX; py = mButtonBinPosY; break;
+        case BUTTON_NURE_e: type = 2; break;
+        default: break;
+        }
+        field_0x304[button] = neg ? -half : half;
+        if (pane != NULL) {
+            paneTrans(pane, field_0x304[button] + (param_1 + (px + field_0x18c[button])), py, 0xFF);
+        }
+        const f32 base = field_0x35c * 0.5f + (screenCenter - field_0x2e0[i_idx]);
+        f32 tx;
+        if (type == 0) {
+            // caption starts after the button AND the gap (without it the caption touched the
+            // button: "A" overlapping the "S" of "Speak")
+            tx = mButtonWidth[button] + gap + base - pair * 0.5f;
+        } else if (type == 1) {
+            tx = base + field_0x360 - pair * 0.5f;
+        } else {
+            tx = base + field_0x360 - field_0x29c[i_idx] * 0.5f;
+        }
+        paneTrans(mpText[i_idx], param_1 + (mTextPosX[i_idx] + tx), mTextPosY[i_idx] - 2.0f, i_idx);
+        if (field_0x4d9 == i_idx) {
+            paneTrans(mpItem_c, mItemPosX + param_1, mItemPosY, 0xFF);
+        }
+        return;
+    }
+#endif
 
     if (button != BUTTON_NONE_e) {
         f32 buttonPosOffsetX = 0.0f;

@@ -26,6 +26,31 @@
 #include "JSystem/J3DGraphBase/J3DTransform.h"
 
 #include <absl/container/flat_hash_map.h>
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "m_Do/m_Do_ext.h"
+#include "JSystem/JKernel/JKRExpHeap.h"
+
+extern JKRArchive* g_tphdMsgRes0RevoArchive;
+
+namespace {
+// TPHD state of a choice window (zelda_window_3menu_revo.blo, Wii U dMsgScrn3Select_c ctor
+// 0x02a6f8e0 / draw 0x02a70e58). Kept outside the class: the class is allocated by other
+// translation units (talk / item / explain / insect screens), so its size must not change.
+struct Hd3Sel {
+    const dMsgScrn3Select_c* owner = NULL;
+    J2DPane* btnOn[3] = {};
+};
+Hd3Sel s_hd3sel[8];
+Hd3Sel* hd3sel(const dMsgScrn3Select_c* o) {
+    for (Hd3Sel& e : s_hd3sel) {
+        if (e.owner == o) {
+            return &e;
+        }
+    }
+    return NULL;
+}
+}  // namespace
 
 namespace {
 struct SelectionAnimation {
@@ -75,28 +100,72 @@ dMsgScrn3Select_c::dMsgScrn3Select_c() {
         MULTI_CHAR('sel_po02'), MULTI_CHAR('c_kahen'), MULTI_CHAR('c_cursor')
     };
 
+#if TARGET_PC
+    // The Revo window (more panes, Wii U materials) does not fit in the small heaps the message
+    // and menu screens are built in (allocation failure when talking / opening the insect
+    // screen): build it in the J2D heap. Everything is freed by the destructor (JKR_DELETE finds
+    // the owning heap).
+    JKRHeap* hdOldHeap = NULL;
+    bool hdNew = false;
+    if (dusk::tphd_active() && g_tphdMsgRes0RevoArchive != NULL) {
+        hdOldHeap = mDoExt_getJ2dHeap()->becomeCurrentHeap();
+    }
+#endif
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpScreen != NULL);
 
+#if TARGET_PC
+    // TPHD (ctor 0x02a6f8e0): zelda_window_3menu_revo.blo / .bck / .bpk / .btk. Same panes and
+    // animations as the GC window plus the Wii U button plates (btnoff* / btnon*).
+    JKRArchive* arc = dComIfGp_getMsgArchive(0);
+    const char* blo = "zelda_window_3menu.blo";
+    const char* bck = "zelda_window_3menu.bck";
+    const char* bpk = "zelda_window_3menu.bpk";
+    const char* btk = "zelda_window_3menu.btk";
+    if (dusk::tphd_active() && g_tphdMsgRes0RevoArchive != NULL &&
+        JKRGetNameResource("zelda_window_3menu_revo.blo", g_tphdMsgRes0RevoArchive) != NULL)
+    {
+        hdNew = true;
+        arc = g_tphdMsgRes0RevoArchive;
+        blo = "zelda_window_3menu_revo.blo";
+        bck = "zelda_window_3menu_revo.bck";
+        bpk = "zelda_window_3menu_revo.bpk";
+        btk = "zelda_window_3menu_revo.btk";
+    }
+    bool fg = mpScreen->setPriority(blo, 0x20000, arc);
+#else
     bool fg = mpScreen->setPriority("zelda_window_3menu.blo", 0x20000, dComIfGp_getMsgArchive(0));
+#endif
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpScreen);
 
     OSInitFastCast();
 
+#if TARGET_PC
+    mpAnmBck = (J2DAnmTransform*)J2DAnmLoaderDataBase::load(JKRGetNameResource(bck, arc));
+#else
     mpAnmBck = (J2DAnmTransform*)J2DAnmLoaderDataBase::load(
         JKRGetNameResource("zelda_window_3menu.bck", dComIfGp_getMsgArchive(0)));
+#endif
     mBckFrame = 0.0f;
     mBckFrame = PROC_OPEN2_BCK_START;
     mOffsetX = 0.0f;
 
+#if TARGET_PC
+    mpAnmBpk = (J2DAnmColorKey*)J2DAnmLoaderDataBase::load(JKRGetNameResource(bpk, arc));
+#else
     mpAnmBpk = (J2DAnmColorKey*)J2DAnmLoaderDataBase::load(
         JKRGetNameResource("zelda_window_3menu.bpk", dComIfGp_getMsgArchive(0)));
+#endif
     mpAnmBpk->searchUpdateMaterialID(mpScreen);
     mBpkFrame = 0.0f;
 
+#if TARGET_PC
+    mpAnmBtk = (J2DAnmTextureSRTKey*)J2DAnmLoaderDataBase::load(JKRGetNameResource(btk, arc));
+#else
     mpAnmBtk = (J2DAnmTextureSRTKey*)J2DAnmLoaderDataBase::load(
         JKRGetNameResource("zelda_window_3menu.btk", dComIfGp_getMsgArchive(0)));
+#endif
     mpAnmBtk->searchUpdateMaterialID(mpScreen);
     mBtkFrame = 0.0f;
 
@@ -144,6 +213,31 @@ dMsgScrn3Select_c::dMsgScrn3Select_c() {
         JUT_ASSERT(0, mpCursor_c[i] != NULL);
         mCursorPos[i] = mpCursor_c[i]->getGlobalVtxCenter(true, 0);
     }
+#if TARGET_PC
+    if (hdNew) {
+        Hd3Sel* hd = hd3sel(NULL);  // free slot
+        if (hd != NULL) {
+            hd->owner = this;
+        }
+        // Wii U button plates: btnoff* always, btnon* (lit) only on the selected choice.
+        static const u64 kOn[3] = {MULTI_CHAR('btnona'), MULTI_CHAR('btnonb'), MULTI_CHAR('btnonc')};
+        for (int i = 0; i < 3; i++) {
+            J2DPane* on = mpScreen->search(kOn[i]);
+            if (hd != NULL) {
+                hd->btnOn[i] = on;
+            }
+            if (on != NULL) {
+                on->setAlpha(0);
+            }
+        }
+        // N_a_0 / N_b_0 / N_c_0: Wii U touch areas, never drawn.
+        for (u64 t : {MULTI_CHAR('N_a_0'), MULTI_CHAR('N_b_0'), MULTI_CHAR('N_c_0')}) {
+            if (J2DPane* p = mpScreen->search(t)) {
+                p->hide();
+            }
+        }
+    }
+#endif
 
 #if TARGET_PC
     if (dusk::version::isRegionJpn()) {
@@ -343,10 +437,20 @@ dMsgScrn3Select_c::dMsgScrn3Select_c() {
     field_0x117 = 0;
 
     mSelMsgInactiveCol.set(0xFF, 0xFF, 0xFF, 0xFF);
+#if TARGET_PC
+    if (hdOldHeap != NULL) {
+        hdOldHeap->becomeCurrentHeap();
+    }
+#endif
 }
 
 dMsgScrn3Select_c::~dMsgScrn3Select_c() {
     IF_DUSK(sSelectionAnimations.erase(this));
+#if TARGET_PC
+    if (Hd3Sel* hd = hd3sel(this)) {
+        *hd = Hd3Sel();
+    }
+#endif
     JKR_DELETE(mpScreen);
     mpScreen = NULL;
 
@@ -557,6 +661,37 @@ void dMsgScrn3Select_c::draw(f32 i_xPos, f32 i_yPos) {
         }
     }
 
+#if TARGET_PC
+    if (Hd3Sel* hd = hd3sel(this)) {
+        // 0x02a71768 / 0x02a73640: the lit plate follows the selected choice.
+        for (int i = 0; i < 3; i++) {
+            if (hd->btnOn[i] != NULL) {
+                hd->btnOn[i]->setAlpha(i == mSelNo ? 0xff : 0);
+            }
+        }
+        // Wii U J2DPane::draw on the TV: the 608-wide layout is stretched, abc_n ('n_43') keeps
+        // its proportions, so the window ends up near the right edge of the 16:9 screen.
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        const f32 minX = mDoGph_gInf_c::getMinXF();
+        dusk::tphd::applyN43(mpScreen, 1.0f / sx, true);
+        mpScreen->scale(sx, 1.0f);
+        mpScreen->draw(minX + i_xPos * sx, i_yPos, port);
+        if (field_0x110 != 0xFF && mSelNo != 0xFF && field_0x117 != 0) {
+            f32 var_f31 = (mWidth - 1.0f) * (mpCursor_c[mSelNo]->getInitCenterPosX() -
+                                                  mpSelCldw_c[1][mSelNo]->getInitPosX());
+            if (mWidth == 1.0f) {
+                var_f31 -= 3.0f;
+            }
+            const f32 shift = hdShiftX();
+            Vec center = mpCursor_c[mSelNo]->getGlobalVtxCenter(true, 0);
+            mpSelectCursor->setPosRevo(mOffsetX + (mCursorPos[mSelNo].x + var_f31) + shift,
+                                       center.y, mpCursor_c[mSelNo]->getPanePtr(), true, sx, minX);
+            mpSelectCursor->setParam(0.82f, 0.75f, 0.05f, 0.5f, 0.5f);
+            mpSelectCursor->draw();
+        }
+        return;
+    }
+#endif
     mpScreen->draw(i_xPos, i_yPos, port);
 
     if (field_0x110 != 0xFF && mSelNo != 0xFF && field_0x117 != 0) {
@@ -878,8 +1013,26 @@ f32 dMsgScrn3Select_c::getRubyCharSpace() {
     return 0.0f;
 }
 
+#if TARGET_PC
+// Everything under abc_n ('n_43') is drawn 1:1, only moved by where the TV stretch puts abc_n:
+// its centre C (layout units) is drawn at minX + C * sx (the window is drawn at x = 0).
+f32 dMsgScrn3Select_c::hdShiftX() {
+    if (hd3sel(this) == NULL) {
+        return 0.0f;
+    }
+    const f32 sx = dusk::tphd::subscreenScaleX();
+    const f32 c = mpParent->getGlobalPosX() + mpParent->getPanePtr()->getWidth() * 0.5f;
+    return mDoGph_gInf_c::getMinXF() + c * (sx - 1.0f);
+}
+#endif
+
 f32 dMsgScrn3Select_c::getTextBoxGlobalPosX(int i_sel) {
+#if TARGET_PC
+    // the choice texts are drawn by the message renderer at these positions
+    return mpTmSel_c[i_sel]->getGlobalPosX() + hdShiftX();
+#else
     return mpTmSel_c[i_sel]->getGlobalPosX();
+#endif
 }
 
 f32 dMsgScrn3Select_c::getTextBoxGlobalPosY(int i_sel) {

@@ -58,6 +58,7 @@ public:
 #if TARGET_PC
     bool pointerMove();
     bool consumePointerClick();
+    f32 hdShiftX();
 #endif
 
     void setOffsetX(f32 i_offsetX) { mOffsetX = i_offsetX; }

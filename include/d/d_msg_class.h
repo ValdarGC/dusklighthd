@@ -702,7 +702,14 @@ struct jmessage_string_tRenderingProcessor : public JMessage::TRenderingProcesso
     /* 0x048 */ f32 field_0x48;
     /* 0x04C */ f32 field_0x4c;
     /* 0x050 */ f32 field_0x50;
+#if TARGET_PC
+    // The Wii U item explanations (e.g. Msguk water bombs) carry ~20 colour tags, 26 bytes each
+    // once rendered: 0x210 bytes truncated them ("Message Alloc Byte Over"). The output is still
+    // limited to the target pane buffer (do_strcat).
+    char field_0x54[0x800];
+#else
     /* 0x054 */ char field_0x54[D_MSG_CLASS_CHAR_CNT_MAX];
+#endif
     /* 0x254 */ char field_0x254[D_MSG_CLASS_CHAR_CNT_MAX];
     /* 0x454 */ char field_0x454[0x486 - 0x454];
     /* 0x486 */ char field_0x486[0x20]; // Unknown length
@@ -803,6 +810,12 @@ struct jmessage_string_tRenderingProcessor : public JMessage::TRenderingProcesso
 #define MSGTAG_WII_FAIRY           18
 #define MSGTAG_WII_CBTN            19
 #define MSGTAG_WII_ZBTN            20
+
+// Group 7 (Wii U only): Pro Controller / GamePad icons. do_tag 0x02a5c674 (dialogue) and
+// 0x02a60498 (string) draw them with do_outfont; see tphdButtonTagIcon for the icon numbers.
+#define MSGTAG_TPHD_NONE          0
+#define MSGTAG_TPHD_ICON_FIRST    1
+#define MSGTAG_TPHD_ICON_LAST     15
 
 // Group 4
 #define MSGTAG_GLYPH_DOLLARSIGN 0

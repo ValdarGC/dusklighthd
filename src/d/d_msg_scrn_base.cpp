@@ -10,6 +10,7 @@
 
 #if TARGET_PC
 #include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
 #endif
 
 dMsgScrnBase_c::dMsgScrnBase_c() {

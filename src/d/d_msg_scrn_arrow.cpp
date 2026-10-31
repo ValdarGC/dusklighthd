@@ -9,24 +9,56 @@
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
 #include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+
+extern JKRArchive* g_tphdMsgRes0RevoArchive;
+
+static bool hdArrowRevo() {
+    static int s_state = -1;
+    if (!dusk::tphd_active() || g_tphdMsgRes0RevoArchive == NULL) {
+        return false;
+    }
+    if (s_state < 0) {
+        s_state = JKRGetNameResource("zelda_window_yajirushi.blo", g_tphdMsgRes0RevoArchive) != NULL ? 1 : 0;
+    }
+    return s_state == 1;
+}
+
+static JKRArchive* hdArrowArc() {
+    return hdArrowRevo() ? g_tphdMsgRes0RevoArchive : dComIfGp_getMsgArchive(0);
+}
 #endif
 
 dMsgScrnArrow_c::dMsgScrnArrow_c() {
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpScreen != NULL);
+#if TARGET_PC
+    bool fg =
+        mpScreen->setPriority("zelda_window_yajirushi.blo", 0x20000, hdArrowArc());
+#else
     bool fg =
         mpScreen->setPriority("zelda_window_yajirushi.blo", 0x20000, dComIfGp_getMsgArchive(0));
+#endif
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpScreen);
 
     OSInitFastCast();
 
+#if TARGET_PC
+    mpBck = (J2DAnmTransform*)J2DAnmLoaderDataBase::load(
+        JKRGetNameResource("zelda_window_yajirushi.bck", hdArrowArc()));
+    mBckFrame = 0.0f;
+
+    mpBpk = (J2DAnmColor*)J2DAnmLoaderDataBase::load(
+        JKRGetNameResource("zelda_window_yajirushi.bpk", hdArrowArc()));
+#else
     mpBck = (J2DAnmTransform*)J2DAnmLoaderDataBase::load(
         JKRGetNameResource("zelda_window_yajirushi.bck", dComIfGp_getMsgArchive(0)));
     mBckFrame = 0.0f;
 
     mpBpk = (J2DAnmColor*)J2DAnmLoaderDataBase::load(
         JKRGetNameResource("zelda_window_yajirushi.bpk", dComIfGp_getMsgArchive(0)));
+#endif
     mpBpk->searchUpdateMaterialID(mpScreen);
     mBpkFrame = 0.0f;
 
@@ -84,7 +116,17 @@ void dMsgScrnArrow_c::draw() {
     }
 #endif
     J2DGrafContext* graf_ctx = dComIfGp_getCurrentGrafPort();
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        mpScreen->scale(sx, 1.0f);
+        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_ctx);
+    } else {
+        mpScreen->draw(0.0f, 0.0f, graf_ctx);
+    }
+#else
     mpScreen->draw(0.0f, 0.0f, graf_ctx);
+#endif
 }
 
 void dMsgScrnArrow_c::setPos(f32 i_posX, f32 i_posY) {

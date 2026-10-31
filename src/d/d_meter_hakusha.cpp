@@ -17,6 +17,38 @@
 
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
+#include "dusk/settings.h"
+#include "JSystem/JKernel/JKRArchive.h"
+#include "m_Do/m_Do_graphic.h"
+extern JKRArchive* g_tphdMain2DRevoArchive;
+bool dMeter2Draw_isHdRevoHud();
+
+namespace {
+// TPHD: Wii U dMeterHakusha_c (RPX ctor 0x02a4cb64): the spur icons come from main2DR.arc
+// (zelda_game_image_hakusha_parts.blo, HD texture tt_hakusha_32), the A button from
+// zelda_game_image_hakusha_a_btn_revo.blo, and the Wii U dMeter_drawHIO_c values are used
+// (RPX 0x02a4f8c4, g_drawHIO 0x101680d8): icon / used icon scale 1, bar scale 1 at (0, 0), A button
+// at (0, 0) scale 1. The Wii U has no F_SP108 shift of the bar.
+bool s_hdHakusha = false;
+
+struct HakushaHio {
+    f32 barPosX, barPosY, barScale, aPosX, aPosY, aScale, iconScale, usedIconScale;
+};
+
+HakushaHio hakushaHio() {
+    if (s_hdHakusha) {
+        return {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    }
+    f32 barX = g_drawHIO.mSpurBarPosX;
+    if (strcmp(dComIfGp_getStartStageName(), "F_SP108") == 0) {
+        barX += 28.4f;
+    }
+    return {barX, g_drawHIO.mSpurBarPosY, g_drawHIO.mSpurBarScale,
+            g_drawHIO.mButtonAHorsePosX, g_drawHIO.mButtonAHorsePosY,
+            g_drawHIO.mButtonAHorseScale, g_drawHIO.mSpurIconScale,
+            g_drawHIO.mUsedSpurIconScale};
+}
+}  // namespace
 #endif
 
 dMeterHakusha_c::dMeterHakusha_c(void* i_screen) {
@@ -44,8 +76,19 @@ int dMeterHakusha_c::_create() {
     mpHakushaScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpHakushaScreen != NULL);
 
+#if TARGET_PC
+    s_hdHakusha = dusk::tphd_active() && g_tphdMain2DRevoArchive != NULL &&
+                  dMeter2Draw_isHdRevoHud() &&
+                  JKRGetNameResource("zelda_game_image_hakusha_parts.blo",
+                                     g_tphdMain2DRevoArchive) != NULL &&
+                  JKRGetNameResource("zelda_game_image_hakusha_a_btn_revo.blo",
+                                     g_tphdMain2DRevoArchive) != NULL;
+    JKRArchive* hakuArc = s_hdHakusha ? g_tphdMain2DRevoArchive : dComIfGp_getMain2DArchive();
+    bool fg = mpHakushaScreen->setPriority("zelda_game_image_hakusha_parts.blo", 0x20000, hakuArc);
+#else
     bool fg = mpHakushaScreen->setPriority("zelda_game_image_hakusha_parts.blo", 0x20000,
                                            dComIfGp_getMain2DArchive());
+#endif
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpHakushaScreen);
 
@@ -73,8 +116,14 @@ int dMeterHakusha_c::_create() {
     mpButtonScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(0, mpButtonScreen != NULL);
 
+#if TARGET_PC
+    fg = mpButtonScreen->setPriority(s_hdHakusha ? "zelda_game_image_hakusha_a_btn_revo.blo"
+                                                 : "zelda_game_image_hakusha_a_btn.blo",
+                                     0x20000, hakuArc);
+#else
     fg = mpButtonScreen->setPriority("zelda_game_image_hakusha_a_btn.blo", 0x20000,
                                      dComIfGp_getMain2DArchive());
+#endif
     JUT_ASSERT(0, fg != false);
     dPaneClass_showNullPane(mpButtonScreen);
 
@@ -84,6 +133,19 @@ int dMeterHakusha_c::_create() {
     mpButtonA->setAlphaRate(0.0f);
 
     mpButtonScreen->search(MULTI_CHAR('info_n'))->translate(0.0f, 0.0f);
+#if TARGET_PC
+    {
+        const HakushaHio hio = hakushaHio();
+        field_0x100 = hio.aPosX;
+        field_0x104 = hio.aPosY;
+        mpHakushaParent->paneTrans(hio.barPosX, hio.barPosY);
+        mpHakushaParent->scale(hio.barScale, hio.barScale);
+        mpButtonA->paneTrans(hio.aPosX, hio.aPosY);
+        mpButtonA->scale(hio.aScale, hio.aScale);
+        mpHakushaOn->scale(hio.iconScale, hio.iconScale);
+        mpHakushaOff->scale(hio.usedIconScale, hio.usedIconScale);
+    }
+#else
     field_0x100 = g_drawHIO.mButtonAHorsePosX;
     field_0x104 = g_drawHIO.mButtonAHorsePosY;
 
@@ -99,6 +161,7 @@ int dMeterHakusha_c::_create() {
 
     mpHakushaOn->scale(g_drawHIO.mSpurIconScale, g_drawHIO.mSpurIconScale);
     mpHakushaOff->scale(g_drawHIO.mUsedSpurIconScale, g_drawHIO.mUsedSpurIconScale);
+#endif
 
     mButtonAPosX = 0.0f;
     mButtonAPosY = 0.0f;
@@ -227,6 +290,38 @@ void dMeterHakusha_c::updateHakusha() {
     f32 abtn_y_offset = sp2C.y;
 
     f32 temp_f28 = (sp20.x - sp2C.x) / (f32)getHakushaNum();
+#if TARGET_PC
+    // TPHD (RPX 0x02a4d5c0 + CPaneMgr::getGlobalVtx 0x02a95a78): on the Wii U the haku_n0x
+    // positions are read with the root of the 780-unit HUD layout stretched like a 608 layout
+    // (x * 808/608 - 100), and the spur icons (haku_n, under the root of the parts screen) are
+    // stretched once more by the same root stretch. The A button sits under the 'n_43' info_n
+    // pane, whose squeeze cancels the root stretch, so it only gets the root offset (-100).
+    // Everything is computed in Wii U TV ortho units (808 wide, centred on 304), then mapped onto
+    // the Dusklight canvas.
+    f32 hdSpacing = 0.0f;
+    f32 hdStart = 0.0f;
+    const bool hd = s_hdHakusha;
+    if (hd) {
+        const f32 canvasW = mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF();
+        const f32 sw = 808.0f / 608.0f;
+        const f32 tw = 304.0f * (1.0f - sw);
+        // Our HUD root is scaled by canvasW / 780 (dMeter2Draw_c::draw), no translation.
+        const f32 xl0 = sp2C.x * 780.0f / canvasW;
+        const f32 xl5 = sp20.x * 780.0f / canvasW;
+        const f32 xw0 = sw * xl0 + tw;
+        const f32 xw5 = sw * xl5 + tw;
+        hdStart = xw0;
+        hdSpacing = (xw5 - xw0) / (f32)getHakushaNum();
+    }
+    auto hdToCanvas = [](f32 i_xw) {
+        const f32 canvasW = mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF();
+        return (i_xw - 304.0f) * (canvasW / 808.0f) + 304.0f;
+    };
+    if (hd) {
+        abtn_x_offset = hdStart;
+        temp_f28 = hdSpacing;
+    }
+#endif
 
     if (mHakushaNum != dMeter2Info_getHorseLifeCount()) {
         if (mHakushaNum > dMeter2Info_getHorseLifeCount()) {
@@ -260,6 +355,12 @@ void dMeterHakusha_c::updateHakusha() {
 
         mHakushaData[i].pos_x = abtn_x_offset;
         mHakushaData[i].pos_y = abtn_y_offset;
+#if TARGET_PC
+        if (hd) {
+            const f32 sw = 808.0f / 608.0f;
+            mHakushaData[i].pos_x = hdToCanvas(sw * abtn_x_offset + 304.0f * (1.0f - sw));
+        }
+#endif
 
         if (mpHakushaOn->getAlpha() == 0) {
             mHakushaData[i].flags &= ~0x1;
@@ -292,8 +393,14 @@ void dMeterHakusha_c::updateHakusha() {
 
     mButtonAPosX = abtn_x_offset + field_0x100;
     mButtonAPosY = abtn_y_offset + field_0x104;
+#if TARGET_PC
+    if (hd) {
+        const f32 sw = 808.0f / 608.0f;
+        mButtonAPosX = hdToCanvas(abtn_x_offset + field_0x100 + 304.0f * (1.0f - sw));
+    }
+#endif
 
-    if (g_drawHIO.mSpurDebug) {
+    if (g_drawHIO.mSpurDebug IF_DUSK(&& !s_hdHakusha)) {
         field_0x100 = g_drawHIO.mButtonAHorsePosX;
         field_0x104 = g_drawHIO.mButtonAHorsePosY;
 

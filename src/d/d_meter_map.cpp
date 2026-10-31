@@ -7,6 +7,7 @@
 
 #include "d/d_meter_map.h"
 #include "JSystem/J2DGraph/J2DGrafContext.h"
+#include "JSystem/J2DGraph/J2DOrthoGraph.h"
 #include "JSystem/JHostIO/JORServer.h"
 #include "d/actor/d_a_player.h"
 #include "d/d_map.h"
@@ -16,6 +17,13 @@
 #include "f_op/f_op_overlap_mng.h"
 #include "m_Do/m_Do_controller_pad.h"
 #include "d/d_camera.h"
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/tphd/HdMapPalette.hpp"
+#include "JSystem/JUtility/JUTPalette.h"
+#include "JSystem/JUtility/JUTTexture.h"
+#include <algorithm>
+#endif
 #include <cstring>
 
 #if TARGET_PC
@@ -463,6 +471,14 @@ void dMeterMap_c::_create(J2DScreen* unused) {
         break;
     }
 
+#if TARGET_PC
+    // Wii U dMeterMap_c::_create (RPX 0x02a51b5c): one fixed 290 x 280 px map texture
+    // (dMap_c ctor 0x029a4528 called with 290, 280, 290, 280) whatever the display size type.
+    if (dusk::tphd_active()) {
+        dispSizeW = sizeX = 290;
+        dispSizeH = sizeY = 280;
+    }
+#endif
     mSizeW = (s16)sizeX;
     mSizeH = (s16)sizeY;
 
@@ -682,9 +698,31 @@ void dMeterMap_c::draw() {
         const f32 scaledSizeX = sizeX * userHudScale;
         const f32 scaledSizeY = sizeY * userHudScale;
         const f32 mapBottomShift = sizeY - scaledSizeY;
+        if (dusk::tphd_active()) {
+            // Wii U dMeterMap_c::draw (RPX 0x02a52c00): ortho 808 x 448 starting at x = -100; the
+            // 290 x 280 px texture is drawn 1:1 in pixels (w = 290 * 808 / 1920, h = 280 * 448 /
+            // 1080), left edge at -87.375 + slide, bottom at 435.56. Converted here through the
+            // screen fraction so it lands on the same pixels whatever our ortho width is.
+            const f32 slide = drawPosX - 35.0f;  // mSlidePositionOffset
+            const f32 minX = mDoGph_gInf_c::getMinXF();
+            const f32 wUnits = mDoGph_gInf_c::getMaxXF() - minX;
+            const f32 w = sizeX * wUnits / 1920.0f;
+            const f32 h = sizeY * 448.0f / 1080.0f;
+            const f32 x = minX + (-87.375f + 100.0f + slide) * wUnits / 808.0f;
+            const f32 y = 435.5556f - h;
+            // 8-bit alpha palette (HdMapPalette.hpp): refresh it, the GC code rewrites entries.
+            dusk::tphd::mapPaletteSync(mMapJ2DPicture->getTexture(0)->getTexInfo());
+            if (JUTPalette* pal = mMapJ2DPicture->getTexture(0)->getPalette()) {
+                pal->dataUploaded();
+            }
+            // The darker frame of the square is part of the map texture (4-texel ring drawn by
+            // dRenderingFDAmap_c::drawBack, RPX 0x029a76c4).
+            mMapJ2DPicture->draw(x, y, w, h, false, false, false);
+        } else {
         mMapJ2DPicture->draw(mDoGph_gInf_c::ScaleHUDXLeft(drawPosX),
                              drawPosY + mapBottomShift, scaledSizeX, scaledSizeY,
                              false, false, false);
+        }
         #else
         mMapJ2DPicture->draw(drawPosX, drawPosY, sizeX, sizeY, false, false, false);
         #endif
@@ -810,6 +848,40 @@ void dMeterMap_c::ctrlShowMap() {
                                          -1.0f, 0);
                 dMeter2Info_set2DVibration();
                 dMeter2Info_setMapStatus(1);
+            }
+        }
+        else if (dusk::tphd_active()) {
+            // TPHD (Wii U Pro Controller HUD): d-pad UP opens the map screen (the map icon above
+            // the d-pad), RIGHT shows / hides the mini-map ("Mini-Map"), LEFT does nothing.
+            if (mDoCPd_c::getTrigUp(PAD_1)) {
+                if (!dComIfGp_event_runCheck() && !dMsgObject_isTalkNowCheck() &&
+                    (dMeter2Info_getMapStatus() == 0 || dMeter2Info_getMapStatus() == 1) &&
+                    !dMeter2Info_isSub2DStatus(1) && (isFmapScreen() || isDmapScreen()))
+                {
+                    dMeter2Info_setMapStatus(2);
+                    dMeter2Info_setMapKeyDirection(0x400);
+                    Z2GetAudioMgr()->seStart(Z2SE_SY_MAP_OPEN_S, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                             -1.0f, 0);
+                    dMeter2Info_set2DVibration();
+                }
+            } else if (mDoCPd_c::getTrigRight(PAD_1) && !isEventRunCheck() &&
+                       (dMeter2Info_getMapStatus() == 0 || dMeter2Info_getMapStatus() == 1))
+            {
+                if (!isEnableDispMapAndMapDispSizeTypeNo()) {
+                    Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f,
+                                             0);
+                } else if (isDispPosInsideFlg()) {
+                    setDispPosOutsideFlg_SE_On();
+                    Z2GetAudioMgr()->seStart(Z2SE_SY_MAP_CLOSE_S, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                             -1.0f, 0);
+                    dMeter2Info_setMapStatus(0);
+                } else {
+                    setDispPosInsideFlg_SE_On();
+                    Z2GetAudioMgr()->seStart(Z2SE_SY_MAP_OPEN_S, NULL, 0, 0, 1.0f, 1.0f, -1.0f,
+                                             -1.0f, 0);
+                    dMeter2Info_set2DVibration();
+                    dMeter2Info_setMapStatus(1);
+                }
             }
         }
 #endif

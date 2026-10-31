@@ -24,6 +24,26 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/settings.h"
 #include "dusk/version.hpp"
+#include "dusk/tphd/HdSubscreen.hpp"
+
+extern JKRArchive* g_tphdMsgRes1RevoArchive;
+extern JKRArchive* g_tphdMsgComRevoArchive;
+
+static bool hdTalkRevo() {
+    static int s_state = -1;
+    if (!dusk::tphd_active() || g_tphdMsgRes1RevoArchive == NULL || g_tphdMsgComRevoArchive == NULL) {
+        return false;
+    }
+    if (s_state < 0) {
+        s_state = JKRGetNameResource("zelda_message_window_new_revo.blo", g_tphdMsgRes1RevoArchive) != NULL &&
+                  JKRGetNameResource("zelda_message_window_text.blo", g_tphdMsgComRevoArchive) != NULL;
+    }
+    return s_state == 1;
+}
+
+static JKRArchive* hdTalkTextArc() {
+    return hdTalkRevo() ? g_tphdMsgComRevoArchive : dComIfGp_getMsgCommonArchive();
+}
 #endif
 
 #if TARGET_PC
@@ -43,12 +63,31 @@ dMsgScrnTalk_c::dMsgScrnTalk_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
     init();
     mpScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(70, mpScreen != NULL);
+#if TARGET_PC
+    bool fg = hdTalkRevo()
+                  ? mpScreen->setPriority("zelda_message_window_new_revo.blo", 0x20000, g_tphdMsgRes1RevoArchive)
+                  : mpScreen->setPriority("zelda_message_window_new.blo", 0x20000, dComIfGp_getMsgArchive(1));
+#else
     bool fg = mpScreen->setPriority("zelda_message_window_new.blo", 0x20000,
                                     dComIfGp_getMsgArchive(1));
+#endif
     JUT_ASSERT(77, fg != false);
     dPaneClass_showNullPane(mpScreen);
     mpTxScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(81, mpTxScreen != NULL);
+#if TARGET_PC
+    if (hdTalkRevo()) {
+        fg = mpTxScreen->setPriority("zelda_message_window_text.blo", 0x20000, hdTalkTextArc());
+    } else {
+        if (dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
+            fg = mpTxScreen->setPriority("zelda_message_window_text_seirei.blo", 0x20000,
+                                         dComIfGp_getMsgCommonArchive());
+        } else {
+            fg = mpTxScreen->setPriority("zelda_message_window_text.blo", 0x20000,
+                                         dComIfGp_getMsgCommonArchive());
+        }
+    }
+#else
     if (dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
         fg = mpTxScreen->setPriority("zelda_message_window_text_seirei.blo", 0x20000,
                                      dComIfGp_getMsgCommonArchive());
@@ -56,6 +95,7 @@ dMsgScrnTalk_c::dMsgScrnTalk_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
         fg = mpTxScreen->setPriority("zelda_message_window_text.blo", 0x20000,
                                      dComIfGp_getMsgCommonArchive());
     }
+#endif
     JUT_ASSERT(90, fg != false);
     dPaneClass_showNullPane(mpTxScreen);
     mpArrow_c = JKR_NEW dMsgScrnArrow_c();
@@ -132,14 +172,14 @@ dMsgScrnTalk_c::dMsgScrnTalk_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
            mpTm_c[1] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3f_s'), 0, NULL);
 
            mpTmr_c[0] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('mg_3f'), 0, NULL);
-           if (dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
+           if (!hdTalkRevo() && dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
                mpTm_c[2] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3f_s1'), 0, NULL);
                mpTm_c[3] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3f_s2'), 0, NULL);
                mpTm_c[4] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3f_s3'), 0, NULL);
                mpTm_c[5] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3f_s4'), 0, NULL);
                mpTmr_c[1] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('mg_3f_s1'), 0, NULL);
                mpTmr_c[2] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('mg_3f_s2'), 0, NULL);
-           } else {
+           } else if (!hdTalkRevo()) {
                mpTmr_c[1] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('mg_3f_s'), 0, NULL);
            }
 
@@ -150,7 +190,7 @@ dMsgScrnTalk_c::dMsgScrnTalk_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
            mpTm_c[0] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('mg_3line'), 0, NULL);
            mpTm_c[1] = JKR_NEW CPaneMgr(mpTxScreen, 't3_s', 0, NULL);
 
-           if (dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
+           if (!hdTalkRevo() && dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
                mpTm_c[2] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3_s1'), 0, NULL);
                JUT_ASSERT(189, mpTm_c[2] != NULL);
                mpTm_c[3] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t3_s2'), 0, NULL);
@@ -171,7 +211,7 @@ dMsgScrnTalk_c::dMsgScrnTalk_c(u8 param_1, u8 param_2, JKRExpHeap* param_3) {
        mpTm_c[1] = JKR_NEW CPaneMgr(mpTxScreen, 't4_s', 0, NULL);
        JUT_ASSERT(185, mpTm_c[1] != NULL);
 
-       if (dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
+       if (!hdTalkRevo() && dMsgObject_getMsgObjectClass()->getFukiKind() == 8) {
            mpTm_c[2] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t4_s1'), 0, NULL);
            JUT_ASSERT(189, mpTm_c[2] != NULL);
            mpTm_c[3] = JKR_NEW CPaneMgr(mpTxScreen, MULTI_CHAR('t4_s2'), 0, NULL);
@@ -382,6 +422,33 @@ void dMsgScrnTalk_c::presentAnims() {
     }
 }
 #endif
+void dMsgScrnTalk_c::draw() {
+#if TARGET_PC
+    if (dusk::getSettings().game.recordingMode) {
+        return;
+    }
+    J2DGrafContext* ctx = dComIfGp_getCurrentGrafPort();
+    ctx->setup2D();
+    if (hdTalkRevo()) {
+        const f32 n43 = dusk::tphd::wiiuTvN43();
+        if (J2DPane* all = mpScreen->search(MULTI_CHAR('n_all'))) {
+            if (all->getRotateZ() == 0.0f) {
+                all->mRotateOffsetX = -all->mBounds.i.x;
+            }
+            all->scale(g_MsgObject_HIO_c.mBoxTalkScaleX * n43, g_MsgObject_HIO_c.mBoxTalkScaleY);
+        }
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        mpScreen->scale(sx, 1.0f);
+        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, ctx);
+    } else {
+        mpScreen->draw(0.0f, 0.0f, ctx);
+    }
+    drawSelf();
+    ctx->setup2D();
+#else
+    dMsgScrnBase_c::draw();
+#endif
+}
 
 void dMsgScrnTalk_c::drawSelf() {
 #if TARGET_PC
@@ -437,7 +504,15 @@ void dMsgScrnTalk_c::drawSelf() {
         }
     }
     drawOutFont(0.0f, 0.0f, 1.0f);
+#if TARGET_PC
+    if (hdTalkRevo()) {
+        dusk::tphd::drawRevoScreen(mpTxScreen, (J2DGrafContext*)grafContext[0], 0.0f, 0.0f, true);
+    } else {
+        mpTxScreen->draw(0.0f, 0.0f, grafContext[0]);
+    }
+#else
     mpTxScreen->draw(0.0f, 0.0f, grafContext[0]);
+#endif
     if (mpSelect_c != NULL) {
         mpSelect_c->draw(0.0f, 0.0f);
     }
