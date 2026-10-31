@@ -6,12 +6,18 @@
 
 #include <cmath>
 #include "d/d_com_inf_game.h"
+#include "d/d_map.h"
 #include "d/d_map_path_dmap.h"
 #include "d/d_menu_dmap.h"
 #include "d/d_menu_dmap_map.h"
 #include "f_op/f_op_msg_mng.h"
 #include "m_Do/m_Do_graphic.h"
 
+#include <cstring>
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/tphd/HdMapPalette.hpp"
+#endif
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
 #endif
@@ -285,15 +291,140 @@ const GXColor* renderingDmap_c::getColor(int param_0) {
     return &var_r28[param_0];
 }
 
+#if TARGET_PC
+// Wii U renderingDAmap getLineColor (RPX 0x029a7d28, shared by the dungeon map menu): line type 2
+// takes the line table 0x10092c94 by room state (not visited / visited / current room: black,
+// grey, white), every other line the type-6 colour of the room. The GC draws the lines with the
+// fill colour, so the Wii U room walls / outlines were missing. Palette entries 0xD0-0xDB.
+const GXColor* renderingDmap_c::getLineColor(int param_0, int param_1) {
+    if (!dusk::tphd_active()) {
+        return getColor(param_0);
+    }
+    static GXColor color = {0, 0, 0, 0};
+    if (param_1 == 2) {
+        const u8 st = getColor(0)->r;  // 0x08 off, 0x28 visited, 0x48 current
+        color.r = st == 0x48 ? 0xD8 : (st == 0x28 ? 0xD4 : 0xD0);
+    } else {
+        color = *getColor(6);
+    }
+    return &color;
+}
+#endif
+
 void renderingDmap_c::afterDrawPath() {
     renderingPlusDoor_c::afterDrawPath();
 }
 
 DUSK_GAME_DATA void* dMdm_HIO_prm_res_dst_s::m_res;
 
+#if TARGET_PC
+// TPHD: the Wii U renders the dungeon rooms with fixed RGBA colors per polygon type and room state
+// (renderingDmap getColor RPX 0x029a7dd0, table 0x10092bfc: off / visited / current room) instead
+// of the CI8 palette of res-d.arc (whose Wii U copy also has an opaque black index 0, which would
+// hide the map background). The GC pipeline is kept and only the palette entries it uses are
+// rewritten with those colors.
+// Patched in place: makeResTIMG stores the palette as a 32-bit offset from the ResTIMG (heap), so
+// the palette has to stay in the archive memory next to it.
+
+static u16 hdRgb5a3(u32 rgba) {
+    const u32 r = rgba >> 24, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF, a = rgba & 0xFF;
+    if (a == 0xFF) {
+        return (u16)(0x8000 | ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+    }
+    return (u16)(((a >> 5) << 12) | ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
+}
+
+static void* hdDmapPalette(void* i_res) {
+    if (!dusk::tphd_active() || i_res == NULL) {
+        return i_res;
+    }
+    static const u32 kColor[9][3] = {
+        {0x0000007f, 0x2c584bff, 0x58af95ff}, {0x0000007f, 0x162c2cff, 0x2c584bff},
+        {0x0000007f, 0x000000ff, 0x000000ff}, {0x00000000, 0x00000000, 0x00000000},
+        {0x0000007f, 0x202020ff, 0x404040ff}, {0x0000007f, 0x00407fff, 0x0080ffff},
+        {0x0000007f, 0x477f7fff, 0x8fffffff}, {0x0000007f, 0x30007fff, 0x6000ffff},
+        {0x0000007f, 0x300000ff, 0x600000ff},
+    };
+    // Palette indices of renderingDmap_c::getColor (off / on / stay).
+    static const u8 kIndex[3][9] = {
+        {0x08, 0x0C, 0x10, 0x04, 0x14, 0x18, 0x1C, 0x20, 0x24},
+        {0x28, 0x2C, 0x30, 0x04, 0x34, 0x38, 0x3C, 0x40, 0x44},
+        {0x48, 0x4C, 0x50, 0x04, 0x54, 0x58, 0x5C, 0x60, 0x64},
+    };
+    u8* pal = static_cast<u8*>(i_res);
+    auto put = [pal](int i_entry, u16 i_col) {
+        pal[i_entry * 2] = (u8)(i_col >> 8);
+        pal[i_entry * 2 + 1] = (u8)i_col;
+    };
+    for (int i = 0; i < 4; i++) {
+        put(i, 0x0000);  // outside the rooms: transparent
+    }
+    for (int st = 0; st < 3; st++) {
+        for (int t = 0; t < 9; t++) {
+            const u16 col = hdRgb5a3(kColor[t][st]);
+            for (int k = 0; k < 4; k++) {
+                put(kIndex[st][t] + k, col);
+                dusk::tphd::mapPaletteSetExact(pal, kIndex[st][t] + k, kColor[t][st]);
+            }
+        }
+    }
+    return i_res;
+}
+#endif
+
+#if TARGET_PC
+// TPHD: 256-entry copy of the res-d palette. The treasure / boss / key icons drawn into the map
+// texture use palette indices 0x7C-0xA7, past the 120 entries of res-d (on the GC those read the
+// TLUT memory left by the minimap palette). The copy fills them from the minimap palette.
+static u8* s_hdDmapPal = NULL;
+
+static void* hdDmapBuildPalette(void* i_res) {
+    if (!dusk::tphd_active() || i_res == NULL) {
+        return i_res;
+    }
+    if (s_hdDmapPal == NULL) {
+        s_hdDmapPal = JKR_NEW_ARRAY_ARGS(u8, 256 * 2, 0x20);
+        if (s_hdDmapPal == NULL) {
+            return hdDmapPalette(i_res);
+        }
+    }
+    std::memset(s_hdDmapPal, 0, 256 * 2);
+    if (dMap_HIO_prm_res_dst_s::m_res != NULL) {
+        std::memcpy(s_hdDmapPal, dMap_HIO_prm_res_dst_s::m_res->palette_data, 51 * 4 * 2);
+    }
+    std::memcpy(s_hdDmapPal, i_res, 120 * 2);
+    hdDmapPalette(s_hdDmapPal);
+    {
+        auto put4 = [](int i_entry, u32 i_rgba) {
+            const u16 col = hdRgb5a3(i_rgba);
+            for (int k = 0; k < 4; k++) {
+                s_hdDmapPal[(i_entry + k) * 2] = (u8)(col >> 8);
+                s_hdDmapPal[(i_entry + k) * 2 + 1] = (u8)col;
+                dusk::tphd::mapPaletteSetExact(s_hdDmapPal, i_entry + k, i_rgba);
+            }
+        };
+        // Background / type 3 (getBackColor 0x029aa318 without the HUD flag: transparent).
+        put4(0x04, 0x00000000);
+        // Line table 0x10092c94 (renderingDmap_c::getLineColor).
+        put4(0xD0, 0x0000007f);
+        put4(0xD4, 0x7f7f7fff);
+        put4(0xD8, 0xffffffff);
+        // Doors (renderingPlusDoor_c::drawDoorCommon TPHD, RPX 0x029ab068): black outline C1
+        // 0x000000ff and yellow fill C1 + C2 = 0xffff00ff, drawn as indices 0xF4 / 0xF8.
+        put4(0xF4, 0x000000ff);
+        put4(0xF8, 0xffff00ff);
+    }
+    DCStoreRange(s_hdDmapPal, 256 * 2);
+    return s_hdDmapPal;
+}
+#endif
+
 void dMenu_DmapMap_c::_create(u16 param_0, u16 param_1, u16 param_2, u16 param_3,
                               void* res) {
     JUT_ASSERT(1569, res != NULL);
+#if TARGET_PC
+    res = hdDmapBuildPalette(res);
+#endif
     dMdm_HIO_prm_res_dst_s::m_res = res;
     field_0x84 = 120;
     setTexture(param_0, param_1, param_2, param_3);
@@ -312,6 +443,15 @@ void dMenu_DmapMap_c::_delete() {
             JKR_DELETE_ARRAY(mResTIMG[i]);
         }
     }
+#if TARGET_PC
+    if (s_hdDmapPal != NULL) {
+        if (dMdm_HIO_prm_res_dst_s::m_res == s_hdDmapPal) {
+            dMdm_HIO_prm_res_dst_s::m_res = NULL;
+        }
+        JKR_DELETE_ARRAY(s_hdDmapPal);
+        s_hdDmapPal = NULL;
+    }
+#endif
 }
 
 void dMenu_DmapMap_c::setTexture(u16 width, u16 height, u16 param_2, u16 param_3) {
@@ -327,7 +467,12 @@ void dMenu_DmapMap_c::setTexture(u16 width, u16 height, u16 param_2, u16 param_3
 
         mResTIMG[lp1] = JKR_NEW_ARGS (0x20) ResTIMG;
         JUT_ASSERT(1687, mResTIMG[lp1] != NULL);
+#if TARGET_PC
+        const u16 hd_pal_num = (s_hdDmapPal != NULL && dMdm_HIO_prm_res_dst_s::m_res == s_hdDmapPal) ? 64 : 30;
+        mRend[lp1].makeResTIMG(mResTIMG[lp1], width, height, mMapImage_p[lp1], (u8*)dMdm_HIO_prm_res_dst_s::m_res, hd_pal_num);
+#else
         mRend[lp1].makeResTIMG(mResTIMG[lp1], width, height, mMapImage_p[lp1], (u8*)dMdm_HIO_prm_res_dst_s::m_res, 30);
+#endif
     }
 }
 

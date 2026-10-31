@@ -33,6 +33,15 @@ enum dMenuMapIcon_e {
     ICON_LV8_WARP_e,
 
     ICON_MAX_e,
+
+#if TARGET_PC
+    // TPHD field map icons (Wii U dMenuMapCommon pictures 26-28, RPX 0x029f0038): circle +
+    // icon_grass / icon_game / icon_save. Kept outside mPictures (side table in the .cpp).
+    ICON_HD_GRASS_e = ICON_MAX_e + 1,
+    ICON_HD_GAME_e,
+    ICON_HD_SAVE_e,
+    ICON_HD_END_e,
+#endif
 };
 
 class dMenuMapCommon_c {

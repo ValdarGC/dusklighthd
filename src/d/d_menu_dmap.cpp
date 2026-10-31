@@ -33,6 +33,74 @@
 #include "dusk/settings.h"
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
+
+#if TARGET_PC
+#include "dusk/interp/frame_interpolation.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+
+// TPHD (Wii U TV) dungeon map: with TPHD active d_s_logo.cpp mounts dmapresR.arc as the dungeon map
+// archive (zelda_dungeon_map_base_revo / floor_parts_revo / spot_button_revo / decoration_revo,
+// Wii U DmapBg ctor RPX 0x029bed60).
+static bool hdDmapActive() {
+    JKRArchive* arc = dComIfGp_getDmapResArchive();
+    return dusk::tphd_active() && arc != NULL &&
+           JKRGetNameResource("zelda_dungeon_map_base_revo.blo", arc) != NULL;
+}
+
+// Wii U J2DPane::draw stretch of a whole (608 wide) layout: 'n_43' panes keep their shape.
+static void hdDmapStretch(J2DScreen* i_scrn) {
+    if (i_scrn == NULL) {
+        return;
+    }
+    const f32 sx = dusk::tphd::subscreenScaleX();
+    dusk::tphd::applyN43(i_scrn, dusk::tphd::wiiuTvN43(), false, true);
+    i_scrn->scale(sx, 1.0f);
+    i_scrn->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+}
+
+static J2DTextBox* hdDmapTextBox(J2DScreen* i_scrn, u64 i_tag) {
+    if (i_scrn == NULL) {
+        return NULL;
+    }
+    J2DPane* p = i_scrn->search(i_tag);
+    return (p != NULL && p->getTypeID() == 19) ? static_cast<J2DTextBox*>(p) : NULL;
+}
+
+static void hdDmapSetMsg(J2DScreen* i_scrn, u64 i_tag, u32 i_msg) {
+    if (J2DTextBox* tb = hdDmapTextBox(i_scrn, i_tag)) {
+        if (i_msg == 0) {
+            SAFE_STRCPY(tb->getStringPtr(), "");
+        } else {
+            dMeter2Info_getStringKanji(i_msg, tb->getStringPtr(), NULL);
+        }
+    }
+}
+
+static void hdDmapHide(J2DScreen* i_scrn, u64 i_tag) {
+    if (i_scrn != NULL) {
+        if (J2DPane* p = i_scrn->search(i_tag)) {
+            p->hide();
+        }
+    }
+}
+
+// Wii U dSelect_cursor_c::setPos (RPX 0x02aad0ec): the cursor is drawn with the layout stretch, so
+// it gets the layout position and the (stretched) size of the pane it frames.
+static void hdDmapCursorSetPos(dSelect_cursor_c* i_cursor, f32 i_x, f32 i_y, J2DPane* i_pane,
+                               bool i_scale) {
+    if (hdDmapActive()) {
+        i_cursor->setPosRevo(i_x, i_y, i_pane, i_scale, dusk::tphd::subscreenScaleX(),
+                             mDoGph_gInf_c::getMinXF());
+    } else {
+        i_cursor->setPos(i_x, i_y, i_pane, i_scale);
+    }
+}
+
+static const u64 s_hdDmapAText[5] = {MULTI_CHAR('cont_at'), MULTI_CHAR('cont_at1'), MULTI_CHAR('cont_at2'), MULTI_CHAR('cont_at3'), MULTI_CHAR('cont_at4')};
+static const u64 s_hdDmapBText[5] = {MULTI_CHAR('cont_bt'), MULTI_CHAR('cont_bt1'), MULTI_CHAR('cont_bt2'), MULTI_CHAR('cont_bt3'), MULTI_CHAR('cont_bt4')};
+// RPX 0x029c1fa8: Japanese c_text, c_text_9..1, other languages c_text1, c_text18..10.
+static const u64 s_hdDmapCTextJpn[10] = {MULTI_CHAR('c_text'), MULTI_CHAR('c_text_9'), MULTI_CHAR('c_text_8'), MULTI_CHAR('c_text_7'), MULTI_CHAR('c_text_6'), MULTI_CHAR('c_text_5'), MULTI_CHAR('c_text_4'), MULTI_CHAR('c_text_3'), MULTI_CHAR('c_text_2'), MULTI_CHAR('c_text_1')};
+static const u64 s_hdDmapCText[10] = {MULTI_CHAR('c_text1'), MULTI_CHAR('c_text18'), MULTI_CHAR('c_text17'), MULTI_CHAR('c_text16'), MULTI_CHAR('c_text15'), MULTI_CHAR('c_text14'), MULTI_CHAR('c_text13'), MULTI_CHAR('c_text12'), MULTI_CHAR('c_text11'), MULTI_CHAR('c_text10')};
 #endif
 
 #if (PLATFORM_WII || PLATFORM_SHIELD)
@@ -166,7 +234,18 @@ void dMenu_DmapBg_c::mapScreenInit() {
 
         dPaneClass_showNullPane(mMapScreen[i]);
     }
-    
+
+    #if TARGET_PC
+    const bool hd = hdDmapActive();
+    if (hd) {
+        // Wii U (RPX 0x029bdc0c): the map frame is measured in the stretched layout.
+        hdDmapStretch(mMapScreen[0]);
+        hdDmapStretch(mMapScreen[1]);
+        mpBlack = JKR_NEW CPaneMgrAlpha(mMapScreen[0], MULTI_CHAR('m_black'), 2, NULL);
+        mpBlack->setAlphaRate(0.0f);
+        hdDmapHide(mMapScreen[0], MULTI_CHAR('poecnt_n'));
+    } else
+    #endif
     #if (PLATFORM_WII || PLATFORM_SHIELD)
     mpBlack = JKR_NEW CPaneMgrAlpha(mMapScreen[0], MULTI_CHAR('m_black'), 2, NULL);
     JUT_ASSERT(699, mpBlack != NULL);
@@ -238,6 +317,30 @@ void dMenu_DmapBg_c::mapScreenInit() {
 
         mpMapSpace[i]->paneTrans(0.0f, -15.0f);
     }
+
+    #if TARGET_PC
+    if (hd) {
+        // Wii U poe counter of the dungeon (poecnt_n of the map screen).
+        J2DPane* poeBase = mMapScreen[1]->search(MULTI_CHAR('poecnt_n'));
+        J2DTextBox* poeText = hdDmapTextBox(mMapScreen[1], MULTI_CHAR('poecnt_t'));
+        int nowPoe = 0;
+        int totalPoe = 0;
+        if (dComIfGs_isEventBit(dSv_event_flag_c::F_0456)) {
+            dMenuMapCommon_c::getDmapPoeCount(dComIfGp_getStartStageName(), nowPoe, totalPoe);
+        }
+        if (poeBase != NULL) {
+            if (totalPoe < 1 || poeText == NULL) {
+                poeBase->hide();
+            } else {
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%d/%d", nowPoe, totalPoe);
+                poeText->setFont(mDoExt_getSubFont());
+                poeText->setString(0x20, buf);
+                poeBase->show();
+            }
+        }
+    }
+    #endif
 }
 
 void dMenu_DmapBg_c::mapScreenAnime() {
@@ -330,6 +433,83 @@ void dMenu_DmapBg_c::buttonIconScreenInit() {
     };
     #endif
 
+#if TARGET_PC
+    if (hdDmapActive()) {
+        // Wii U buttonIconScreenInit (RPX 0x029be3c4).
+        mButtonScreen = JKR_NEW J2DScreen();
+        JUT_ASSERT(0, mButtonScreen != NULL);
+        bool hdFg = mButtonScreen->setPriority("zelda_dungeon_map_spot_button_revo.blo", 0x20000,
+                                               dComIfGp_getDmapResArchive());
+        JUT_ASSERT(0, hdFg != false);
+        dPaneClass_showNullPane(mButtonScreen);
+
+        mDecorateScreen = JKR_NEW J2DScreen();
+        JUT_ASSERT(0, mDecorateScreen != NULL);
+        hdFg = mDecorateScreen->setPriority("zelda_dungeon_map_decoration_revo.blo", 0x20000,
+                                            dComIfGp_getDmapResArchive());
+        JUT_ASSERT(0, hdFg != false);
+        dPaneClass_showNullPane(mDecorateScreen);
+
+        mpDecorateRoot = JKR_NEW CPaneMgrAlphaMorf(mDecorateScreen, 'ROOT', 2, NULL);
+        mpButtonRoot = JKR_NEW CPaneMgrAlphaMorf(mButtonScreen, 'ROOT', 2, NULL);
+
+        // A / B prompts, top right, with the Wii U offsets.
+        mpButtonAB[0] = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('g_abtn_n'), 0, NULL);
+        mpButtonText[0] = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('a_text_n'), 0, NULL);
+        mpButtonAB[1] = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('g_bbtn_n'), 0, NULL);
+        mpButtonText[1] = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('b_text_n'), 0, NULL);
+        mpButtonAB[0]->paneTrans(-22.3f, 15.6f);
+        mpButtonAB[0]->scale(1.3f, 1.3f);
+        mpButtonAB[1]->paneTrans(-22.3f, 19.1f);
+        mpButtonAB[1]->scale(1.3f, 1.3f);
+        mpButtonText[0]->paneTrans(-24.9f, 12.3f);
+        mpButtonText[0]->scale(1.1f, 1.1f);
+        mpButtonText[1]->paneTrans(-27.5f, 19.1f);
+        mpButtonText[1]->scale(1.1f, 1.1f);
+
+        mpCButton = JKR_NEW CPaneMgrAlpha(mButtonScreen, MULTI_CHAR('c_btn'), 2, NULL);
+        mpJButton = JKR_NEW CPaneMgrAlpha(mButtonScreen, MULTI_CHAR('j_button'), 2, NULL);
+
+        for (int i = 0; i < 5; i++) {
+            for (u64 tag : {s_hdDmapAText[i], s_hdDmapBText[i]}) {
+                if (J2DTextBox* tb = hdDmapTextBox(mButtonScreen, tag)) {
+                    tb->setFont(mDoExt_getMesgFont());
+                    tb->setString(0x20, "");
+                }
+            }
+        }
+
+        // "Back" next to the d-pad icon (PICT_001), under the map.
+        static const u64 back_tag[5] = {MULTI_CHAR('c_text2'), MULTI_CHAR('c_text06'), MULTI_CHAR('c_text07'), MULTI_CHAR('c_text08'), MULTI_CHAR('c_text09')};
+        for (int i = 0; i < 5; i++) {
+            if (J2DTextBox* tb = hdDmapTextBox(mButtonScreen, back_tag[i])) {
+                tb->setFont(mDoExt_getMesgFont());
+                tb->setString(0x10, "");
+                dMeter2Info_getString(0x3f9, tb->getStringPtr(), NULL);
+            }
+        }
+        // C texts (c_n, below the screen on the TV layout).
+        for (int i = 0; i < 10; i++) {
+            for (u64 tag : {s_hdDmapCTextJpn[i], s_hdDmapCText[i]}) {
+                if (J2DTextBox* tb = hdDmapTextBox(mButtonScreen, tag)) {
+                    tb->setFont(mDoExt_getMesgFont());
+                    tb->setString(0x20, "");
+                }
+            }
+        }
+
+        field_0xcf4 = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('c_n'), 2, NULL);
+        field_0xcf8 = JKR_NEW CPaneMgr(mButtonScreen, MULTI_CHAR('c_n1'), 2, NULL);
+        hdDmapHide(mButtonScreen, MULTI_CHAR('p_btn'));
+        field_0xcf4->show();
+        field_0xcf8->paneTrans(-1.7f, 0.0f);
+        field_0xcf4->paneTrans(0.0f, 0.0f);
+
+        hdDmapStretch(mButtonScreen);
+        hdDmapStretch(mDecorateScreen);
+        return;
+    }
+#endif
     mButtonScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(916, mButtonScreen != NULL);
 
@@ -426,6 +606,14 @@ void dMenu_DmapBg_c::buttonIconScreenInit() {
 
 void dMenu_DmapBg_c::setAButtonString(u32 i_msgNo) {
 #if TARGET_PC
+    if (mDecorateScreen != NULL && hdDmapActive()) {
+        for (int i = 0; i < 5; i++) {
+            hdDmapSetMsg(mButtonScreen, s_hdDmapAText[i], i_msgNo);
+        }
+        return;
+    }
+#endif
+#if TARGET_PC
     static u64 const cont_at_jpn[5] = {
         MULTI_CHAR('cont_at'), MULTI_CHAR('cont_at1'), MULTI_CHAR('cont_at2'), MULTI_CHAR('cont_at3'), MULTI_CHAR('cont_at4')
     };
@@ -452,6 +640,14 @@ void dMenu_DmapBg_c::setAButtonString(u32 i_msgNo) {
 }
 
 void dMenu_DmapBg_c::setBButtonString(u32 i_msgNo) {
+#if TARGET_PC
+    if (mDecorateScreen != NULL && hdDmapActive()) {
+        for (int i = 0; i < 5; i++) {
+            hdDmapSetMsg(mButtonScreen, s_hdDmapBText[i], i_msgNo);
+        }
+        return;
+    }
+#endif
 #if TARGET_PC
     static u64 const cont_bt_jpn[5] = {
         MULTI_CHAR('cont_bt'), MULTI_CHAR('cont_bt1'), MULTI_CHAR('cont_bt2'), MULTI_CHAR('cont_bt3'), MULTI_CHAR('cont_bt4')
@@ -503,6 +699,20 @@ void dMenu_DmapBg_c::setCButtonString(u32 i_msgNo) {
 #endif
     int i;
 
+#if TARGET_PC
+    if (mDecorateScreen != NULL && hdDmapActive()) {
+        // Wii U (RPX 0x029c1fa8): always message 0x56a, full alpha.
+        const u64* tags = dusk::version::isRegionJpn() ? s_hdDmapCTextJpn : s_hdDmapCText;
+        for (i = 0; i < 10; i++) {
+            if (J2DTextBox* tb = hdDmapTextBox(mButtonScreen, tags[i])) {
+                dMeter2Info_getString(0x56a, tb->getStringPtr(), NULL);
+            }
+        }
+        mpCButton->setAlphaRate(1.0f);
+        return;
+    }
+#endif
+
     u32 msgNo;
     if (!dMenu_Dmap_c::myclass->isMapMoveState()) {
         msgNo = 0;
@@ -550,18 +760,38 @@ void dMenu_DmapBg_c::baseScreenInit() {
     mBaseScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(1336, mBaseScreen != NULL);
 
+#if TARGET_PC
+    // Wii U (RPX 0x029bd754): zelda_dungeon_map_base_revo / floor_parts_revo.
+    const bool hd = hdDmapActive();
+    bool fg = mBaseScreen->setPriority(hd ? "zelda_dungeon_map_base_revo.blo" : "zelda_dungeon_map_base.blo",
+                                       0x20000, dComIfGp_getDmapResArchive());
+#else
     bool fg = mBaseScreen->setPriority("zelda_dungeon_map_base.blo", 0x20000, dComIfGp_getDmapResArchive());
+#endif
     JUT_ASSERT(1347, fg != false);
     dPaneClass_showNullPane(mBaseScreen);
 
     mFloorScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(1351, mFloorScreen != NULL);
 
+#if TARGET_PC
+    fg = mFloorScreen->setPriority(hd ? "zelda_dungeon_map_floor_parts_revo.blo" : "zelda_dungeon_map_floor_parts.blo",
+                                   0x20000, dComIfGp_getDmapResArchive());
+#else
     fg = mFloorScreen->setPriority("zelda_dungeon_map_floor_parts.blo", 0x20000,
                                    dComIfGp_getDmapResArchive());
+#endif
     JUT_ASSERT(1362, fg != false);
     dPaneClass_showNullPane(mFloorScreen);
 
+#if TARGET_PC
+    if (hd) {
+        hdDmapHide(mBaseScreen, MULTI_CHAR('gc_btn_n'));
+        // Pane positions (floor plates, item frames) are read in the stretched layout.
+        hdDmapStretch(mBaseScreen);
+        hdDmapStretch(mFloorScreen);
+    }
+#endif
     mBaseScreen->search(MULTI_CHAR('w_btn_n'))->hide();
 
     mpBaseRoot = JKR_NEW CPaneMgrAlphaMorf(mBaseScreen, 'ROOT', 2, NULL);
@@ -570,7 +800,11 @@ void dMenu_DmapBg_c::baseScreenInit() {
     mpFloorRoot = JKR_NEW CPaneMgrAlphaMorf(mFloorScreen, 'ROOT', 2, NULL);
     JUT_ASSERT(1399, mpFloorRoot != NULL);
 
+#if TARGET_PC
+    mpDrawCursor = JKR_NEW dSelect_cursor_c(hd ? 3 : 2, 1.0f, NULL);  // Wii U: type 3
+#else
     mpDrawCursor = JKR_NEW dSelect_cursor_c(2, 1.0f, NULL);
+#endif
     JUT_ASSERT(1403, mpDrawCursor != NULL);
 
     mpDrawCursor->setAlphaRate(1.0f);
@@ -965,6 +1199,17 @@ void dMenu_DmapBg_c::decGoldFrameAlphaRate() {
 }
 
 void dMenu_DmapBg_c::dMapBgWide() {
+#if TARGET_PC
+    if (mDecorateScreen != NULL && hdDmapActive()) {
+        hdDmapStretch(mBaseScreen);
+        hdDmapStretch(mFloorScreen);
+        hdDmapStretch(mMapScreen[0]);
+        hdDmapStretch(mMapScreen[1]);
+        hdDmapStretch(mButtonScreen);
+        hdDmapStretch(mDecorateScreen);
+        return;
+    }
+#endif
     // Scale Base HUD
     mBaseScreen->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
     mBaseScreen->translate(mDoGph_gInf_c::getSafeMinXF(), 0.0f);
@@ -1149,7 +1394,7 @@ void dMenu_DmapBg_c::draw() {
     mButtonScreen->draw(field_0xd94, field_0xd98, grafContext);
 
 #if TARGET_PC
-    if (dusk::getSettings().game.enhancedMapMenus) {
+    if (dusk::getSettings().game.enhancedMapMenus && !hdDmapActive()) {
         int nowPoeCount = 0;
         int totalPoeCount = 0;
         dMenuMapCommon_c::getDmapPoeCount(dComIfGp_getStartStageName(), nowPoeCount, totalPoeCount);
@@ -1392,11 +1637,21 @@ void dMenu_Dmap_c::screenInit() {
     field_0x10->getPanePtr()->translate(mSelFloor[getCurFloorPos()]->getPanePtr()->getTranslateX(), mSelFloor[getCurFloorPos()]->getPanePtr()->getTranslateY());
     iconMoveCalc();
     Vec local_b0 = mSelFloor[getDefaultCurFloorPos()]->getGlobalVtxCenter(false, 0);
-    mpDrawBg->mpDrawCursor->setPos(local_b0.x + field_0x104, local_b0.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), true);
+    hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, local_b0.x + field_0x104, local_b0.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), true);
     field_0x94 = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('item_s_n'), 0, NULL);
+#if TARGET_PC
+    if (hdDmapActive()) {
+        // Wii U base_revo: the item frames of the right column are N_map / N_con / N_key.
+        field_0x7c[0] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('N_map'), 3, NULL);
+        field_0x7c[1] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('N_con'), 3, NULL);
+        field_0x7c[2] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('N_key'), 3, NULL);
+    } else
+#endif
+    {
     field_0x7c[0] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('map_n'), 3, NULL);
     field_0x7c[1] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('con_n'), 3, NULL);
     field_0x7c[2] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('key_n'), 3, NULL);
+    }
     field_0x88[0] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('map000'), 3, NULL);
     field_0x88[1] = JKR_NEW CPaneMgr(mpDrawBg->mBaseScreen, MULTI_CHAR('con000'), 3, NULL);
     
@@ -2186,10 +2441,10 @@ bool dMenu_Dmap_c::isOpen() {
 
     if (m_process == 0) {
         Vec sp2C = field_0x7c[field_0x177]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp2C.x + field_0x104, sp2C.y, field_0x7c[field_0x177]->getPanePtr(), 0);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp2C.x + field_0x104, sp2C.y, field_0x7c[field_0x177]->getPanePtr(), 0);
     } else {
         Vec sp20 = mSelFloor[getDefaultCurFloorPos()]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp20.x + field_0x104, sp20.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp20.x + field_0x104, sp20.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
     }
 
     if (field_0x164 >= display_frame_num) {
@@ -2551,7 +2806,7 @@ void dMenu_Dmap_c::itemSelectAnm() {
         field_0x94->show();
 
         Vec sp14 = field_0x7c[field_0x177]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp14.x + field_0x104, sp14.y, field_0x7c[field_0x177]->getPanePtr(), false);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp14.x + field_0x104, sp14.y, field_0x7c[field_0x177]->getPanePtr(), false);
         m_itemSubProcess = 0;
     }
 }
@@ -2617,6 +2872,12 @@ void dMenu_Dmap_c::itemInfoCloseAnm() {
 }
 
 u8 dMenu_Dmap_c::getNextStatus() {
+#if TARGET_PC
+    // Wii U: "+ Back" on the d-pad up (the same button that opens the map).
+    if (hdDmapActive() && dMw_UP_TRIGGER() && !isKeyCheck()) {
+        return 1;
+    }
+#endif
     if (POINTER_OPT != 0) {
         if ((dMw_LEFT_TRIGGER() || (dMw_B_TRIGGER() && (!getZoomState() || (m_process == 0 && m_itemSubProcess == 0)))) && !isKeyCheck()) {
             return 1;
@@ -2676,7 +2937,7 @@ void dMenu_Dmap_c::infoModeChange_proc() {
         field_0x94->show();
 
         Vec sp14 = field_0x7c[field_0x177]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp14.x + field_0x104, sp14.y, field_0x7c[field_0x177]->getPanePtr(), 0);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp14.x + field_0x104, sp14.y, field_0x7c[field_0x177]->getPanePtr(), 0);
         m_process = 0;
         m_itemSubProcess = 0;
     }
@@ -2700,7 +2961,7 @@ void dMenu_Dmap_c::mapModeChange_proc() {
         field_0x10->show();
 
         Vec sp14 = mSelFloor[getDefaultCurFloorPos()]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp14.x + field_0x104, sp14.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp14.x + field_0x104, sp14.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
         m_process = 1;
         field_0x17d = 0;
 
@@ -2824,7 +3085,7 @@ void dMenu_Dmap_c::floorChange_proc() {
                                             mSelFloor[getCurFloorPos()]->getPanePtr()->getTranslateY());
         
         Vec sp14 = mSelFloor[getDefaultCurFloorPos()]->getGlobalVtxCenter(false, 0);
-        mpDrawBg->mpDrawCursor->setPos(sp14.x + field_0x104, sp14.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
+        hdDmapCursorSetPos(mpDrawBg->mpDrawCursor, sp14.x + field_0x104, sp14.y, mSelFloor[getDefaultCurFloorPos()]->getPanePtr(), 1);
         field_0x17d = 0;
     }
 

@@ -26,7 +26,146 @@
 #include "dusk/ui/touch_controls.hpp"
 #include "dusk/version.hpp"
 
+#if TARGET_PC
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "dusk/tphd/HdMapPalette.hpp"
+
+extern JKRArchive* g_tphdCollectRevoArchive;
+
+// TPHD (Wii U TV) field map. With TPHD active d_s_logo.cpp mounts fmapresR.arc as the field map
+// archive (zelda_map_screen_title_revo.blo + the Wii U base / stone base / cursor layouts), and the
+// A / B prompts come from the Wii U icon widget zelda_collect_soubi_do_icon_parts_revo.blo
+// (clctresR.arc), like the Wii U Fmap2DTop ctor (RPX 0x029e4340) does.
+static bool hdFmapActive() {
+    JKRArchive* arc = dComIfGp_getFmapResArchive();
+    return dusk::tphd_active() && g_tphdCollectRevoArchive != NULL && arc != NULL &&
+           JKRGetNameResource("zelda_map_screen_title_revo.blo", arc) != NULL;
+}
+
+// Wii U field map HIO (ctor RPX 0x02a50e80): only the values that differ from the GC ones.
+static void hdFmapApplyHio(bool i_tphd) {
+    struct Vals {
+        f32 mapX, mapY, mapScale;
+        f32 title[3], sub[3], area[3], closing[3], doIcon[3];
+        f32 btnZ[3], btnA[3], btnB[3], txtZ[3], txtA[3], txtB[3];
+    };
+    static bool s_saved = false;
+    static Vals s_gc;
+    static const Vals s_wiiu = {
+        147.0f, 81.0f, 310.0f,
+        {6.6f, 7.0f, 0.865f}, {-22.0f, 4.5f, 0.9f}, {-4.0f, 12.0f, 1.0f}, {-14.0f, 12.0f, 0.9f},
+        {0.0f, 0.0f, 1.0f},
+        {-18.0f, 54.0f, 0.92f}, {-22.3f, 25.5f, 1.3f}, {-22.3f, 25.5f, 1.3f},
+        {-18.0f, 57.0f, 0.95f}, {-27.5f, 24.9f, 1.1f}, {-27.5f, 26.0f, 1.1f},
+    };
+    dMeter_fmapHIO_c& h = g_fmapHIO;
+#define HD_FMAP_HIO_FIELDS(X)                                                                  \
+    X(mapX, h.mMapTopLeftPosX) X(mapY, h.mMapTopLeftPosY) X(mapScale, h.mMapScale)             \
+    X(title[0], h.mTitlePosX) X(title[1], h.mTitlePosY) X(title[2], h.mTitleScale)             \
+    X(sub[0], h.mSubTitlePosX) X(sub[1], h.mSubTitlePosY) X(sub[2], h.mSubTitleScale)          \
+    X(area[0], h.mAreaMovementPosX) X(area[1], h.mAreaMovementPosY)                            \
+    X(area[2], h.mAreaMovementScale) X(closing[0], h.mClosingPosX)                             \
+    X(closing[1], h.mClosingPosY) X(closing[2], h.mClosingScale) X(doIcon[0], h.mDoIconPosX)   \
+    X(doIcon[1], h.mDoIconPosY) X(doIcon[2], h.mDoIconScale) X(btnZ[0], h.mButtonZPosX)        \
+    X(btnZ[1], h.mButtonZPosY) X(btnZ[2], h.mButtonZScale) X(btnA[0], h.mButtonAPosX)          \
+    X(btnA[1], h.mButtonAPosY) X(btnA[2], h.mButtonAScale) X(btnB[0], h.mButtonBPosX)          \
+    X(btnB[1], h.mButtonBPosY) X(btnB[2], h.mButtonBScale) X(txtZ[0], h.mButtonZTextPosX)      \
+    X(txtZ[1], h.mButtonZTextPosY) X(txtZ[2], h.mButtonZTextScale)                             \
+    X(txtA[0], h.mButtonATextPosX) X(txtA[1], h.mButtonATextPosY)                              \
+    X(txtA[2], h.mButtonATextScale) X(txtB[0], h.mButtonBTextPosX)                             \
+    X(txtB[1], h.mButtonBTextPosY) X(txtB[2], h.mButtonBTextScale)
+    if (!s_saved) {
+#define HD_SAVE(v, f) s_gc.v = f;
+        HD_FMAP_HIO_FIELDS(HD_SAVE)
+#undef HD_SAVE
+        s_saved = true;
+    }
+    const Vals& src = i_tphd ? s_wiiu : s_gc;
+#define HD_LOAD(v, f) f = src.v;
+    HD_FMAP_HIO_FIELDS(HD_LOAD)
+#undef HD_LOAD
+#undef HD_FMAP_HIO_FIELDS
+}
+
+// Side table (the class is allocated in d_menu_fmap.cpp, its layout must not change).
+static struct {
+    dMenu_Fmap2DTop_c* owner;
+    J2DScreen* icon;
+} s_hdFmapTop = {NULL, NULL};
+
+static J2DScreen* hdFmapIcon(const dMenu_Fmap2DTop_c* i_top) {
+    return s_hdFmapTop.owner == i_top ? s_hdFmapTop.icon : NULL;
+}
+
+static J2DTextBox* hdTextBox(J2DScreen* i_scrn, u64 i_tag) {
+    if (i_scrn == NULL) {
+        return NULL;
+    }
+    J2DPane* p = i_scrn->search(i_tag);
+    return (p != NULL && p->getTypeID() == 19) ? static_cast<J2DTextBox*>(p) : NULL;
+}
+
+static void hdInitTextBox(J2DScreen* i_scrn, u64 i_tag, JUTFont* i_font, s16 i_len) {
+    if (J2DTextBox* tb = hdTextBox(i_scrn, i_tag)) {
+        tb->setFont(i_font);
+        tb->setString(i_len, "");
+    }
+}
+
+static void hdHidePane(J2DScreen* i_scrn, u64 i_tag) {
+    if (i_scrn != NULL) {
+        if (J2DPane* p = i_scrn->search(i_tag)) {
+            p->hide();
+        }
+    }
+}
+
+static void hdSetMsg(J2DScreen* i_scrn, u64 i_tag, u32 i_msg) {
+    if (J2DTextBox* tb = hdTextBox(i_scrn, i_tag)) {
+        if (i_msg == 0) {
+            SAFE_STRCPY(tb->getStringPtr(), "");
+        } else {
+            dMeter2Info_getStringKanji(i_msg, tb->getStringPtr(), NULL);
+        }
+    }
+}
+
+// Wii U poe counter of the field map title (RPX 0x029e5a88): poecnt_n / poecnt_t.
+static void hdFmapUpdatePoeCount(J2DScreen* i_scrn, u8 i_region) {
+    J2DPane* base = i_scrn->search(MULTI_CHAR('poecnt_n'));
+    J2DTextBox* text = hdTextBox(i_scrn, MULTI_CHAR('poecnt_t'));
+    if (base == NULL) {
+        return;
+    }
+    int nowPoe = 0;
+    int totalPoe = 0;
+    if (i_region != 0xFF && dComIfGs_isEventBit(dSv_event_flag_c::F_0456)) {
+        dMenuMapCommon_c::getFmapPoeCount(i_region, nowPoe, totalPoe);
+    }
+    if (totalPoe < 1 || text == NULL) {
+        base->hide();
+        return;
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d/%d", nowPoe, totalPoe);
+    text->setFont(mDoExt_getSubFont());
+    text->setString(buf);
+    base->show();
+}
+
 void dMenu_Fmap2DBack_c::fMapBackWide() {
+    if (hdFmapActive()) {
+        // Wii U J2DPane::draw stretch: the whole layout is stretched, 'n_43' panes keep their shape.
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        dusk::tphd::applyN43(mpBaseScreen, dusk::tphd::wiiuTvN43(), false, true);
+        dusk::tphd::applyN43(mpBackScreen, dusk::tphd::wiiuTvN43(), false, true);
+        mpBaseScreen->scale(sx, 1.0f);
+        mpBaseScreen->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+        mpBackScreen->scale(sx, 1.0f);
+        mpBackScreen->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+        return;
+    }
     mpBaseScreen->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
     mpBaseScreen->translate(mDoGph_gInf_c::getSafeMinXF(), 0.0f);
     mpBackScreen->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
@@ -35,6 +174,9 @@ void dMenu_Fmap2DBack_c::fMapBackWide() {
 #endif
 
 dMenu_Fmap2DBack_c::dMenu_Fmap2DBack_c() {
+#if TARGET_PC
+    hdFmapApplyHio(hdFmapActive());
+#endif
     dMeter2Info_setMapDrugFlag(0);
 
     for (int i = 0; i < 8; i++) {
@@ -402,6 +544,13 @@ void dMenu_Fmap2DBack_c::draw() {
             field_0x11e0 += 360.0f;
         }
 
+#if TARGET_PC
+        // Wii U (RPX 0x029df93c): the reticle of fmapresR (f_po_* + f_po_*1) is not rotated.
+        if (hdFmapActive()) {
+            mpPointParent->getPanePtr()->rotate(mpPointParent->getSizeX() / 2.0f,
+                                                mpPointParent->getSizeY() / 2.0f, ROTATE_Z, 0.0f);
+        } else
+#endif
         mpPointParent->getPanePtr()->rotate(mpPointParent->getSizeX() / 2.0f,
                                             mpPointParent->getSizeY() / 2.0f, ROTATE_Z,
                                             field_0x11e0);
@@ -1448,6 +1597,7 @@ void dMenu_Fmap2DBack_c::stageTextureDraw() {
     }
 
 #if TARGET_PC
+    dusk::tphd::mapPaletteSync(mpSpotTexture->getTexture(0)->getTexInfo());
     JUTPalette* pPalette = mpSpotTexture->getTexture(0)->getPalette();
     pPalette->dataUploaded();
 #endif
@@ -2303,6 +2453,141 @@ void dMenu_Fmap2DTop_c::fMapTopWide() {
     mpTitleScreen->search(MULTI_CHAR('btn_i_n'))->translate(mDoGph_gInf_c::ScaleHUDXLeft(-241.0f), 177.0f);
     mpTitleScreen->search(MULTI_CHAR('cont_n'))->translate(mDoGph_gInf_c::ScaleHUDXRight(515.0f), 83.0f);
 }
+
+// Wii U Fmap2DTop ctor (RPX 0x029e4340).
+static void hdFmapTopCtor(dMenu_Fmap2DTop_c* t) {
+    J2DScreen* title = JKR_NEW J2DScreen();
+    JUT_ASSERT(0, title != NULL);
+    t->mpTitleScreen = title;
+    bool fg = title->setPriority("zelda_map_screen_title_revo.blo", 0x1020000,
+                                 dComIfGp_getFmapResArchive());
+    JUT_ASSERT(0, fg != false);
+    dPaneClass_showNullPane(title);
+    t->mpTitleRoot = JKR_NEW CPaneMgrAlphaMorf(title, 'ROOT', 2, NULL);
+    for (int i = 0; i < 2; i++) {
+        t->mpArrowLAlpha[i] = NULL;
+        t->mpArrowRAlpha[i] = NULL;
+    }
+    t->mpDpadAlpha = NULL;
+    t->mpAnalogStickAlpha = NULL;
+    t->mpAnalogStick = NULL;
+    t->mpDpad = NULL;
+    hdHidePane(title, MULTI_CHAR('tri_Null'));
+
+    J2DScreen* icon = JKR_NEW J2DScreen();
+    JUT_ASSERT(0, icon != NULL);
+    fg = icon->setPriority("zelda_collect_soubi_do_icon_parts_revo.blo", 0x20000,
+                           g_tphdCollectRevoArchive);
+    JUT_ASSERT(0, fg != false);
+    dPaneClass_showNullPane(icon);
+    s_hdFmapTop.owner = t;
+    s_hdFmapTop.icon = icon;
+
+    t->mpButtonA = JKR_NEW CPaneMgr(icon, MULTI_CHAR('g_abtn_n'), 2, NULL);
+    t->mpButtonB = JKR_NEW CPaneMgr(icon, MULTI_CHAR('g_bbtn_n'), 2, NULL);
+    t->mpButtonZ = JKR_NEW CPaneMgr(title, MULTI_CHAR('j_scal_n'), 2, NULL);
+    t->mpButtonTextA = JKR_NEW CPaneMgr(icon, MULTI_CHAR('a_text_n'), 2, NULL);
+    t->mpButtonTextB = JKR_NEW CPaneMgr(icon, MULTI_CHAR('b_text_n'), 2, NULL);
+    t->mpButtonTextZ = JKR_NEW CPaneMgr(title, MULTI_CHAR('z_text_n'), 2, NULL);
+    t->mpButtonA->setAlphaRate(0.0f);
+    t->mpButtonB->setAlphaRate(0.0f);
+    t->mpButtonZ->setAlphaRate(0.0f);
+    t->mpButtonTextA->setAlphaRate(0.0f);
+    t->mpButtonTextB->setAlphaRate(0.0f);
+    t->mpButtonTextZ->setAlphaRate(0.0f);
+
+    t->mpNamePane = JKR_NEW CPaneMgr(title, MULTI_CHAR('name_n'), 0, NULL);
+    t->mpSubPane = JKR_NEW CPaneMgr(title, MULTI_CHAR('sub_n_n'), 0, NULL);
+    if (dMeter2Info_getMapStatus() == 9) {
+        t->mpNamePane->hide();
+        t->mpSubPane->hide();
+    }
+    t->mpContPane = JKR_NEW CPaneMgr(title, MULTI_CHAR('cont_n'), 0, NULL);
+
+    t->mTitlePosX = t->mTitlePosY = 0.0f;
+    t->mTitleScale = 1.0f;
+    t->mSubTitlePosX = t->mSubTitlePosY = 0.0f;
+    t->mSubTitleScale = 1.0f;
+    t->mAreaMovementPosX = t->mAreaMovementPosY = 0.0f;
+    t->mAreaMovementScale = 1.0f;
+    t->mClosingPosX = t->mClosingPosY = 0.0f;
+    t->mClosingScale = 1.0f;
+    t->mDoIconPosX = t->mDoIconPosY = 0.0f;
+    t->mDoIconScale = 1.0f;
+
+    OSInitFastCast();
+    void* btk = JKRGetNameResource("zelda_map_screen_title_revo.btk", dComIfGp_getFmapResArchive());
+    t->mpAnm = btk != NULL ?
+                   static_cast<J2DAnmTextureSRTKey*>(J2DAnmLoaderDataBase::load(btk)) :
+                   NULL;
+    if (t->mpAnm != NULL) {
+        t->mpAnm->searchUpdateMaterialID(title);
+    }
+    t->mAnmFrame = 0.0f;
+
+    const bool jpn = dusk::version::isRegionJpn();
+    // Area name (f_name_1 / f_name2, Japanese i_name_s / i_name) and region name (ffontl4 /
+    // sfontl1), with the ruby font.
+    static const u64 area_us[2] = {MULTI_CHAR('f_name_1'), MULTI_CHAR('f_name2')};
+    static const u64 area_jp[2] = {MULTI_CHAR('i_name_s'), MULTI_CHAR('i_name')};
+    for (int i = 0; i < 2; i++) {
+        hdInitTextBox(title, jpn ? area_jp[i] : area_us[i], mDoExt_getRubyFont(), 0x40);
+        hdHidePane(title, jpn ? area_us[i] : area_jp[i]);
+    }
+    hdInitTextBox(title, jpn ? MULTI_CHAR('sfontl1') : MULTI_CHAR('ffontl4'), mDoExt_getRubyFont(),
+                  0x40);
+    hdHidePane(title, jpn ? MULTI_CHAR('ffontl4') : MULTI_CHAR('sfontl1'));
+    t->setTitleNameString(0x3e0);
+
+    static const u64 cont_zt[5] = {MULTI_CHAR('cont_zt'), MULTI_CHAR('cont_zt1'), MULTI_CHAR('cont_zt2'), MULTI_CHAR('cont_zt3'), MULTI_CHAR('cont_zt4')};
+    static const u64 font_zt[5] = {MULTI_CHAR('font_zt1'), MULTI_CHAR('font_zt2'), MULTI_CHAR('font_zt3'), MULTI_CHAR('font_zt4'), MULTI_CHAR('font_zt5')};
+    for (int i = 0; i < 5; i++) {
+        hdInitTextBox(title, jpn ? cont_zt[i] : font_zt[i], mDoExt_getMesgFont(), 0x20);
+        hdHidePane(title, jpn ? font_zt[i] : cont_zt[i]);
+    }
+    t->setZButtonString(0x529, 0xff);
+
+    hdInitTextBox(icon, MULTI_CHAR('cont_bt1'), mDoExt_getMesgFont(), 0x20);
+    hdInitTextBox(icon, MULTI_CHAR('cont_bt'), mDoExt_getMesgFont(), 0x20);
+    t->setBButtonString(0x522, 0xff);
+    hdInitTextBox(icon, MULTI_CHAR('cont_at1'), mDoExt_getMesgFont(), 0x20);
+    hdInitTextBox(icon, MULTI_CHAR('cont_at'), mDoExt_getMesgFont(), 0x20);
+    t->setAButtonString(0x527, 0xff);
+
+    // "Back" next to the d-pad icon (PICT_001), bottom left.
+    static const u64 back_tags[5] = {MULTI_CHAR('font_zt6'), MULTI_CHAR('font_zt7'), MULTI_CHAR('font_zt8'), MULTI_CHAR('font_zt9'), MULTI_CHAR('font_z10')};
+    for (int i = 0; i < 5; i++) {
+        if (J2DTextBox* tb = hdTextBox(title, back_tags[i])) {
+            tb->setFont(mDoExt_getMesgFont());
+            tb->setString(0x10, "");
+            dMeter2Info_getString(0x3f9, tb->getStringPtr(), NULL);
+        }
+    }
+
+    hdInitTextBox(title, MULTI_CHAR('poecnt_t'), mDoExt_getMesgFont(), 0x20);
+    hdHidePane(title, MULTI_CHAR('poecnt_n'));
+
+    t->mpPoeCountIcon = NULL;
+    t->mpPoeCountPane = NULL;
+    t->mSelectRegionNo = 0xFF;
+
+    t->setHIO(true);
+}
+
+// Wii U icon widget draw: like drawRevoIconScreen, but the A / B pane offsets are the field map
+// HIO ones, applied by setHIO through the CPaneMgr of each pane.
+static void hdDrawFmapIcon(J2DScreen* i_icon, f32 i_x, f32 i_y, u8 i_alpha, J2DGrafContext* i_graf) {
+    const f32 sx = dusk::tphd::subscreenScaleX();
+    if (J2DPane* p = i_icon->search(MULTI_CHAR('abtn_n'))) {
+        p->scale(1.0f / sx, 1.0f);
+    }
+    if (J2DPane* p = i_icon->search(MULTI_CHAR('bbtn_n'))) {
+        p->scale(1.0f / sx, 1.0f);
+    }
+    i_icon->setAlpha(i_alpha);
+    i_icon->scale(sx, 1.0f);
+    i_icon->draw(mDoGph_gInf_c::getMinXF() + i_x, i_y, i_graf);
+}
 #endif
 
 dMenu_Fmap2DTop_c::dMenu_Fmap2DTop_c(JKRExpHeap* i_heap, STControl* i_stick) {
@@ -2312,6 +2597,14 @@ dMenu_Fmap2DTop_c::dMenu_Fmap2DTop_c(JKRExpHeap* i_heap, STControl* i_stick) {
     IF_DUSK(mAlphaRate = 0.0f;)
     mpPortalBin = NULL;
     mpScrnExplain = NULL;
+
+#if TARGET_PC
+    if (hdFmapActive()) {
+        hdFmapApplyHio(true);
+        hdFmapTopCtor(this);
+        return;
+    }
+#endif
 
     mpTitleScreen = JKR_NEW J2DScreen();
     JUT_ASSERT(3872, mpTitleScreen != NULL);
@@ -2721,13 +3014,26 @@ dMenu_Fmap2DTop_c::~dMenu_Fmap2DTop_c() {
 
     JKR_DELETE(mpPoeCountPane);
     mpPoeCountPane = NULL;
+
+    if (s_hdFmapTop.owner == this) {
+        JKR_DELETE(s_hdFmapTop.icon);
+        s_hdFmapTop.icon = NULL;
+        s_hdFmapTop.owner = NULL;
+    }
 #endif
 }
 
 void dMenu_Fmap2DTop_c::_execute() {
+#if TARGET_PC
+    // Wii U (RPX 0x029e5548): a button without action is drawn at half alpha, not full.
+    const bool hdMinMid = s_hdFmapTop.owner == this;
+#define HD_FMAP_MIN_BTN(btn) (hdMinMid ? setAlphaAnimeMid(btn) : setAlphaAnimeMax(btn))
+#else
+#define HD_FMAP_MIN_BTN(btn) setAlphaAnimeMax(btn)
+#endif
     switch (mAlphaButtonA) {
     case ALPHA_MIN:
-        setAlphaAnimeMax(mpButtonA);
+        HD_FMAP_MIN_BTN(mpButtonA);
         setAlphaAnimeMin(mpButtonTextA);
         break;
     case ALPHA_MID:
@@ -2741,7 +3047,7 @@ void dMenu_Fmap2DTop_c::_execute() {
 
     switch (mAlphaButtonB) {
     case ALPHA_MIN:
-        setAlphaAnimeMax(mpButtonB);
+        HD_FMAP_MIN_BTN(mpButtonB);
         setAlphaAnimeMin(mpButtonTextB);
         break;
     case ALPHA_MID:
@@ -2755,7 +3061,7 @@ void dMenu_Fmap2DTop_c::_execute() {
 
     switch (mAlphaButtonZ) {
     case ALPHA_MIN:
-        setAlphaAnimeMax(mpButtonZ);
+        HD_FMAP_MIN_BTN(mpButtonZ);
         setAlphaAnimeMin(mpButtonTextZ);
         break;
     case ALPHA_MID:
@@ -2796,6 +3102,7 @@ void dMenu_Fmap2DTop_c::_execute() {
     }
 
     setHIO(false);
+#undef HD_FMAP_MIN_BTN
 }
 
 void dMenu_Fmap2DTop_c::setAllAlphaRate(f32 i_rate, bool i_init) {
@@ -2813,6 +3120,31 @@ void dMenu_Fmap2DTop_c::setAllAlphaRate(f32 i_rate, bool i_init) {
 
 void dMenu_Fmap2DTop_c::draw() {
     #if TARGET_PC
+    if (J2DScreen* hdIcon = hdFmapIcon(this)) {
+        // Wii U Fmap2DTop draw (RPX 0x029e5754): title screen, then the A / B icon widget.
+        hdFmapUpdatePoeCount(mpTitleScreen, mSelectRegionNo);
+        u32 sl, st, sw, sh;
+        J2DOrthoGraph* hdCtx = static_cast<J2DOrthoGraph*>(dComIfGp_getCurrentGrafPort());
+        hdCtx->setup2D();
+        GXGetScissor(&sl, &st, &sw, &sh);
+        hdCtx->scissor(mTransX, 0.0f, FB_WIDTH, FB_HEIGHT);
+        hdCtx->setScissor();
+        const f32 sx = dusk::tphd::subscreenScaleX();
+        dusk::tphd::drawRevoScreen(mpTitleScreen, hdCtx, mTransX / sx, mTransY, true);
+        hdCtx->scissor(sl, st, sw, sh);
+        hdCtx->setScissor();
+        f32 rate = mAlphaRate;
+        if (rate < 0.0f) {
+            rate = 0.0f;
+        } else if (rate > 1.0f) {
+            rate = 1.0f;
+        }
+        hdDrawFmapIcon(hdIcon, mTransX, mTransY, static_cast<u8>(rate * 255.0f), hdCtx);
+        if (mpScrnExplain) {
+            mpScrnExplain->draw(hdCtx);
+        }
+        return;
+    }
     fMapTopWide();
     #endif
 
@@ -2874,15 +3206,35 @@ void dMenu_Fmap2DTop_c::btkAnimeLoop(J2DAnmTextureSRTKey* i_anm, f32 i_delta) {
         mAnmFrame = 0.0f;
     }
 
+#if TARGET_PC
+    // The Wii U title has no 'spot_0' haze pane.
+    if (mpTitleScreen->search(MULTI_CHAR('spot_0')) == NULL) {
+        return;
+    }
+#endif
     mpTitleScreen->search(MULTI_CHAR('spot_0'))->setAnimation(i_anm);
     mpTitleScreen->animation();
 }
 
 void dMenu_Fmap2DTop_c::setMoyaAlpha(u8 i_alpha) {
+#if TARGET_PC
+    if (mpTitleScreen->search(MULTI_CHAR('spot_0')) == NULL) {
+        return;
+    }
+#endif
     mpTitleScreen->search(MULTI_CHAR('spot_0'))->setAlpha(i_alpha);
 }
 
 void dMenu_Fmap2DTop_c::setTitleNameString(u32 param_0) {
+#if TARGET_PC
+    if (hdFmapIcon(this) != NULL) {
+        // Wii U (RPX 0x029e3828): only ffontl4.
+        hdSetMsg(mpTitleScreen,
+                 dusk::version::isRegionJpn() ? MULTI_CHAR('sfontl1') : MULTI_CHAR('ffontl4'),
+                 param_0);
+        return;
+    }
+#endif
 #if TARGET_PC
     static const u64 sfont_name[7] = {
         MULTI_CHAR('sfont00'), MULTI_CHAR('sfontl0'), MULTI_CHAR('sfontl1'), MULTI_CHAR('sfontl2'), MULTI_CHAR('sfontb0'), MULTI_CHAR('sfontb1'), MULTI_CHAR('sfontb2')
@@ -2917,6 +3269,15 @@ void dMenu_Fmap2DTop_c::setTitleNameString(u32 param_0) {
 }
 
 void dMenu_Fmap2DTop_c::setAreaNameString(u32 param_0) {
+#if TARGET_PC
+    if (hdFmapIcon(this) != NULL) {
+        // Wii U (RPX 0x029e5960): f_name_1 / f_name2.
+        const bool jpn = dusk::version::isRegionJpn();
+        hdSetMsg(mpTitleScreen, jpn ? MULTI_CHAR('i_name_s') : MULTI_CHAR('f_name_1'), param_0);
+        hdSetMsg(mpTitleScreen, jpn ? MULTI_CHAR('i_name') : MULTI_CHAR('f_name2'), param_0);
+        return;
+    }
+#endif
 #if TARGET_PC
     static const u64 iarea_name[3] = {MULTI_CHAR('i_name_s'), MULTI_CHAR('i_name'), MULTI_CHAR('i_name1')};
     static const u64 farea_name[3] = {MULTI_CHAR('f_name_1'), MULTI_CHAR('f_name3'), MULTI_CHAR('f_name2')};
@@ -2960,6 +3321,12 @@ void dMenu_Fmap2DTop_c::setZButtonString(u32 param_0, u8 i_alpha) {
     #define setZButtonString_font_zt font_zt
 #endif
     if (param_0 == 0 || !isWarpAccept()) {
+#if TARGET_PC
+        if (hdFmapIcon(this) != NULL) {
+            mAlphaButtonZ = ALPHA_MIN;  // Wii U RPX 0x029e3bac
+            return;
+        }
+#endif
 #if PLATFORM_GCN
         mAlphaButtonZ = ALPHA_MID;
 #else
@@ -2983,6 +3350,21 @@ void dMenu_Fmap2DTop_c::setZButtonString(u32 param_0, u8 i_alpha) {
 }
 
 void dMenu_Fmap2DTop_c::setBButtonString(u32 param_0, u8 i_alpha) {
+#if TARGET_PC
+    if (J2DScreen* hdIcon = hdFmapIcon(this)) {
+        // Wii U: the texts of the icon widget.
+        if (param_0 == 0) {
+            mAlphaButtonB = ALPHA_MIN;
+        } else {
+            static const u64 tags[2] = {MULTI_CHAR('cont_bt1'), MULTI_CHAR('cont_bt')};
+            for (int i = 0; i < 2; i++) {
+                hdSetMsg(hdIcon, tags[i], param_0);
+            }
+            mAlphaButtonB = i_alpha == ALPHA_DEFAULT ? (u8)ALPHA_MAX : i_alpha;
+        }
+        return;
+    }
+#endif
 #if TARGET_PC
     static const u64 cont_bt[5] = {MULTI_CHAR('cont_bt1'), MULTI_CHAR('cont_bt2'), MULTI_CHAR('cont_bt3'), MULTI_CHAR('cont_bt4'), MULTI_CHAR('cont_bt')};
     static const u64 font_bt[5] = {MULTI_CHAR('font_bt1'), MULTI_CHAR('font_bt2'), MULTI_CHAR('font_bt3'), MULTI_CHAR('font_bt4'), MULTI_CHAR('font_bt5')};
@@ -3011,6 +3393,21 @@ void dMenu_Fmap2DTop_c::setBButtonString(u32 param_0, u8 i_alpha) {
 
 void dMenu_Fmap2DTop_c::setAButtonString(u32 param_0, u8 i_alpha) {
 #if TARGET_PC
+    if (J2DScreen* hdIcon = hdFmapIcon(this)) {
+        // Wii U: the texts of the icon widget.
+        if (param_0 == 0) {
+            mAlphaButtonA = ALPHA_MIN;
+        } else {
+            static const u64 tags[2] = {MULTI_CHAR('cont_at1'), MULTI_CHAR('cont_at')};
+            for (int i = 0; i < 2; i++) {
+                hdSetMsg(hdIcon, tags[i], param_0);
+            }
+            mAlphaButtonA = i_alpha == ALPHA_DEFAULT ? (u8)ALPHA_MAX : i_alpha;
+        }
+        return;
+    }
+#endif
+#if TARGET_PC
     static const u64 cont_at[5] = {MULTI_CHAR('cont_at'), MULTI_CHAR('cont_at1'), MULTI_CHAR('cont_at2'), MULTI_CHAR('cont_at3'), MULTI_CHAR('cont_at4')};
     static const u64 font_at[5] = {MULTI_CHAR('font_at1'), MULTI_CHAR('font_at2'), MULTI_CHAR('font_at3'), MULTI_CHAR('font_at4'), MULTI_CHAR('font_at5')};
     auto setAButtonString_font_at = dusk::version::isJpnOrLessThanWiiJpn() ? cont_at : font_at;
@@ -3037,6 +3434,11 @@ void dMenu_Fmap2DTop_c::setAButtonString(u32 param_0, u8 i_alpha) {
 }
 
 void dMenu_Fmap2DTop_c::setCrossLRString(u32 param_0) {
+#if TARGET_PC
+    if (hdFmapIcon(this) != NULL) {
+        return;  // no such prompt on the Wii U title ("Back" is fixed text)
+    }
+#endif
 #if PLATFORM_GCN || (VERSION == VERSION_SHIELD)
 #if TARGET_PC
     static const u64 juji_c[5] = {MULTI_CHAR('juji_c00'), MULTI_CHAR('juji_c01'), MULTI_CHAR('juji_c02'), MULTI_CHAR('juji_c03'), MULTI_CHAR('juji_c04')};
@@ -3065,6 +3467,11 @@ void dMenu_Fmap2DTop_c::setCrossLRString(u32 param_0) {
 }
 
 void dMenu_Fmap2DTop_c::set3DStickString(u32 param_0) {
+#if TARGET_PC
+    if (hdFmapIcon(this) != NULL) {
+        return;  // no such prompt on the Wii U title ("Back" is fixed text)
+    }
+#endif
 #if PLATFORM_GCN || (VERSION == VERSION_SHIELD)
 #if TARGET_PC
     static const u64 ast_c[5] = {MULTI_CHAR('ast_00'), MULTI_CHAR('ast_01'), MULTI_CHAR('ast_02'), MULTI_CHAR('ast_03'), MULTI_CHAR('ast_04')};

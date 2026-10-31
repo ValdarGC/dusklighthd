@@ -15,8 +15,15 @@
 #include "d/d_com_inf_game.h"
 #if TARGET_PC
 #include <dolphin/gx/GXExtra.h>
+#include "dusk/settings.h"
+#include "dusk/tphd/HdMapPalette.hpp"
 #endif
 #include <cstring>
+
+#if TARGET_PC
+static void hdAmapPalette(dMap_prm_res_s* i_res);
+extern const dRenderingFDAmap_c* g_hdMinimapRendering;  // d_map_path.cpp
+#endif
 
 #if DEBUG
 void dMap_HIO_c::genMessage(JORMContext* mctx) {
@@ -324,6 +331,9 @@ f32 renderingAmap_c::getIconSize(u8 i_typeGroup) const {
     static f32 const l_iconSize[] = {
         0.12f, 0.12f, 0.08f, 0.12f, 0.08f, 0.16f, 0.12f, 0.0f,  0.12f,
         0.08f, 0.08f, 0.08f, 0.08f, 0.08f, 0.08f, 0.08f, 0.08f,
+#if TARGET_PC
+        0.08f, 0.08f, 0.08f,  // TPHD type groups 17-19
+#endif
     };
 
     JUT_ASSERT(1012, (i_typeGroup >= 0) && (i_typeGroup < dTres_c::TYPE_GROUP_ENUM_NUMBER));
@@ -529,10 +539,22 @@ void renderingAmap_c::rendering(dDrawPath_c::line_class const* i_line) {
 }
 
 f32 renderingAmap_c::getPlayerCursorSize() {
+#if TARGET_PC
+    // TPHD TV minimap: the player arrow is ~0.85x the GC one (capture measurement).
+    if (dusk::tphd_active()) {
+        return dMap_HIO_prm_res_dst_s::m_res->cursor_size * 0.85f;
+    }
+#endif
     return dMap_HIO_prm_res_dst_s::m_res->cursor_size;
 }
 
 f32 renderingAmap_c::getRestartCursorSize() {
+#if TARGET_PC
+    // TPHD TV minimap: the restart point marker is a small triangle (~0.55x the GC cursor).
+    if (dusk::tphd_active()) {
+        return dMap_HIO_prm_res_dst_s::m_res->cursor_size * 0.55f;
+    }
+#endif
     return getPlayerCursorSize();
 }
 
@@ -702,6 +724,19 @@ const GXColor* dMap_c::getColor(int i_no) {
 GXColor* renderingAmap_c::getLineColor(int param_0, int param_1) {
     static GXColor backColor = {0x04, 0x00, 0x00, 0x00};
     GXColor* color = &backColor;
+#if TARGET_PC
+    // Wii U renderingAmap getLineColor (RPX 0x029a7d28): line type 2 takes the line table by room
+    // state, every other line the type-6 colour of the room (light teal outlines).
+    if (dusk::tphd_active()) {
+        if (param_1 == 2) {
+            const u8 st = getColor(0)->r;  // 0x08 off, 0x28 visited, 0x48 current
+            backColor.r = st == 0x48 ? 0x74 : (st == 0x28 ? 0x70 : 0x68);
+        } else {
+            backColor = *getColor(6);
+        }
+        return color;
+    }
+#endif
 
     if (param_1 == 4) {
         switch (field_0x3c) {
@@ -1091,6 +1126,9 @@ bool dMap_c::isSpecialOutline() {
 void dMap_c::copyPalette() {
     JUT_ASSERT(2435, m_res != NULL);
 
+#if TARGET_PC
+    hdAmapPalette(m_res_src);
+#endif
     cLib_memCpy(m_res, m_res_src, sizeof(dMap_HIO_prm_res_dst_s::m_res->palette_data));
     if (getStayType() == 0) {
         copyPalette(1, 0x2C, 1.0f);
@@ -1107,7 +1145,90 @@ void dMap_c::setMapPaletteColorAlphaPer(int param_0, int param_1, f32 param_2) {
     }
 }
 
+#if TARGET_PC
+// TPHD minimap colors: the Wii U dMap_c::getColor (RPX 0x029a7dd0) returns the dMpath_RGBA_c table
+// (0x10092bfc, type x {not visited, visited, current room}) with the alpha forced to 0x7f for the
+// HUD minimap, instead of the GC palette greens. Patch the palette entries getColor points to.
+static void hdAmapPalette(dMap_prm_res_s* i_res) {
+    if (!dusk::tphd_active() || i_res == NULL) {
+        return;
+    }
+    // Exact RGBA8 values (8-bit alpha palette, HdMapPalette.hpp) are registered for the working
+    // copy m_res, which is what the minimap texture uses (memcpy'd from m_res_src).
+    const void* exactKey = dMap_HIO_prm_res_dst_s::m_res;
+    auto put = [i_res, exactKey](int i_pal, u32 rgba) {
+        const u8 r = (u8)(rgba >> 24), g = (u8)(rgba >> 16), b = (u8)(rgba >> 8), a = (u8)rgba;
+        u16 pixel;
+        if (a >= 0xE0) {
+            pixel = (u16)(((r & 0xF8) << 7) | ((g & 0xF8) << 2) | ((b & 0xF8) >> 3) | 0x8000);
+        } else {
+            pixel = (u16)(((r & 0xF0) << 4) | (g & 0xF0) | ((b & 0xF0) >> 4) | ((a & 0xE0) << 7));
+        }
+        dMpath_RGB5A3_palDt_s& pal = i_res->palette_data[i_pal];
+        pal.field_0x0.color = pixel;
+        pal.field_0x2.color = pixel;
+        pal.field_0x4.color = pixel;
+        pal.field_0x6.color = pixel;
+        if (exactKey != NULL) {
+            // The written value is checked against m_res at sync time (same u16 after the copy).
+            dusk::tphd::mapPaletteSetExactPalDtValue(exactKey, i_pal, pixel, rgba);
+        }
+    };
+    // Room colours: table 0x10092bfc (type x {not visited, visited, current}), alpha forced to
+    // 0x7f by dMap_c::getColor (RPX 0x029a7dd0) on the HUD minimap.
+    static const u32 kColor[9][3] = {
+        {0x0000007f, 0x2c584b7f, 0x58af957f}, {0x0000007f, 0x162c2c7f, 0x2c584b7f},
+        {0x0000007f, 0x0000007f, 0x0000007f}, {0x00000000, 0x00000000, 0x00000000},
+        {0x0000007f, 0x2020207f, 0x4040407f}, {0x0000007f, 0x00407f7f, 0x0080ff7f},
+        {0x0000007f, 0x477f7f7f, 0x8fffff7f}, {0x0000007f, 0x30007f7f, 0x6000ff7f},
+        {0x0000007f, 0x3000007f, 0x6000007f},
+    };
+    // palette_data index of dMap_c::getColor's off / on / stay entries (colour index / 4).
+    static const u8 kPal[3][9] = {
+        {0x02, 0x03, 0x04, 0x01, 0x05, 0x06, 0x07, 0x08, 0x09},
+        {0x0A, 0x0B, 0x0C, 0x01, 0x0D, 0x0E, 0x0F, 0x10, 0x11},
+        {0x12, 0x13, 0x14, 0x01, 0x15, 0x16, 0x17, 0x18, 0x19},
+    };
+    for (int st = 0; st < 3; st++) {
+        for (int t = 0; t < 9; t++) {
+            if (t == 3) {
+                continue;  // index 4 is also the background / field copy (copyPalette 0x2C)
+            }
+            put(kPal[st][t], kColor[t][st]);
+        }
+    }
+    // Background (getBackColor RPX 0x029aa318: 0x0000003f on the HUD minimap). palDt 0x2C is
+    // copied over palDt 1 in the field.
+    put(0x01, 0x0000003f);
+    put(0x2C, 0x0000003f);
+    // Frame of the HUD minimap square (Wii U drawBack RPX 0x029a76c4 fills with 0x0000005f before
+    // the back colour). palDt 0x3F lies past the 51 GC entries: it only exists in the 256-entry
+    // RGBA8 palette (HdMapPalette.hpp), drawn as index 0xFC by dRenderingFDAmap_c::drawBack.
+    if (exactKey != NULL) {
+        dusk::tphd::mapPaletteSetExactPalDtValue(exactKey, 0x3F, 0, 0x0000005f);
+        // Doors (renderingPlusDoor_c::drawDoorCommon TPHD, RPX 0x029ab068 / TEV 0x029a7fcc):
+        // black outline 0x000000ff and yellow fill 0xffff00ff, indices 0xF4 / 0xF8.
+        dusk::tphd::mapPaletteSetExactPalDtValue(exactKey, 0x3D, 0, 0x000000ff);
+        dusk::tphd::mapPaletteSetExactPalDtValue(exactKey, 0x3E, 0, 0xffff00ff);
+    }
+    // Outlines (getLineColor RPX 0x029a7d28, line type 2): table 0x10092c94 by room state,
+    // alpha 0x7f. Free palette entries 0x1A / 0x1C / 0x1D.
+    put(0x1A, 0x0000007f);
+    put(0x1C, 0x7f7f7f7f);
+    put(0x1D, 0xffffff7f);
+    // Cursors (TV capture): player orange-yellow, restart point orange-red.
+    put(0x1E, 0xffd000ff);
+    put(0x1F, 0xff5a1eff);
+    put(0x20, 0xff5a1eff);
+    DCStoreRange(i_res->palette_data, sizeof(i_res->palette_data));
+}
+#endif
+
 void dMap_c::resCopy() {
+#if TARGET_PC
+    // Patched in the source palette too: setMapPaletteColorAlphaPer re-reads it while blinking.
+    hdAmapPalette(m_res_src);
+#endif
     cLib_memCpy(m_res, m_res_src, sizeof(dMap_prm_res_s));
     if (getStayType() == 0) {
         copyPalette(1, 0x2C, 1.0f);
@@ -1115,6 +1236,9 @@ void dMap_c::resCopy() {
 }
 
 dMap_c::dMap_c(int width, int height, int param_2, int param_3) {
+#if TARGET_PC
+    g_hdMinimapRendering = this;
+#endif
     m_res_src = NULL;
     m_res = NULL;
     mResTIMG = NULL;
@@ -1237,7 +1361,9 @@ bool dMap_c::refreshTextureSize() {
 
     const u16 oldWidth = mResTIMG->width;
     const u16 oldHeight = mResTIMG->height;
+    dusk::tphd::g_mapPaletteReuse = true;
     makeResTIMG(mResTIMG, mTexSizeX, mTexSizeY, mImage_p, (u8*)m_res, 0x33);
+    dusk::tphd::g_mapPaletteReuse = false;
 
     if (mResTIMG->width == oldWidth && mResTIMG->height == oldHeight) {
         return false;
@@ -1249,6 +1375,11 @@ bool dMap_c::refreshTextureSize() {
 #endif
 
 void dMap_c::_remove() {
+#if TARGET_PC
+    if (g_hdMinimapRendering == this) {
+        g_hdMinimapRendering = NULL;
+    }
+#endif
     if (mImage_p != NULL) {
 #if TARGET_PC
         GXDestroyCopyTex(mImage_p);

@@ -3,6 +3,7 @@
 #include "JSystem/JHostIO/JORFile.h"
 #include "JSystem/JHostIO/JORServer.h"
 #include "JSystem/JUtility/JUTTexture.h"
+#include "SSystem/SComponent/c_counter.h"
 #include "SSystem/SComponent/c_math.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_debug_viewer.h"
@@ -12,6 +13,9 @@
 
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
+#include <dolphin/gx/GXExtra.h>
+#include "dusk/settings.h"
+#include "dusk/tphd/HdMapPalette.hpp"
 #endif
 
 static u8 twoValueLineInterpolation(u8 i_value1, u8 i_value2, f32 i_param) {
@@ -405,6 +409,12 @@ void dMenu_FmapMap_c::setFmapPaletteColor(renderingFmap_c::palette_e i_palette, 
     palette_entry->field_0x4.color = color;
     palette_entry->field_0x6.color = color;
     DCStoreRange(&m_palette[i_palette], 8);
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        dusk::tphd::mapPaletteSetExactPalDt(m_palette, i_palette,
+                                            ((u32)i_r << 24) | ((u32)i_g << 16) | ((u32)i_b << 8) | i_a);
+    }
+#endif
 }
 
 void dMenu_FmapMap_c::setFmapPaletteColor(renderingFmap_c::palette_e i_palette,
@@ -440,6 +450,37 @@ void dMenu_FmapMap_c::setPointColor(f32 i_param) {
     };
     
     GXColor color;
+#if TARGET_PC
+    // TPHD: Wii U field map getColor (RPX 0x029a7dd0 with the state of 0x029e72f4): the selected
+    // stage (state 3) takes the "visited" colour of the table 0x10092bfc and only type 6 pulses
+    // (colour / (1 + min(t % 60, 60 - t % 60) / 30)); no GC green flash of res-f data.dat.
+    if (dusk::tphd_active()) {
+        (void)i_param;
+        const int t = (int)(g_Counter.mCounter0 % 60);
+        const f32 div = 1.0f + (f32)(t < 60 - t ? t : 60 - t) / 30.0f;
+        static const GXColor kOn[8] = {
+            {0x2c, 0x58, 0x4b, 0xff}, {0x16, 0x2c, 0x2c, 0xff}, {0x00, 0x00, 0x00, 0xff},
+            {0x20, 0x20, 0x20, 0xff}, {0x00, 0x40, 0x7f, 0xff}, {0x47, 0x7f, 0x7f, 0xff},
+            {0x30, 0x00, 0x7f, 0xff}, {0x30, 0x00, 0x00, 0xff},
+        };
+        static const GXColor kStay[8] = {
+            {0x58, 0xaf, 0x95, 0xff}, {0x2c, 0x58, 0x4b, 0xff}, {0x00, 0x00, 0x00, 0xff},
+            {0x40, 0x40, 0x40, 0xff}, {0x00, 0x80, 0xff, 0xff}, {0x8f, 0xff, 0xff, 0xff},
+            {0x60, 0x00, 0xff, 0xff}, {0x60, 0x00, 0x00, 0xff},
+        };
+        (void)kStay;
+        for (int i = 0; i < 8; i++) {
+            color = kOn[i];
+            if (i == 5) {  // type 6
+                color.r = (u8)(color.r / div);
+                color.g = (u8)(color.g / div);
+                color.b = (u8)(color.b / div);
+            }
+            setFmapPaletteColor(palNo[i], color);
+        }
+        return;
+    }
+#endif
     if (mFlash && mRegionCursor == dComIfGp_getNowLevel() && mStartStageNo == mStageCursor) {
         for (int i = 0; i < 8; i++) {
             twoColorLineInterporation(m_res->field_0xe8[i], m_res->field_0x108[i], i_param, color);
@@ -487,6 +528,30 @@ void dMenu_FmapMap_c::_create(u16 i_texWidth, u16 i_texHeight, u16 param_2, u16 
 #endif
     m_res = (dMfm_prm_res_s*)i_res;
     m_palette = m_res->palette_data;
+#if TARGET_PC
+    // Wii U: the map polygons use the dMpath_RGBA_c table (RPX 0x10092bfc, type x state; the
+    // field map has no "off" state): visited regions take the "visited" column, the current
+    // stage the "current" one. Patch the GC palette entries (in place, res-f data.dat).
+    if (dusk::tphd_active()) {
+        static const u32 kColor[9][2] = {
+            {0x2c584bff, 0x58af95ff}, {0x162c2cff, 0x2c584bff}, {0x000000ff, 0x000000ff},
+            {0x00000000, 0x00000000}, {0x202020ff, 0x404040ff}, {0x00407fff, 0x0080ffff},
+            {0x477f7fff, 0x8fffffff}, {0x30007fff, 0x6000ffff}, {0x300000ff, 0x600000ff},
+        };
+        static const u8 kOn[9] = {0x01, 0x02, 0x03, 0x00, 0x04, 0x05, 0x06, 0x07, 0x08};
+        static const u8 kStay[9] = {0x09, 0x0A, 0x0B, 0x00, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+        for (int t = 0; t < 9; t++) {
+            if (t == 3) {
+                continue;
+            }
+            for (int st = 0; st < 2; st++) {
+                const u32 c = kColor[t][st];
+                setFmapPaletteColor((palette_e)(st == 0 ? kOn[t] : kStay[t]), (u8)(c >> 24),
+                                    (u8)(c >> 16), (u8)(c >> 8), (u8)c);
+            }
+        }
+    }
+#endif
     field_0xcc = 0x6c;
     mFlash = false;
     mStageCursor = 0;

@@ -28,6 +28,10 @@
 #include "dusk/interp/frame_interpolation.h"
 #include "dusk/interp/menus.h"
 #include "dusk/interp/user_interface.h"
+#include "dusk/settings.h"
+#include "dusk/action_bindings.h"
+#include "dusk/tphd/HdAssetLayer.hpp"
+#include "m_Do/m_Do_controller_pad.h"
 #include "dusk/memory.h"
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
@@ -142,6 +146,24 @@ const char* dMenuFmap_getStartStageName(void* i_fieldData) {
         JUT_ASSERT(203, 0);
     }
     return dComIfGp_getStartStageName();
+}
+
+// TPHD (Wii U Pro Controller): the portals of the field map are on L ("L Portals"), on the GC
+// they are on Z.
+static BOOL hdFmapWarpTrigger() {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // The Wii U L button is the "call Midna" button of the Pro Controller layout.
+        if (dusk::isActionBound(dusk::ActionBinds::CALL_MIDNA, PAD_1) &&
+            dusk::getActionBindTrig(dusk::ActionBinds::CALL_MIDNA, PAD_1))
+        {
+            return TRUE;
+        }
+        // Wii U: the warp is on the L shoulder (GC Z), never on ZL.
+        return dMw_Z_TRIGGER();
+    }
+#endif
+    return dMw_Z_TRIGGER();
 }
 
 DUSK_GAME_DATA dMenu_Fmap_c* dMenu_Fmap_c::MyClass;
@@ -571,6 +593,14 @@ void dMenu_Fmap_c::_move() {
     } else {
         mpDraw2DTop->mSelectRegionNo = 0xFF;
     }
+    if (dusk::tphd_active()) {
+        // Wii U: the poe counter is set by region_map_init (RPX 0x029d5854) and spot_map_init
+        // (0x029d5b94) with the region cursor; every other process hides it.
+        mpDraw2DTop->mSelectRegionNo =
+            (mProcess == PROC_REGION_MAP || mProcess == PROC_SPOT_MAP) ?
+                mpDraw2DBack->getRegionCursor() :
+                0xFF;
+    }
 
     captureRenderState();
 #endif
@@ -795,7 +825,12 @@ u8 dMenu_Fmap_c::getNextStatus(u8* param_0) {
         return 9;
     } else if ((mProcess == PROC_ALL_MAP || mProcess == PROC_REGION_MAP
                 || mProcess == PROC_PORTAL_WARP_MAP || mProcess == PROC_SPOT_MAP) && isSync()) {
-        if (dMw_LEFT_TRIGGER()) {
+        if (dMw_LEFT_TRIGGER()
+#if TARGET_PC
+            // Wii U: "+ Back" on the d-pad up (the same button that opens the map).
+            || (dusk::tphd_active() && dMw_UP_TRIGGER())
+#endif
+        ) {
             if (dMeterMap_c::isEnableDispMapAndMapDispSizeTypeNo()) {
                 dMeter2Info_setMapStatus(1);
             } else {
@@ -906,7 +941,7 @@ void dMenu_Fmap_c::all_map_proc() {
         if (mErrorSound == true) {
             mErrorSound = false;
         }
-    } else if (dMw_Z_TRIGGER() && mpDraw2DTop->isWarpAccept()) {
+    } else if (hdFmapWarpTrigger() && mpDraw2DTop->isWarpAccept()) {
             /* dSv_event_flag_c::F_0265 - Arbiter's Grounds - Arbiter's Grounds clear */
         if (dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x109])
                 /* dSv_event_flag_c::F_0361 - Arbiter's Grounds - Spun the spinning pillars */
@@ -1067,7 +1102,7 @@ void dMenu_Fmap_c::region_map_proc() {
             Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
             mErrorSound = true;
         }
-    } else if (dMw_Z_TRIGGER() && mpDraw2DTop->isWarpAccept()) {
+    } else if (hdFmapWarpTrigger() && mpDraw2DTop->isWarpAccept()) {
             /* dSv_event_flag_c::F_0265 - Arbiter's Grounds - Arbiter's Grounds clear */
         if (dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x109])
                 /* dSv_event_flag_c::F_0361 - Arbiter's Grounds - Spun the spinning pillars */
@@ -1392,7 +1427,7 @@ void dMenu_Fmap_c::spot_map_proc() {
         && dMeter2Info_getMeterClass()->getMeterDrawPtr()->getInsideObjCheck() != 1)
     {
         IF_NOT_DUSK(mpDraw2DBack->stageMapMove(mpStick, 1, true));
-    } else if (dMw_Z_TRIGGER() && mpDraw2DTop->isWarpAccept()) {
+    } else if (hdFmapWarpTrigger() && mpDraw2DTop->isWarpAccept()) {
 #if TARGET_PC || VERSION >= VERSION_GCN_JPN
         IF_DUSK_BLOCK(dusk::version::isRegionJpn())
         //! JPN version added a check to make sure if Arbiter's Grounds is cleared that
@@ -2545,6 +2580,23 @@ void dMenu_Fmap_c::decodePortalData() {
 }
 
 bool dMenu_Fmap_c::readRoomDzsData(void** i_data, u32 param_1, char const* i_path) {
+#if TARGET_PC
+    // TPHD: the field map keeps the GC Field0.arc (region textures), but the Wii U room data adds
+    // the TPHD treasure entries (types 0x08-0x0A: grass, game and destination icons). Read the
+    // room dzs from the Wii U Field0.arc when it is there.
+    if (dusk::tphd_active()) {
+        if (auto hd = dusk::tphd::read_hd_arc_file("res/FieldMap/Field0.arc", i_path)) {
+            void* buf = mpHeap->alloc(hd->size(), 0x20);
+            if (buf != NULL) {
+                std::memcpy(buf, hd->data(), hd->size());
+                DCStoreRangeNoSync(buf, hd->size());
+                *i_data = buf;
+                field_0x200 += hd->size();
+                return true;
+            }
+        }
+    }
+#endif
     void* res;
     char* path = const_cast<char*>(i_path);
     u32 size;
@@ -2782,6 +2834,18 @@ void dMenu_Fmap_c::drawIcon(f32 param_0, bool param_1) {
             drawCoachIcon();
         }
     }
+
+#if TARGET_PC
+    // Wii U (RPX 0x029d3520): treasure groups 17 / 18 (TPHD types 0x08 / 0x09) are drawn with the
+    // grass / game icons in the region and spot maps.
+    if (dusk::tphd_active() &&
+        ((mProcess != PROC_PORTAL_WARP_FORBID && mProcess >= PROC_REGION_MAP) ||
+         (mProcess == PROC_PORTAL_WARP_FORBID && mPrevProcess != PROC_ALL_MAP)))
+    {
+        drawIcon(0x11, ICON_HD_GRASS_e);
+        drawIcon(0x12, ICON_HD_GAME_e);
+    }
+#endif
 }
 
 void dMenu_Fmap_c::drawLightDropIcon() {
@@ -2799,6 +2863,12 @@ void dMenu_Fmap_c::drawBatsumarkIcon() {
     }
 #endif
     drawIcon(5, 0x12);
+#if TARGET_PC
+    // Wii U (RPX 0x029d343c): TPHD treasure group 19 (type 0x0A) also uses the destination mark.
+    if (dusk::tphd_active()) {
+        drawIcon(0x13, ICON_DESTINATION_e);
+    }
+#endif
 }
 
 void dMenu_Fmap_c::drawSnowmanIcon() {

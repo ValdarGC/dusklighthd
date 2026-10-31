@@ -4,6 +4,73 @@
 #include "d/d_map_path_fmap.h"
 #include <cstring>
 
+#if TARGET_PC
+// TPHD field map icons, RPX dMenuFmapIconDisp_c::isDrawDisp (0x029ada40) cases 0x12 / 0x13.
+// Save layout of the RPX: event flags (dSv_event_c), memory[32] (memBit) and memory2[64].
+namespace {
+bool hdVisitedRoom(int i_stage2No, int i_roomNo) {
+    dSv_memory2_c* mem2 = g_dComIfG_gameInfo.info.getSavedata().getSave2(i_stage2No);
+    return mem2 != NULL && mem2->isVisitedRoom(i_roomNo);
+}
+
+// RPX 0x02acbb2c: TPHD treasure type 0x09 ("game" icon), keyed by mArg1.
+bool hdFmapGameIconOn(const dTres_c::data_s* i_data) {
+    if (i_data == NULL || i_data->mType != 0x09) {
+        return false;
+    }
+    switch (i_data->mArg1) {
+    case 2:
+        return dComIfGs_isEventBit(0x904);
+    case 4:
+        return dComIfGs_isEventBit(0x3880);
+    case 8:
+        return dComIfGs_isEventBit(0x2008);
+    case 9:
+        return dComIfGs_isEventBit(0x2320);
+    case 0:
+    case 1:
+    case 3:
+    case 5:
+    case 6:
+    case 7:
+        return dComIfGs_isDarkClearLV(2);
+    default:
+        return false;
+    }
+}
+
+// RPX 0x02acb468: TPHD treasure type 0x0A (quest destination mark), keyed by mArg1.
+bool hdFmapQuestIconOn(const dTres_c::data_s* i_data) {
+    if (i_data == NULL || i_data->mType != 0x0A) {
+        return false;
+    }
+    auto ev = [](u16 i_flag) { return dComIfGs_isEventBit(i_flag) != FALSE; };
+    auto sw = [](int i_stageNo, int i_no) { return dComIfGs_isStageSwitch(i_stageNo, i_no) != FALSE; };
+    switch (i_data->mArg1) {
+    case 0x00: return ev(0x2020) && !sw(4, 0x33) && !ev(0x2520);
+    case 0x01: return ev(0x2C10) && !sw(4, 0x2A) && !ev(0x2940);
+    case 0x02: return ev(0x2008) && !sw(2, 0x5F) && !ev(0x4204);
+    case 0x03: return ev(0x2004) && !sw(3, 0x55) && !ev(0x2580);
+    case 0x04: return ev(0x1320) && !ev(0x1540) && !ev(0x0880);
+    case 0x06: return ev(0x0610) && !sw(0xC, 0x02) && !ev(0x6104);
+    case 0x07: return ev(0x2580) && !ev(0x6080);
+    case 0x08: return ev(0x2580) && !ev(0x6040);
+    case 0x09: return ev(0x2580) && !ev(0x6020);
+    case 0x0A: return ev(0x2580) && !ev(0x6010);
+    case 0x0B: return ev(0x2580) && !ev(0x6008);
+    case 0x0C: return ev(0x2580) && !ev(0x6204);
+    case 0x0D: return ev(0x0610) && !ev(0x0602) && !hdVisitedRoom(0x16, 0x16);
+    case 0x0E: return ev(0x0780) && !ev(0x0701) && !hdVisitedRoom(0x17, 0x01);
+    case 0x0F: return sw(4, 0x33) && !ev(0x2520);
+    case 0x10: return sw(4, 0x2A) && !ev(0x2940);
+    case 0x11: return sw(2, 0x5F) && !ev(0x4204);
+    case 0x12: return sw(3, 0x55) && !ev(0x3120);
+    default: return false;
+    }
+}
+}  // namespace
+#endif
+
 void fmpTresTypeGroupDataList_c::addTypeGroupData(u8 i_typeGroupNo,
                                                   dTres_c::data_s const* i_tresData) {
     fmpTresTypeGroupData_c* next = mpNextData;
@@ -611,6 +678,19 @@ bool dMenuFmapIconDisp_c::isDrawDisp() {
                 && dComIfGs_isStageSwitch(save_table_no, mpTresData->mSwBit));
         }
         break;
+
+#if TARGET_PC
+    // TPHD type groups (RPX 0x029ada40).
+    case 0x11:
+        ret = bVar2;
+        break;
+    case 0x12:
+        ret = bVar2 && hdFmapGameIconOn(mpTresData);
+        break;
+    case 0x13:
+        ret = hdFmapQuestIconOn(mpTresData);
+        break;
+#endif
     }
 
     return ret;

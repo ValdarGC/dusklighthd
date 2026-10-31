@@ -859,6 +859,42 @@ void renderingPlusDoor_c::drawDoor2() {
     drawDoorCommon(door_info->mDrTgData, door_info->mNum, false);
 }
 
+#if TARGET_PC
+// TPHD doors (Wii U renderingPlusDoor_c::drawDoorCommon RPX 0x029ab068 / drawNormalDoorS 0x029aae08,
+// TEV 0x029a7fcc): the door texture is thresholded twice with K0 = (0x0f, 0x1f): intensity > 0x0f
+// gives C1 (black, 0x000000ff), > 0x1f adds C2 (yellow 0xffff0000), alpha compare > 0. The quad is
+// scaled 8 x 4 (a flat 800 x 400 rectangle) instead of 6 x 6, and there is no "stay" colour.
+// The Wii U writes RGBA directly; here the result is a palette index of the 256-entry RGBA8 map
+// palettes (HdMapPalette.hpp): 0xF4 = palDt 0x3D (black), 0xF8 = palDt 0x3E (yellow).
+static void hdSetDoorTev() {
+    GXSetNumTevStages(2);
+    GXSetNumChans(1);
+    GXSetNumTexGens(1);
+    GXSetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+    GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+    GXSetTevOrder(GX_TEVSTAGE1, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+    GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_KONST, GX_CC_C1, GX_CC_ZERO);
+    GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_COMP_R8_GT, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetTevColorIn(GX_TEVSTAGE1, GX_CC_TEXC, GX_CC_KONST, GX_CC_C2, GX_CC_CPREV);
+    GXSetTevColorOp(GX_TEVSTAGE1, GX_TEV_COMP_R8_GT, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_TEXA, GX_CA_KONST, GX_CA_A1, GX_CA_ZERO);
+    GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_COMP_A8_GT, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetTevAlphaIn(GX_TEVSTAGE1, GX_CA_TEXA, GX_CA_KONST, GX_CA_A2, GX_CA_APREV);
+    GXSetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_COMP_A8_GT, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GXSetAlphaCompare(GX_GREATER, 0, GX_AOP_AND, GX_ALWAYS, 0);
+    GXSetTevKColorSel(GX_TEVSTAGE0, GX_TEV_KCSEL_K0_R);
+    GXSetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0_G);
+    GXSetTevKAlphaSel(GX_TEVSTAGE0, GX_TEV_KASEL_K0_R);
+    GXSetTevKAlphaSel(GX_TEVSTAGE1, GX_TEV_KASEL_K0_G);
+    static const GXColor l_k0 = {0x0F, 0x1F, 0x00, 0x00};
+    GXSetTevKColor(GX_KCOLOR0, l_k0);
+    static const GXColor l_c1 = {0xF4, 0x00, 0x00, 0xFF};  // black
+    static const GXColor l_c2 = {0x04, 0x00, 0x00, 0x00};  // + 4 = 0xF8, yellow
+    GXSetTevColor(GX_TEVREG1, l_c1);
+    GXSetTevColor(GX_TEVREG2, l_c2);
+}
+#endif
+
 static const GXColor l_doorWhite = {100, 0, 0, 0};
 
 static const GXColor l_doorWhiteNoStay = {108, 0, 0, 0};
@@ -880,7 +916,15 @@ void renderingPlusDoor_c::drawDoorCommon(stage_tgsc_data_class const* i_doorData
     GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_CLR_RGBA, GX_RGB565, 0);
     GXSETARRAY(GX_VA_TEX0, l_tex0, sizeof(l_tex0), 2, true);
 
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        hdSetDoorTev();
+    } else {
+        setTevSettingIntensityTextureToCI();
+    }
+#else
     setTevSettingIntensityTextureToCI();
+#endif
 
     for (int i = 0; i < i_dataNum; i++, i_doorData++) {
         prm0 = (i_doorData->base.parameters >> 0xD) & 0x3F;
@@ -924,6 +968,11 @@ static Vec const l_100x100BoxVertexList[4] = {
 
 void renderingPlusDoor_c::drawNormalDoorS(stage_tgsc_data_class const* i_doorData, int i_roomNo,
                                           int param_2, bool param_3) {
+#if TARGET_PC
+    const bool hd = dusk::tphd_active();  // colours set once by hdSetDoorTev
+    if (hd) {
+    } else
+#endif
     if (i_roomNo == dComIfGp_roomControl_getStayNo() || param_2 == dComIfGp_roomControl_getStayNo())
     {
         GXSetTevColor(GX_TEVREG1, l_doorWhite);
@@ -944,6 +993,11 @@ void renderingPlusDoor_c::drawNormalDoorS(stage_tgsc_data_class const* i_doorDat
 
     mDoMtx_stack_c::transS(spC.x, spC.z, 0.0f);
     mDoMtx_stack_c::ZrotM(i_doorData->base.angle.y);
+#if TARGET_PC
+    if (hd) {
+        mDoMtx_stack_c::scaleM(8.0f, 4.0f, 1.0f);
+    } else
+#endif
     mDoMtx_stack_c::scaleM(6.0f, 6.0f, 1.0f);
 
     Vec sp18[4];

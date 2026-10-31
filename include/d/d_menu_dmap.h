@@ -37,6 +37,9 @@ public:
     virtual ~renderingDmap_c() {}
 
     virtual const GXColor* getColor(int);
+#if TARGET_PC
+    virtual const GXColor* getLineColor(int, int);
+#endif
     virtual int getLineWidth(int);
     virtual void beforeDrawPath();
     virtual void afterDrawPath();

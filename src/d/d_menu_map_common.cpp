@@ -8,6 +8,50 @@
 
 #if TARGET_PC
 #include "dusk/interp/user_interface.h"
+#include "JSystem/J2DGraph/J2DPicture.h"
+#include "JSystem/JKernel/JKRArchive.h"
+#include "JSystem/JUtility/JUTTexture.h"
+#include "dusk/settings.h"
+#include "dusk/tphd/HdSubscreen.hpp"
+#include "m_Do/m_Do_graphic.h"
+
+// TPHD extra icons (ICON_HD_GRASS_e..ICON_HD_SAVE_e), per dMenuMapCommon_c instance.
+namespace {
+struct HdMapIcons {
+    const dMenuMapCommon_c* owner;
+    J2DPicture* pic[3];
+};
+HdMapIcons s_hdMapIcons[2] = {};
+
+HdMapIcons* hdMapIcons(const dMenuMapCommon_c* i_owner, bool i_create) {
+    for (HdMapIcons& e : s_hdMapIcons) {
+        if (e.owner == i_owner) {
+            return &e;
+        }
+    }
+    if (i_create) {
+        for (HdMapIcons& e : s_hdMapIcons) {
+            if (e.owner == NULL) {
+                e.owner = i_owner;
+                return &e;
+            }
+        }
+    }
+    return NULL;
+}
+
+J2DPicture* hdMapIconPic(dMenuMapCommon_c* i_this, u8 i_iconNo) {
+    if (i_iconNo < ICON_MAX_e) {
+        return i_this->mPictures[i_iconNo];
+    }
+    if (i_iconNo >= ICON_HD_GRASS_e && i_iconNo < ICON_HD_END_e) {
+        if (HdMapIcons* e = hdMapIcons(i_this, false)) {
+            return e->pic[i_iconNo - ICON_HD_GRASS_e];
+        }
+    }
+    return NULL;
+}
+}  // namespace
 #endif
 
 struct map_icon_size_t {
@@ -40,6 +84,11 @@ static map_icon_size_t map_icon_size[] = {
     /* Dungeon Enter  */ {40.0f, 40.0f, 20},
     /* Link Enter     */ {40.0f, 40.0f, 21},
     /* LV8 Warp       */ {40.0f, 40.0f, 22},
+#if TARGET_PC
+    /* TPHD grass     */ {40.0f, 40.0f, ICON_HD_GRASS_e},
+    /* TPHD game      */ {40.0f, 40.0f, ICON_HD_GAME_e},
+    /* TPHD save      */ {40.0f, 40.0f, ICON_HD_SAVE_e},
+#endif
 };
 
 dMenuMapCommon_c::dMenuMapCommon_c() {
@@ -65,6 +114,17 @@ dMenuMapCommon_c::dMenuMapCommon_c() {
 }
 
 dMenuMapCommon_c::~dMenuMapCommon_c() {
+#if TARGET_PC
+    if (HdMapIcons* e = hdMapIcons(this, false)) {
+        for (J2DPicture*& p : e->pic) {
+            if (p != NULL) {
+                JKR_DELETE(p);
+                p = NULL;
+            }
+        }
+        e->owner = NULL;
+    }
+#endif
     for (int i = 0; i < ICON_MAX_e; i++) {
         if (mPictures[i] != NULL) {
             JKR_DELETE(mPictures[i]);
@@ -291,6 +351,33 @@ void dMenuMapCommon_c::initiate(JKRArchive* i_archive) {
     mPictures[ICON_DESTINATION_e]->setBasePosition(J2DBasePosition_4);
     mPictures[ICON_DESTINATION_e]->setInfluencedAlpha(false, false);
 
+#if TARGET_PC
+    // Wii U (RPX 0x029f0038): pictures 26-28 = s_size_circle_ci4_00 + icon_grass / icon_game /
+    // icon_save (only in the Wii U fmapresR / dmapresR archives).
+    {
+        static const char* const kHdIcon[3] = {"icon_grass.bti", "icon_game.bti", "icon_save.bti"};
+        ResTIMG* circle =
+            (ResTIMG*)i_archive->getResource('TIMG', "tt_map_icon_s_size_circle_ci4_00.bti");
+        for (int i = 0; i < 3; i++) {
+            ResTIMG* icon = (ResTIMG*)i_archive->getResource('TIMG', kHdIcon[i]);
+            if (circle == NULL || icon == NULL) {
+                continue;
+            }
+            HdMapIcons* e = hdMapIcons(this, true);
+            if (e == NULL) {
+                break;
+            }
+            if (e->pic[i] != NULL) {
+                JKR_DELETE(e->pic[i]);
+            }
+            e->pic[i] = JKR_NEW J2DPicture(circle);
+            e->pic[i]->append(icon, 0.0f);
+            e->pic[i]->setBasePosition(J2DBasePosition_4);
+            e->pic[i]->setInfluencedAlpha(false, false);
+        }
+    }
+#endif
+
     mpDrawCursor = JKR_NEW dSelect_cursor_c(4, 1.0f, NULL);
     JUT_ASSERT(0, mpDrawCursor != NULL);
 
@@ -319,7 +406,11 @@ void dMenuMapCommon_c::drawIcon(f32 i_posX, f32 i_posY, f32 param_3, f32 param_4
         icon_draw_list[i] = -1;
     }
 
+#if TARGET_PC
+    for (int i = ICON_HD_END_e - 1; i >= 0; i--) {
+#else
     for (int i = 22; i >= 0; i--) {
+#endif
         for (s16 j = 0; j < 128; j++) {
             if (i == mIconInfo[j].icon_no != 0 && mIconInfo[j]._15 != 0) {
                 icon_draw_list[icon_draw_num] = j;
@@ -352,8 +443,22 @@ void dMenuMapCommon_c::drawIcon(f32 i_posX, f32 i_posY, f32 param_3, f32 param_4
                         pos_x = getMirrorCenterPosX(pos_x, 0.0f);
                     }
                     #endif
+#if TARGET_PC
+                    // TPHD field map: the Wii U draws the portal reticle with the screen stretch
+                    // (wider than tall, ~93x74 px vs the GC 83x85 at 1080p).
+                    if (dusk::tphd_active() && mpPortalIcon != NULL) {
+                        const f32 sx = dusk::tphd::subscreenScaleX();
+                        const f32 min_x = mDoGph_gInf_c::getMinXF();
+                        mpDrawCursor->setDrawStretch(sx, min_x);
+                        mpDrawCursor->setPos((pos_x - min_x) / sx, icon_pos_y + i_posY);
+                        mpDrawCursor->setScale(mIconInfo[info_idx].scale *
+                                               g_fmapHIO.mMapIconHIO.mPortalCursorScale * 0.87f);
+                    } else
+#endif
+                    {
                     mpDrawCursor->setPos(pos_x, icon_pos_y + i_posY);
                     mpDrawCursor->setScale(mIconInfo[info_idx].scale * g_fmapHIO.mMapIconHIO.mPortalCursorScale);
+                    }
                     mpDrawCursor->draw();
                     mpDrawCursor->resetUpdateFlag();
                 }
@@ -384,7 +489,31 @@ void dMenuMapCommon_c::drawIcon(f32 i_posX, f32 i_posY, f32 param_3, f32 param_4
                     mpPortalIcon->draw();
                     mpPortalIcon->resetUpdateFlag();
                 }
-            } else if (mPictures[mIconInfo[info_idx].icon_no] != NULL) {
+            }
+#if TARGET_PC
+            else if (J2DPicture* hd_pic = hdMapIconPic(this, mIconInfo[info_idx].icon_no);
+                     hd_pic != NULL && mIconInfo[info_idx].icon_no > ICON_MAX_e) {
+                // TPHD extra icons: drawn like the regular pictures (no light drop handling).
+                const u8 no = mIconInfo[info_idx].icon_no;
+                f32 icon_size_x = getIconSizeX(no);
+                f32 icon_size_y = getIconSizeY(no);
+                hd_pic->rotate(icon_size_x / 2, icon_size_y / 2, ROTATE_Z, mIconInfo[info_idx].rotation);
+                if (mIconInfo[info_idx]._15 == 2) {
+                    hd_pic->setAlpha(0xFF);
+                } else if (mIconInfo[info_idx]._15 == 3) {
+                    hd_pic->setAlpha(255.0f * mBlinkAlpha);
+                } else {
+                    hd_pic->setAlpha(param_4 * (255.0f * param_3 * mIconInfo[info_idx].alpha_rate));
+                }
+                f32 pos_x = i_posX + (mIconInfo[info_idx].pos_x - (icon_size_x / 2));
+                if (dusk::getSettings().game.enableMirrorMode) {
+                    pos_x = getMirrorCenterPosX(pos_x, icon_size_x / 2);
+                }
+                hd_pic->draw(pos_x, i_posY + (mIconInfo[info_idx].pos_y - icon_size_y / 2),
+                             icon_size_x, icon_size_y, false, false, false);
+            }
+#endif
+            else if (mPictures[mIconInfo[info_idx].icon_no] != NULL) {
                 f32 icon_pos_x = mIconInfo[info_idx].pos_x;
                 f32 icon_pos_y = mIconInfo[info_idx].pos_y;
                 f32 icon_size_x = getIconSizeX(mIconInfo[info_idx].icon_no);
@@ -543,6 +672,34 @@ void dMenuMapCommon_c::iconScale(int param_1, f32 param_2, f32 param_3, f32 para
     setBlendRatio(ICON_CANNON_BALL_e, param_3, param_4);
     setBlendRatio(ICON_COACH_e, param_3, param_4);
     setBlendRatio(ICON_DESTINATION_e, param_3, param_4);
+
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // Wii U iconScale (RPX 0x029f225c): every picture blends only its second texture
+        // (setBlendRatio(0, 1)). The TPHD archives replace the unused first ("small") textures with
+        // placeholders (red circle, purple square), so the GC zoom blend must not show them.
+        // The Wii U icon size does not follow the zoom either: the pane scale is fixed and the
+        // drawn size comes from the second texture (getIconSizeX / Y), so no GC zoom scale here.
+        for (int i = 0; i < ICON_MAX_e; i++) {
+            if (mPictures[i] != NULL) {
+                mPictures[i]->scale(1.0f, 1.0f);
+                mPictures[i]->setBlendRatio(0.0f, 1.0f);
+            }
+        }
+        if (mLightDropPic != NULL) {
+            mLightDropPic->scale(1.0f, 1.0f);
+            mLightDropPic->setBlendRatio(0.0f, 1.0f);
+        }
+    }
+    if (HdMapIcons* e = hdMapIcons(this, false)) {
+        for (J2DPicture* p : e->pic) {
+            if (p != NULL) {
+                p->scale(1.0f, 1.0f);
+                p->setBlendRatio(0.0f, 1.0f);
+            }
+        }
+    }
+#endif
 }
 
 bool dMenuMapCommon_c::setIconInfo(u8 i_iconNo, f32 i_posX, f32 i_posY, f32 i_alpharate, f32 i_rotation,
@@ -646,7 +803,37 @@ void dMenuMapCommon_c::moveLightDropAnime() {
     _c7c = flash_start_scale + fVar7 * (flash_end_scale - flash_start_scale);
 }
 
+#if TARGET_PC
+// Wii U getIconSize (RPX 0x029f0e70 / 0x029f10e4): width / height of the picture's second texture
+// (table size when it has none) * the size factor (+0xc98, 1.8 around the field / dungeon map
+// draws), drawn with the pane scale 0.5 * 808 / 1920 (x) and 0.5 * 448 / 1080 (y) set by iconScale
+// (RPX 0x029f225c). Folded here into one size (the TPHD pictures keep a pane scale of 1).
+static f32 hdMapIconSize(dMenuMapCommon_c* i_this, u8 i_iconNo, f32 i_tableSize, bool i_y) {
+    f32 base = i_tableSize;
+    if (J2DPicture* pic = hdMapIconPic(i_this, i_iconNo)) {
+        if (const JUTTexture* tex = pic->getTexture(1)) {
+            if (const ResTIMG* timg = tex->getTexInfo()) {
+                base = i_y ? (f32)timg->height : (f32)timg->width;
+            }
+        }
+    }
+    // Extra 0.5: calibrated against the Wii U captures (5F boss skull ~17 px at 1080p, field
+    // icons at minimum zoom), the folded size alone drew them twice as big.
+    return base * 1.8f * 0.5f * (i_y ? (0.5f * 448.0f / 1080.0f) : (0.5f * 808.0f / 1920.0f));
+}
+#endif
+
 f32 dMenuMapCommon_c::getIconSizeX(u8 i_iconNo) {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        for (int i = 0; i < ARRAY_SIZEU(map_icon_size); i++) {
+            if (map_icon_size[i].icon_no == i_iconNo) {
+                return hdMapIconSize(this, i_iconNo, map_icon_size[i].size_x, false);
+            }
+        }
+        return 0.0f;
+    }
+#endif
     for (int i = 0; i < ARRAY_SIZEU(map_icon_size); i++) {
         if (map_icon_size[i].icon_no == i_iconNo) {
             return map_icon_size[i].size_x;
@@ -657,6 +844,16 @@ f32 dMenuMapCommon_c::getIconSizeX(u8 i_iconNo) {
 }
 
 f32 dMenuMapCommon_c::getIconSizeY(u8 i_iconNo) {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        for (int i = 0; i < ARRAY_SIZEU(map_icon_size); i++) {
+            if (map_icon_size[i].icon_no == i_iconNo) {
+                return hdMapIconSize(this, i_iconNo, map_icon_size[i].size_y, true);
+            }
+        }
+        return 0.0f;
+    }
+#endif
     for (int i = 0; i < ARRAY_SIZEU(map_icon_size); i++) {
         if (map_icon_size[i].icon_no == i_iconNo) {
             return map_icon_size[i].size_y;

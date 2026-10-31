@@ -17,6 +17,8 @@
 #ifdef TARGET_PC
 #include "dusk/settings.h"
 #include "dusk/hq_minimap.hpp"
+#include "dusk/tphd/HdMapPalette.hpp"
+#include "JSystem/JKernel/JKRHeap.h"
 #include "m_Do/m_Do_graphic.h"
 #include <dolphin/gx/GXAurora.h>
 #include <aurora/math.hpp>
@@ -282,7 +284,12 @@ void dDrawPath_c::rendering(dDrawPath_c::line_class const* p_line) {
 
         #if TARGET_PC
         f32 height = JUTVideo::getManager()->getRenderHeight() / 448.0f;
-        if (height > 1.0f) {
+        // TPHD: the Wii U path renderer (0x029a641c) draws the normal lines 1 px wide but the
+        // type 2 lines (wall / region borders, 0x029a87a4) as a 4 px line plus a 2 px line in
+        // TV pixels: keep their GC width (6 / 12 = 1 / 2 GC px, ~2.4 / 4.8 px at 1080p) instead
+        // of halving it like the other lines.
+        const bool hdBorder = dusk::tphd_active() && p_line->field_0x1 == 2;
+        if (height > 1.0f && !hdBorder) {
             width /= 2;
         }
         #endif
@@ -383,6 +390,125 @@ void dDrawPath_c::drawPath() {
     }
 }
 
+#if TARGET_PC
+namespace {
+struct HdMapPal {
+    const u8* src = NULL;
+    const ResTIMG* timg = NULL;
+    u8* shadow = NULL;
+    u16 num = 0;
+    u16 written[256];
+    u32 exact[256];
+    u8 has[256];
+};
+HdMapPal s_hdMapPal[8];
+
+HdMapPal* hdMapPal(const void* i_src, bool i_create) {
+    for (HdMapPal& p : s_hdMapPal) {
+        if (p.src == i_src) {
+            return &p;
+        }
+    }
+    if (!i_create) {
+        return NULL;
+    }
+    static int s_next = 0;
+    HdMapPal& p = s_hdMapPal[s_next];
+    s_next = (s_next + 1) % 8;
+    p.src = static_cast<const u8*>(i_src);
+    p.timg = NULL;
+    p.shadow = NULL;
+    p.num = 0;
+    std::memset(p.has, 0, sizeof(p.has));
+    return &p;
+}
+
+void hdMapPalBuild(HdMapPal& p) {
+    if (p.shadow == NULL || p.src == NULL) {
+        return;
+    }
+    // Entries past the GC palette (only set through the exact table, e.g. the minimap frame
+    // colour palDt 0x3F) or never set: transparent black.
+    for (int e = p.num; e < 256; e++) {
+        u8* d = p.shadow + e * 4;
+        const u32 c = p.has[e] ? p.exact[e] : 0;
+        d[0] = (u8)(c >> 24);
+        d[1] = (u8)(c >> 16);
+        d[2] = (u8)(c >> 8);
+        d[3] = (u8)c;
+    }
+    for (int e = 0; e < p.num; e++) {
+        const u16 v = (u16)((p.src[e * 2] << 8) | p.src[e * 2 + 1]);
+        u8* d = p.shadow + e * 4;
+        if (e < 256 && p.has[e] && p.written[e] == v) {
+            d[0] = (u8)(p.exact[e] >> 24);
+            d[1] = (u8)(p.exact[e] >> 16);
+            d[2] = (u8)(p.exact[e] >> 8);
+            d[3] = (u8)p.exact[e];
+        } else if (v & 0x8000) {
+            const u8 r = (v >> 10) & 0x1f, g = (v >> 5) & 0x1f, b = v & 0x1f;
+            d[0] = (u8)((r << 3) | (r >> 2));
+            d[1] = (u8)((g << 3) | (g >> 2));
+            d[2] = (u8)((b << 3) | (b >> 2));
+            d[3] = 0xff;
+        } else {
+            const u8 a = (v >> 12) & 7, r = (v >> 8) & 0xf, g = (v >> 4) & 0xf, b = v & 0xf;
+            d[0] = (u8)(r * 0x11);
+            d[1] = (u8)(g * 0x11);
+            d[2] = (u8)(b * 0x11);
+            d[3] = (u8)((a << 5) | (a << 2) | (a >> 1));
+        }
+    }
+}
+}  // namespace
+
+namespace dusk::tphd {
+bool g_mapPaletteReuse = false;
+
+void mapPaletteSetExact(const void* i_src, int i_entry, u32 i_rgba) {
+    if (i_src == NULL || i_entry < 0 || i_entry >= 256) {
+        return;
+    }
+    HdMapPal* p = hdMapPal(i_src, true);
+    const u8* s = static_cast<const u8*>(i_src);
+    p->written[i_entry] = (u16)((s[i_entry * 2] << 8) | s[i_entry * 2 + 1]);
+    p->exact[i_entry] = i_rgba;
+    p->has[i_entry] = 1;
+}
+
+void mapPaletteSetExactPalDt(const void* i_src, int i_palDt, u32 i_rgba) {
+    for (int k = 0; k < 4; k++) {
+        mapPaletteSetExact(i_src, i_palDt * 4 + k, i_rgba);
+    }
+}
+
+void mapPaletteSetExactPalDtValue(const void* i_src, int i_palDt, u16 i_written, u32 i_rgba) {
+    if (i_src == NULL || i_palDt < 0 || i_palDt >= 64) {
+        return;
+    }
+    HdMapPal* p = hdMapPal(i_src, true);
+    for (int k = 0; k < 4; k++) {
+        const int e = i_palDt * 4 + k;
+        p->written[e] = i_written;
+        p->exact[e] = i_rgba;
+        p->has[e] = 1;
+    }
+}
+
+void mapPaletteSync(const ResTIMG* i_timg) {
+    if (i_timg == NULL) {
+        return;
+    }
+    for (HdMapPal& p : s_hdMapPal) {
+        if (p.timg == i_timg) {
+            hdMapPalBuild(p);
+            return;
+        }
+    }
+}
+}  // namespace dusk::tphd
+#endif
+
 void dRenderingMap_c::makeResTIMG(ResTIMG* p_image, u16 width, u16 height, u8* p_data,
                                   u8* p_palette, u16 param_5) const {
     p_image->format = GX_TF_C8;
@@ -412,6 +538,34 @@ void dRenderingMap_c::makeResTIMG(ResTIMG* p_image, u16 width, u16 height, u8* p
     p_image->mipmapCount = 1;
     p_image->LODBias = 0;
     p_image->imageOffset = p_data - (u8*)p_image;
+#if TARGET_PC
+    // TPHD: 8-bit alpha palette (see HdMapPalette.hpp). The copy is allocated on the current heap,
+    // like the ResTIMG, so that the 32-bit palette offset stays valid.
+    if (dusk::tphd_active() && param_5 * 4 <= 256) {
+        HdMapPal* p = hdMapPal(p_palette, true);
+        for (HdMapPal& q : s_hdMapPal) {
+            if (&q != p && q.timg == p_image) {
+                q.timg = NULL;
+            }
+        }
+        // dMap_c::refreshTextureSize remakes the minimap ResTIMG every frame: keep its copy
+        // (allocating one per call filled the game heap -> "allocation failure").
+        u8* shadow = (dusk::tphd::g_mapPaletteReuse && p->timg == p_image && p->shadow != NULL)
+                         ? p->shadow
+                         : JKR_NEW_ARRAY_ARGS(u8, 256 * 4, 0x20);
+        if (shadow != NULL) {
+            p->timg = p_image;
+            p->shadow = shadow;
+            p->num = param_5 * 4;
+            hdMapPalBuild(*p);
+            // GX_TL_RGBA8_PC (aurora GXEnum.h). Written as its value: the game TUs use a
+            // precompiled header that may predate the enum entry.
+            p_image->colorFormat = 3;
+            p_image->numColors = 256;
+            p_image->paletteOffset = shadow - (u8*)p_image;
+        }
+    }
+#endif
 }
 
 void dRenderingMap_c::renderingMap() {
@@ -458,10 +612,50 @@ void dRenderingFDAmap_c::setTevSettingIntensityTextureToCI() const {
     GXSetTevKColorSel(GX_TEVSTAGE0, GX_TEV_KCSEL_1_4);
 }
 
+#if TARGET_PC
+// The HUD minimap renderer (dMap_c, Wii U flag +0x30 set by dMeterMap_c::_create).
+const dRenderingFDAmap_c* g_hdMinimapRendering = NULL;
+#endif
+
 void dRenderingFDAmap_c::drawBack() const {
     GXClearVtxDesc();
     GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
     GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_CLR_RGBA, GX_F32, 0);
+#if TARGET_PC
+    if (dusk::tphd_active() && this == g_hdMinimapRendering) {
+        // Wii U drawBack (RPX 0x029a76c4), the map is copied as RGBA8 there: when the back colour
+        // has alpha (HUD minimap, 0x0000003f) the whole texture is first filled with 0x0000005f,
+        // then the back colour is drawn 4 texels (mCmPerTexel * 4) inside, with blending off, and
+        // the scissor is left 4 px inside for the paths. Result: a darker 4-texel frame. Here the
+        // colours are palette indices: 0xFC is palDt 0x3F = 0x0000005f (hdAmapPalette, d_map.cpp).
+        static const GXColor l_ringColor = {0xFC, 0x00, 0x00, 0x00};
+        const f32 hw = field_0x8 * 0.5f;
+        const f32 hh = field_0xc * 0.5f;
+        GXSetTevColor(GX_TEVREG0, l_ringColor);
+        GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+        GXPosition3f32(-hw, -hh, 0);
+        GXPosition3f32(hw, -hh, 0);
+        GXPosition3f32(hw, hh, 0);
+        GXPosition3f32(-hw, hh, 0);
+        GXEnd();
+        if (mTexWidth > 8 && mTexHeight > 8) {
+            GXSetScissor(4, 4, mTexWidth - 8, mTexHeight - 8);
+            const auto [rw, rh] = map_render_size_for(mTexWidth, mTexHeight);
+            const u32 ix = (4 * rw + mTexWidth / 2) / mTexWidth;
+            const u32 iy = (4 * rh + mTexHeight / 2) / mTexHeight;
+            GXSetScissorRender(ix, iy, rw - 2 * ix, rh - 2 * iy);
+        }
+        const f32 inset = mCmPerTexel * 4.0f;
+        GXSetTevColor(GX_TEVREG0, *getBackColor());
+        GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+        GXPosition3f32(-hw + inset, -hh + inset, 0);
+        GXPosition3f32(hw - inset, -hh + inset, 0);
+        GXPosition3f32(hw - inset, hh - inset, 0);
+        GXPosition3f32(-hw + inset, hh - inset, 0);
+        GXEnd();
+        return;
+    }
+#endif
     GXSetTevColor(GX_TEVREG0, *getBackColor());
     GXBegin(GX_QUADS, GX_VTXFMT0, 4);
     GXPosition3f32(-field_0x8, -field_0xc, 0);
