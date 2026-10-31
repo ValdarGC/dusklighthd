@@ -48,6 +48,7 @@ enum class GraphicsOption {
     BloomMultiplier,
     DepthOfFieldMode,
     TextureReplacements,
+    Brightness,
 };
 
 struct GraphicsSetting {

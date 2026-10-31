@@ -8,6 +8,7 @@
 #include "d/actor/d_a_player.h"
 #include "d/d_kankyo.h"
 #include "d/d_meter2_info.h"
+#include "dusk/settings.h"
 #include "dusk/map_loader_definitions.h"
 #include "number_button.hpp"
 #include "pane.hpp"
@@ -457,7 +458,7 @@ std::map<int, itemInfo> itemMap = {
     {dItemNo_NOENTRY_229_e, {"Reserved"}},
     {dItemNo_NOENTRY_230_e, {"Reserved"}},
     {dItemNo_NOENTRY_231_e, {"Reserved"}},
-    {dItemNo_NOENTRY_232_e, {"Reserved"}},
+    {dItemNo_GHOST_KANTERA_e, {"Ghost Lantern", ITEMTYPE_EQUIP_e}},
     {dItemNo_ANCIENT_DOCUMENT_e, {"Ancient Sky Book", ITEMTYPE_EQUIP_e}},
     {dItemNo_AIR_LETTER_e, {"Ancient Sky Book (Partial)", ITEMTYPE_EQUIP_e}},
     {dItemNo_ANCIENT_DOCUMENT2_e, {"Ancient Sky Book (Filled)", ITEMTYPE_EQUIP_e}},
@@ -636,7 +637,7 @@ struct DefaultInventoryEntry {
     u8 item;
 };
 
-constexpr std::array<DefaultInventoryEntry, 22> defaultInventory = {
+constexpr std::array<DefaultInventoryEntry, 23> defaultInventory = {
     DefaultInventoryEntry{SLOT_0, dItemNo_BOOMERANG_e},
     DefaultInventoryEntry{SLOT_1, dItemNo_KANTERA_e},
     DefaultInventoryEntry{SLOT_2, dItemNo_SPINNER_e},
@@ -644,6 +645,7 @@ constexpr std::array<DefaultInventoryEntry, 22> defaultInventory = {
     DefaultInventoryEntry{SLOT_4, dItemNo_BOW_e},
     DefaultInventoryEntry{SLOT_5, dItemNo_HAWK_EYE_e},
     DefaultInventoryEntry{SLOT_6, dItemNo_IRONBALL_e},
+    DefaultInventoryEntry{SLOT_7, dItemNo_GHOST_KANTERA_e},
     DefaultInventoryEntry{SLOT_8, dItemNo_COPY_ROD_e},
     DefaultInventoryEntry{SLOT_9, dItemNo_HOOKSHOT_e},
     DefaultInventoryEntry{SLOT_10, dItemNo_W_HOOKSHOT_e},
@@ -831,6 +833,41 @@ int count_clothing() {
         ++count;
     }
     return count;
+}
+
+// TPHD stamps (Wii U order, stamp n = bit n of the save reserve; see d_save.h).
+constexpr std::array<const char*, 50> stampNames = {
+    "Hylian A", "Hylian B", "Hylian C", "Hylian D", "Hylian E", "Hylian F", "Hylian G",
+    "Hylian H", "Hylian I", "Hylian J", "Hylian K", "Hylian L", "Hylian M", "Hylian N",
+    "Hylian O", "Hylian P", "Hylian Q", "Hylian R", "Hylian S", "Hylian T", "Hylian U",
+    "Hylian V", "Hylian W", "Hylian X", "Hylian Y", "Hylian Z", "Rupee", "Treasure Chest",
+    "Piece of Heart", "Heart Container", "Link (Happy)", "Link (Angry)", "Link (Sad)",
+    "Link (Surprised)", "Wolf Link", "Midna (Happy)", "Midna (Angry)", "Midna (Sad)",
+    "Midna (Surprised)", "Ooccoo", "Zelda (Happy)", "Zelda (Angry)", "Zelda (Sad)",
+    "Zelda (Surprised)", "Zant", "Agitha", "Malo Mart", "Cucco", "Fairy", "True Midna",
+};
+
+int count_stamps() {
+    int count = 0;
+    for (int index = 0; index < (int)stampNames.size(); ++index) {
+        if (dComIfGs_isStamp(index)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void populate_stamps_picker(Pane& pane) {
+    std::vector<ToggleEntry> toggles;
+    toggles.reserve(stampNames.size());
+    for (int index = 0; index < (int)stampNames.size(); ++index) {
+        toggles.push_back({
+            .text = stampNames[index],
+            .isSelected = [index] { return dComIfGs_isStamp(index); },
+            .setSelected = [index](bool selected) { dComIfGs_onStamp(index, selected ? 1 : 0); },
+        });
+    }
+    populate_toggle_group(pane, toggles);
 }
 
 int count_letters() {
@@ -1869,6 +1906,16 @@ EditorWindow::EditorWindow() {
                 .getValue = [] { return count_label(count_letters(), letterSenders.size()); },
             }),
             rightPane, [](Pane& pane) { populate_letters_picker(pane); });
+
+        if (dusk::tphd_active()) {
+            leftPane.add_section("Stamps (TPHD)");
+            leftPane.register_control(
+                leftPane.add_select_button({
+                    .key = "Stamps",
+                    .getValue = [] { return count_label(count_stamps(), stampNames.size()); },
+                }),
+                rightPane, [](Pane& pane) { populate_stamps_picker(pane); });
+        }
 
         leftPane.add_section("Fishing Log");
         for (const auto& fish : fishSpeciesEntries) {

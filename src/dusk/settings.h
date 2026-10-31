@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <filesystem>
 
 #include "dusk/config_var.hpp"
 #include "dusk/ui/controls.hpp"
@@ -253,6 +254,10 @@ struct UserSettings {
         ConfigVar<bool> disableCutscenePillarboxing;
         ConfigVar<LetterboxMode> disableLetterboxing;
         ConfigVar<bool> enableHighQualityMinimapTextures;
+        // TPHD options menu: brightness 1..6 (Wii U config +5, GX2SetTVGamma table) and the
+        // 3rd person aim (Wii U config +0xa bit 4).
+        ConfigVar<int> brightness;
+        ConfigVar<bool> aimThirdPerson;
 
         // Audio
         ConfigVar<bool> noLowHpSound;
@@ -339,6 +344,9 @@ struct UserSettings {
     struct {
         ConfigVar<std::string> isoPath;
         ConfigVar<DiscVerificationState> isoVerification;
+#if DUSK_TPHD
+        ConfigVar<std::string> hdContentPath;
+#endif
         ConfigVar<std::string> graphicsBackend;
         ConfigVar<bool> skipPreLaunchUI;
         ConfigVar<bool> showPipelineCompilation;
@@ -357,10 +365,14 @@ struct UserSettings {
         std::array<ActionBindConfigVar, 4> toggleMinimap;
         std::array<ActionBindConfigVar, 4> openDusklightMenu;
         std::array<ActionBindConfigVar, 4> turboSpeedButton;
+        std::array<ActionBindConfigVar, 4> useItemR;
     } actionBindings;
 };
 
 UserSettings& getSettings();
+
+std::filesystem::path tphd_content_path();
+bool tphd_active();
 
 void registerSettings();
 
@@ -373,6 +385,10 @@ inline bool isLetterboxingDisabled(bool inCutscene) {
            (mode == LetterboxMode::CutsceneOnly && inCutscene) ||
            (mode == LetterboxMode::GameplayOnly && !inCutscene);
 }
+// Brightness 1..6 -> output gamma (RPX table 0x100974f0: 0.8 .. 1.3, 3 = 1.0).
+float brightnessGamma(int i_brightness);
+void applyBrightness(int i_brightness);
+void applyBrightness();
 
 // Transient settings
 

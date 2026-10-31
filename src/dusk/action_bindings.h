@@ -13,6 +13,7 @@ enum class ActionBinds {
     TOGGLE_MINIMAP,
     OPEN_DUSKLIGHT_MENU,
     TURBO_SPEED_BUTTON,
+    USE_ITEM_R,  // TPHD (Wii U Pro Controller) third item slot, shown on the R badge
     COUNT,
 };
 

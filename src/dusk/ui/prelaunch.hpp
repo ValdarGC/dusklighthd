@@ -54,6 +54,8 @@ struct PrelaunchState {
     iso::ValidationError configuredDiscValidation = iso::ValidationError::Unknown;
     std::string activeDiscPath;
     iso::DiscInfo activeDiscInfo{};
+    std::string configuredHdContentPath;
+    std::string activeHdContentPath;
     GameLanguage initialLanguage = GameLanguage::English;
     GameLanguage unavailableLanguage = GameLanguage::English;
     bool pendingLanguageUnavailableNotice = false;
@@ -71,6 +73,7 @@ void return_to_prelaunch() noexcept;
 void ensure_initialized() noexcept;
 void refresh_configured_disc_state() noexcept;
 void open_iso_picker() noexcept;
+void open_folder_picker() noexcept;
 bool is_restart_pending() noexcept;
 void try_push_verification_modal(Document& host);
 void try_push_language_unavailable_modal(Document& host);

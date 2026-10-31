@@ -5,8 +5,11 @@
 #include "dusk/texture_replacements.hpp"
 #include "dusk/ui/ui.hpp"
 
+#include "dusk/main.h"
 #include <aurora/aurora.h>
 #include <dolphin/vi.h>
+
+#include <system_error>
 
 namespace dusk {
 
@@ -88,6 +91,8 @@ UserSettings g_userSettings = {
         .disableCutscenePillarboxing {"game.disableCutscenePillarboxing", false},
         .disableLetterboxing {"game.disableLetterboxing", LetterboxMode::Off},
         .enableHighQualityMinimapTextures {"game.enableHighQualityMinimapTextures", true},
+        .brightness {"game.brightness", 3},
+        .aimThirdPerson {"game.aimThirdPerson", false},
 
         // Audio
         .noLowHpSound {"game.noLowHpSound", false},
@@ -178,6 +183,9 @@ UserSettings g_userSettings = {
     .backend = {
         .isoPath {"backend.isoPath", ""},
         .isoVerification {"backend.isoVerification", DiscVerificationState::Unknown},
+#if DUSK_TPHD
+        .hdContentPath {"backend.hdContentPath", ""},
+#endif
         .graphicsBackend {"backend.graphicsBackend", "auto"},
         .skipPreLaunchUI {"backend.skipPreLaunchUI", false},
         .showPipelineCompilation {"backend.showPipelineCompilation", true},
@@ -197,7 +205,7 @@ UserSettings g_userSettings = {
             ActionBindConfigVar{"actionBindings.firstPersonCamera_port3", PAD_NATIVE_BUTTON_INVALID},
         },
         .callMidna {
-            ActionBindConfigVar{"actionBindings.callMidna_port0", PAD_NATIVE_BUTTON_INVALID},
+            ActionBindConfigVar{"actionBindings.callMidna_port0", 9 /* L (SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) */},
             ActionBindConfigVar{"actionBindings.callMidna_port1", PAD_NATIVE_BUTTON_INVALID},
             ActionBindConfigVar{"actionBindings.callMidna_port2", PAD_NATIVE_BUTTON_INVALID},
             ActionBindConfigVar{"actionBindings.callMidna_port3", PAD_NATIVE_BUTTON_INVALID},
@@ -226,6 +234,13 @@ UserSettings g_userSettings = {
             ActionBindConfigVar{"actionBindings.turboButton_port2", PAD_NATIVE_BUTTON_INVALID},
             ActionBindConfigVar{"actionBindings.turboButton_port3", PAD_NATIVE_BUTTON_INVALID},
         },
+        .useItemR {
+            // 10 = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER (R on a Wii U Pro Controller / R1 / RB)
+            ActionBindConfigVar{"actionBindings.useItemR_port0", 10},
+            ActionBindConfigVar{"actionBindings.useItemR_port1", PAD_NATIVE_BUTTON_INVALID},
+            ActionBindConfigVar{"actionBindings.useItemR_port2", PAD_NATIVE_BUTTON_INVALID},
+            ActionBindConfigVar{"actionBindings.useItemR_port3", PAD_NATIVE_BUTTON_INVALID},
+        },
     }
 };
 
@@ -247,6 +262,45 @@ void applyResampler(Resampler resampler) {
         aurora_set_resampler(SAMPLER_BILINEAR);
         break;
     }
+std::filesystem::path tphd_content_path() {
+#if DUSK_TPHD
+    const std::string& hdPath = g_userSettings.backend.hdContentPath;
+    if (!hdPath.empty()) {
+        return hdPath;
+    }
+
+    if (!ConfigPath.empty()) {
+        std::error_code ec;
+        auto localPath = ConfigPath / "tphd" / "content";
+        if (std::filesystem::is_directory(localPath, ec)) {
+            return localPath;
+        }
+    }
+#endif
+    return {};
+}
+
+bool tphd_active() {
+    return !tphd_content_path().empty();
+}
+
+float brightnessGamma(int i_brightness) {
+    // RPX dMenu_Option_c 0x029f4398 / 0x029f4b60: GX2SetTVGamma(table[brightness]).
+    static const float kTvGamma[6] = {0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f};
+    if (i_brightness < 1) {
+        i_brightness = 1;
+    } else if (i_brightness > 6) {
+        i_brightness = 6;
+    }
+    return kTvGamma[i_brightness - 1];
+}
+
+void applyBrightness(int i_brightness) {
+    aurora_set_output_gamma(brightnessGamma(i_brightness));
+}
+
+void applyBrightness() {
+    applyBrightness(g_userSettings.game.brightness.getValue());
 }
 
 void registerSettings() {
@@ -328,6 +382,8 @@ void registerSettings() {
     Register(g_userSettings.game.disableCutscenePillarboxing);
     Register(g_userSettings.game.disableLetterboxing);
     Register(g_userSettings.game.enableHighQualityMinimapTextures);
+    Register(g_userSettings.game.brightness);
+    Register(g_userSettings.game.aimThirdPerson);
     Register(g_userSettings.game.enableFastIronBoots);
     Register(g_userSettings.game.canTransformAnywhere);
     Register(g_userSettings.game.fastRoll);
@@ -399,6 +455,9 @@ void registerSettings() {
 
     Register(g_userSettings.backend.isoPath);
     Register(g_userSettings.backend.isoVerification);
+#if DUSK_TPHD
+    Register(g_userSettings.backend.hdContentPath);
+#endif
     Register(g_userSettings.backend.graphicsBackend);
     Register(g_userSettings.backend.skipPreLaunchUI);
     Register(g_userSettings.backend.showPipelineCompilation);
@@ -432,6 +491,10 @@ void registerSettings() {
     Register(g_userSettings.actionBindings.turboSpeedButton[1]);
     Register(g_userSettings.actionBindings.turboSpeedButton[2]);
     Register(g_userSettings.actionBindings.turboSpeedButton[3]);
+    Register(g_userSettings.actionBindings.useItemR[0]);
+    Register(g_userSettings.actionBindings.useItemR[1]);
+    Register(g_userSettings.actionBindings.useItemR[2]);
+    Register(g_userSettings.actionBindings.useItemR[3]);
 }
 
 // Transient settings

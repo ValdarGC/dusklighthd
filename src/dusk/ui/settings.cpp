@@ -524,6 +524,42 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     pane.add_rml("Set the disc image that Dusklight uses to launch the game.<br/><br/>"
                                  "Changes require a restart.");
                 });
+#if DUSK_TPHD
+            if (borealis::file_select::capabilities().canOpenFolder) {
+                leftPane.register_control(
+                    leftPane
+                        .add_select_button({
+                            .key = "TPHD Content Folder",
+                            .getValue =
+                                [] {
+                                    const auto& path = prelaunch_state().configuredHdContentPath;
+                                    std::string display;
+                                    if (path.empty()) {
+                                        display = "(none)";
+                                    } else {
+                                        display = std::filesystem::path(path).string();
+                                        if (display.empty()) {
+                                            display = path;
+                                        }
+                                    }
+                                    return display;
+                                },
+                            .isModified =
+                                [] {
+                                    const auto& state = prelaunch_state();
+                                    const auto& active = state.activeHdContentPath;
+                                    return !active.empty() &&
+                                           state.configuredHdContentPath != active;
+                                },
+                        })
+                        .on_pressed([] { open_folder_picker(); }),
+                    rightPane, [](Pane& pane) {
+                        pane.add_rml(
+                            "Set the directory that Dusk loads eligible TPHD content from."
+                            "<br/><br/>Changes require a restart.");
+                    });
+            }
+#endif
             if (data::manager().capabilities().canChangeLocation &&
                 borealis::file_select::capabilities().canOpenFolder)
             {
@@ -577,7 +613,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             }
             leftPane.register_control(
                 leftPane.add_select_button({
-                    .key = "Language",
+                    .key = dusk::tphd_active() ? "Language (HD)" : "Language",
                     .getValue =
                         [] {
                             return language::language_name(getSettings().game.language.getValue());
@@ -808,6 +844,17 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 .option = GraphicsOption::Resampler,
                 .title = "Output Resampling",
                 .helpText = kResamplerHelpText,
+            });
+
+        graphics_tuner_control(*this, leftPane, rightPane, getSettings().game.brightness,
+            GraphicsTunerProps{
+                .option = GraphicsOption::Brightness,
+                .title = "Brightness",
+                .helpText = "Screen brightness (output gamma), same as the Brightness option "
+                            "of the in-game Options menu.",
+                .valueMin = 1,
+                .valueMax = 6,
+                .defaultValue = 3,
             });
 
         leftPane.add_section("Post-Processing");

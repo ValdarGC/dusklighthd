@@ -782,6 +782,8 @@ void ensure_initialized() noexcept {
     state.activeDiscPath = state.configuredDiscPath;
     state.configuredDiscValidation =
         verification_from_config(getSettings().backend.isoVerification.getValue());
+    state.configuredHdContentPath = getSettings().backend.hdContentPath;
+    state.activeHdContentPath = state.configuredHdContentPath;
     state.initialLanguage = getSettings().game.language;
     state.initialGraphicsBackend = getSettings().backend.graphicsBackend;
     state.initialCardFileType = getSettings().backend.cardFileType;
@@ -800,9 +802,22 @@ void open_iso_picker() noexcept {
         &file_dialog_callback);
 }
 
+void open_folder_picker() noexcept {
+    ensure_initialized();
+    borealis::file_select::open_folder(
+        {
+            .parentWindow = aurora::window::get_sdl_window(),
+            .defaultLocation = prelaunch_state().configuredHdContentPath,
+        },
+        &folder_dialog_callback);
+}
+
 bool is_restart_pending() noexcept {
     const auto& state = prelaunch_state();
     if (!state.activeDiscPath.empty() && state.configuredDiscPath != state.activeDiscPath) {
+        return true;
+    }
+    if (state.configuredHdContentPath != state.activeHdContentPath) {
         return true;
     }
     if (data::is_data_path_restart_pending()) {

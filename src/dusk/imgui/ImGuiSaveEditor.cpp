@@ -1,4 +1,7 @@
 ﻿#include "ImGuiSaveEditor.hpp"
+#include "fmt/format.h"
+#include "imgui.h"
+#include "aurora/gfx.h"
 
 #include "ImGuiConsole.hpp"
 #include "ImGuiEventFlags.hpp"
@@ -258,7 +261,7 @@ namespace dusk {
         { dItemNo_NOENTRY_229_e, {"Reserved"} },
         { dItemNo_NOENTRY_230_e, {"Reserved"} },
         { dItemNo_NOENTRY_231_e, {"Reserved"} },
-        { dItemNo_NOENTRY_232_e, {"Reserved"} },
+        { dItemNo_GHOST_KANTERA_e, {"Ghost Lantern", ITEMTYPE_EQUIP_e} },
         { dItemNo_ANCIENT_DOCUMENT_e, {"Ancient Sky Book", ITEMTYPE_EQUIP_e} },
         { dItemNo_AIR_LETTER_e, {"Ancient Sky Book (Partial)", ITEMTYPE_EQUIP_e} },
         { dItemNo_ANCIENT_DOCUMENT2_e, {"Ancient Sky Book (Filled)", ITEMTYPE_EQUIP_e} },
@@ -393,6 +396,7 @@ namespace dusk {
         { SLOT_4,  dItemNo_BOW_e          },
         { SLOT_5,  dItemNo_HAWK_EYE_e     },
         { SLOT_6,  dItemNo_IRONBALL_e     },
+        { SLOT_7,  dItemNo_GHOST_KANTERA_e},
         { SLOT_8,  dItemNo_COPY_ROD_e     },
         { SLOT_9,  dItemNo_HOOKSHOT_e     },
         { SLOT_10, dItemNo_W_HOOKSHOT_e   },

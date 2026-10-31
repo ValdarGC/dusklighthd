@@ -164,6 +164,29 @@ const GraphicsSetting& GraphicsSetting::of(GraphicsOption option) {
     case GraphicsOption::TextureReplacements:
         return bind<[]() -> auto& { return getSettings().game.enableTextureReplacements; }>(
             0, 1, 0, 1, format_bool);
+    case GraphicsOption::Brightness: {
+        // TPHD options brightness 1..6 (Wii U output gamma table), applied at once.
+        static const GraphicsSetting desc{
+            .min = 1,
+            .max = 6,
+            .defaultValue = 3,
+            .step = 1,
+            .watchesRenderSize = false,
+            .read = []() -> int { return getSettings().game.brightness.getValue(); },
+            .write =
+                [](int value) {
+                    getSettings().game.brightness.setValue(std::clamp(value, 1, 6));
+                    applyBrightness();
+                },
+            .label = [](int value) -> Rml::String { return fmt::format("{}", value); },
+            .cvarName = []() -> const char* { return getSettings().game.brightness.getName(); },
+            .isModified = []() -> bool {
+                return getSettings().game.brightness.getValue() !=
+                       getSettings().game.brightness.getDefaultValue();
+            },
+        };
+        return desc;
+    }
     }
     DuskLog.error("{} is an invalid GraphicsOption", static_cast<int>(option));
     abort();
