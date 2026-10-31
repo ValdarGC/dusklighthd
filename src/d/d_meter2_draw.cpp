@@ -2543,7 +2543,7 @@ void dMeter2Draw_c::draw() {
 #if TARGET_PC
     if (!touchControlsEnabled && field_0x738 > 0.0f) {
         if (dusk::tphd_active()) {
-            if (dusk::frame_interp::get_ui_tick_pending()) {
+            if (dusk::game_clock::is_sim_frame()) {
                 field_0x738 += g_drawHIO.mMidnaIconPikariAnimSpeed;
                 if (field_0x738 > 28.0f) {
                     field_0x738 = 18.0f;

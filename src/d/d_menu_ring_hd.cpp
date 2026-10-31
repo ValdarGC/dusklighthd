@@ -632,8 +632,8 @@ void dMenu_Ring_c::hdDraw() {
             hdFlyFinish();
         } else {
             const Vec t = centerOf(dst);
-            s_fly.acc += dusk::game_clock::consume_interval(&s_fly);
-            const f32 frame = dusk::game_clock::period_for_original_frames(1.0f);
+            s_fly.acc += dusk::game_clock::original_frames();
+            const f32 frame = 1.0f;  // one original (30 fps) game frame
             while (s_fly.btn >= 0 && s_fly.acc >= frame) {
                 s_fly.acc -= frame;
                 const f32 dx = t.x - s_fly.x;
@@ -703,7 +703,6 @@ bool dMenu_Ring_c::hdStartFly(int i_btn, u8 i_slot) {
     s_fly.y = c.y;
     s_fly.scale = 2.0f;  // cell 64 / slot 32
     s_fly.acc = 0.0f;
-    dusk::game_clock::consume_interval(&s_fly);
     return true;
 }
 

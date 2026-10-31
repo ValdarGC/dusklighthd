@@ -111,6 +111,7 @@ void tphdSetLocation(J2DScreen* i_scr, dSv_save_c* i_savedata) {
 }
 }  // namespace
 #endif
+#if TARGET_PC
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
 #endif

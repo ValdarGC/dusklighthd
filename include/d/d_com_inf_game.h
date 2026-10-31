@@ -2201,6 +2201,14 @@ DUSK_NOINLINE void dComIfGd_set3DlineMatDark(mDoExt_3DlineMat_c* param_0);
 DUSK_NOINLINE void dComIfGd_setListCursor();
 #endif
 
+inline bool dComIfGs_isStamp(int i_no) {
+    return g_dComIfG_gameInfo.info.isStamp(i_no);
+}
+
+inline void dComIfGs_onStamp(int i_no, int i_val) {
+    g_dComIfG_gameInfo.info.onStamp(i_no, i_val);
+}
+
 #else
 inline dSv_info_c* dComIfGs_getSaveInfo() {
     return &g_dComIfG_gameInfo.info;

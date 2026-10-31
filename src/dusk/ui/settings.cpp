@@ -846,15 +846,12 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 .helpText = kResamplerHelpText,
             });
 
-        graphics_tuner_control(*this, leftPane, rightPane, getSettings().game.brightness,
+        graphics_tuner_control(*this, leftPane, rightPane,
             GraphicsTunerProps{
                 .option = GraphicsOption::Brightness,
                 .title = "Brightness",
                 .helpText = "Screen brightness (output gamma), same as the Brightness option "
                             "of the in-game Options menu.",
-                .valueMin = 1,
-                .valueMax = 6,
-                .defaultValue = 3,
             });
 
         leftPane.add_section("Post-Processing");

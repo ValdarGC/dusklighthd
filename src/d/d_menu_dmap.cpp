@@ -33,6 +33,7 @@
 #include "dusk/settings.h"
 #include "dusk/version.hpp"
 #include "helpers/string.hpp"
+#endif
 
 #if TARGET_PC
 #include "dusk/interp/frame_interpolation.h"

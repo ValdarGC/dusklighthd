@@ -60,7 +60,6 @@ public:
 #endif
 
 #if TARGET_PC
-#ifdef TARGET_PC
     void setPosShopPc(f32 x, f32 y);
     f32 getPositionX() const { return mPositionX; }
     f32 getPositionY() const { return mPositionY; }

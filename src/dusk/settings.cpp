@@ -262,6 +262,8 @@ void applyResampler(Resampler resampler) {
         aurora_set_resampler(SAMPLER_BILINEAR);
         break;
     }
+}
+
 std::filesystem::path tphd_content_path() {
 #if DUSK_TPHD
     const std::string& hdPath = g_userSettings.backend.hdContentPath;

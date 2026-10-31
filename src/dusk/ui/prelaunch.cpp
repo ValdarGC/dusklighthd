@@ -802,6 +802,21 @@ void open_iso_picker() noexcept {
         &file_dialog_callback);
 }
 
+void folder_dialog_callback(borealis::file_select::Result result) {
+    if (result.status != borealis::file_select::Status::Selected || result.locations.empty()) {
+        if (result.status == borealis::file_select::Status::Failed) {
+            PrelaunchLog.warn("Folder selection failed: {}", result.message);
+        }
+        return;
+    }
+
+    auto& state = prelaunch_state();
+    const auto& path = result.locations.front();
+    state.configuredHdContentPath = path;
+    getSettings().backend.hdContentPath.setValue(path);
+    config::save();
+}
+
 void open_folder_picker() noexcept {
     ensure_initialized();
     borealis::file_select::open_folder(

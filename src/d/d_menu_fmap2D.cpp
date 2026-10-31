@@ -25,6 +25,7 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/ui/touch_controls.hpp"
 #include "dusk/version.hpp"
+#endif
 
 #if TARGET_PC
 #include "dusk/settings.h"

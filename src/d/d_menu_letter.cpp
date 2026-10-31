@@ -26,6 +26,7 @@
 #include "dusk/settings.h"
 #include "dusk/action_bindings.h"
 #include "dusk/tphd/HdSubscreen.hpp"
+#endif
 
 static void enable_turn_page_controls(bool enabled) {
     const auto controlOverride =

@@ -3479,7 +3479,7 @@ void dMenu_save_c::tphdSaveUpdate() {
     static const u64 kGlow[5] = {MULTI_CHAR('w_go_g00'), MULTI_CHAR('w_go_g01'),
                                  MULTI_CHAR('w_go_g02'), MULTI_CHAR('w_go_g03'),
                                  MULTI_CHAR('w_go_g04')};
-    const bool tick = dusk::frame_interp::get_ui_tick_pending();
+    const bool tick = dusk::game_clock::is_sim_frame();
     for (int i = 0; i < 5; i++) {
         J2DPane* g = mSaveSel.Scr->search(kGlow[i]);
         if (g == NULL) {
