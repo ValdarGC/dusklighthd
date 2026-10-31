@@ -3,9 +3,11 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <vector>
 
+#include <aurora/dvd.h>
 #include <dolphin/types.h>
 
 namespace dusk::tphd {
@@ -55,6 +57,10 @@ struct HdDecodedTexture {
 std::optional<HdDecodedTexture> decode_hd_surface(const GtxSurface& s);
 
 const std::filesystem::path& hd_content_path();
+
+// Mod overlay files. Aurora has a single DVD overlay, so the TPHD layer registers the HD arcs
+// and these together; a mod file wins over the HD file with the same path. `fileName` is copied.
+void set_mod_overlay_files(std::span<const AuroraOverlayFile> files, const AuroraOverlayCallbacks* callbacks);
 
 }
 

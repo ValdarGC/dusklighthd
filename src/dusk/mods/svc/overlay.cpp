@@ -9,6 +9,9 @@
 #include "JSystem/JKernel/JKRArchive.h"
 
 #include <aurora/dvd.h>
+#if DUSK_TPHD
+#include "dusk/tphd/HdAssetLayer.hpp"
+#endif
 #include <borealis/log.hpp>
 
 #include <algorithm>
@@ -197,22 +200,19 @@ void overlay_sync_files() {
         }
     }
 
+    Log.debug("Registering {} overlay file(s).", files.size());
 #if DUSK_TPHD
-    // With HD content active, the TPHD layer owns the DVD overlay. If no mod adds files,
-    // leave it alone: registering here would clear its files and replace its callbacks.
-    if (files.empty() && dusk::tphd_active()) {
-        return;
-    }
-#endif
-
+    // The TPHD layer owns the single aurora DVD overlay and puts these files over the HD ones.
+    dusk::tphd::set_mod_overlay_files(files, &s_overlayCallbacks);
+#else
     static bool callbacksRegistered = false;
     if (!callbacksRegistered) {
         aurora_dvd_overlay_callbacks(&s_overlayCallbacks);
         callbacksRegistered = true;
     }
 
-    Log.debug("Registering {} overlay file(s).", files.size());
     aurora_dvd_overlay_files(files.data(), files.size(), nullptr);
+#endif
     JKRArchive::notifyOverlayFilesChanged();
 
     for (const auto& file : files) {
