@@ -1525,6 +1525,7 @@ set(DUSK_FILES
         src/dusk/mods/svc/audio_res/wave.cpp
         src/dusk/mods/svc/audio_res/opus.cpp
         src/dusk/mods/svc/camera.cpp
+        src/dusk/mods/svc/tphd.cpp
         src/dusk/mods/svc/config.cpp
         src/dusk/mods/svc/config.hpp
         src/dusk/mods/svc/file.cpp

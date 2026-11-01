@@ -1234,6 +1234,44 @@ svc_game_mode->register_game_mode(mod_ctx, &gameModeDesc);
 
 ```
 
+### TphdService ([`mods/svc/tphd.h`](../sdk/include/mods/svc/tphd.h))
+
+TPHD mode runs the game with a Wii U (Twilight Princess HD) content folder: HD textures, Wii U
+(Revo) layouts and HUD. Use this service to adapt a mod to it.
+
+| Function | Use |
+|---|---|
+| `is_active` | TPHD mode is on |
+| `get_content_path` | the Wii U `content` folder |
+| `read_arc_file` | read a file from a Wii U archive (e.g. `res/Object/Alink.arc`, `bmdr/al.bmd`) |
+| `get_archive` | the loaded Wii U layout archives (`TPHD_ARCHIVE_MAIN_2D`, `..._RING`, `..._COLLECT`...), as `JKRArchive*` |
+| `get_tv_stretch` / `get_n43_squeeze` | how Revo screens are stretched to the TV and how `n_43` panes are squeezed back |
+| `apply_n43` / `draw_revo_screen` | draw a Revo `J2DScreen` the way the Wii U does |
+| `reload_texture_packs` | rescan the `tphd_*` texture packs |
+
+```cpp
+IMPORT_OPTIONAL_SERVICE(TphdService, svc_tphd);
+
+void draw_my_screen(J2DScreen* screen) {
+    if (svc_tphd != nullptr && svc_tphd->is_active(mod_ctx)) {
+        svc_tphd->draw_revo_screen(mod_ctx, screen, nullptr, 0.0f, 0.0f);
+    } else {
+        screen->draw(0.0f, 0.0f, dComIfGp_getCurrentGrafPort());
+    }
+}
+```
+
+Assets in TPHD mode:
+
+- **Textures**: name them after the Wii U texture hash, `tphd_{w}x{h}_{hash}.dds|.png` (the
+  *TPHD Textures* tool in the Tools menu exports every Wii U texture with these names). GameCube
+  hash packs (`tex1_*`) are not loaded in TPHD mode.
+- **Archives**: a mod file replaces the Wii U file at the same path. Wii U archives keep their
+  textures in the `.pack.gz` next to them, so a replaced archive gets no HD textures: ship its
+  images inside the archive (regular BTI), or leave them to a `tphd_` pack.
+- **Text**: Wii U only messages (stamps, Ghost Lantern...) must be present in a text mod's
+  `bmgres` archives for TPHD mode.
+
 ### ActorService (`mods/svc/actor.h`)
 
 A service that manages registering and creating custom actors. These actors will be run by the game as if they are part of the engine. These actors can be created by the game either by its 16-bit actor name, or a 7-character long name that can
