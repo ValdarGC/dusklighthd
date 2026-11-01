@@ -48,6 +48,7 @@
 #include "dusk/settings.h"
 #include "dusk/logging.h"
 #include "dusk/tphd/RevoCanvas.hpp"
+#include "dusk/tphd/HdSubscreen.hpp"
 #include "JSystem/J2DGraph/J2DOrthoGraph.h"
 
 extern JKRArchive* g_tphdCollectRevoArchive;
@@ -3092,9 +3093,9 @@ void dMenu_Collect2D_c::_draw() {
         // like the GC dim texture mpBlackTex, whose alpha is mBackAlpha * 150).
         {
             const f32 fade = std::min(1.0f, mpBlackTex->getAlpha() / 150.0f);
-            J2DFillBox(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
-                       mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(),
-                       JUtility::TColor(0, 0, 0, static_cast<u8>(255.0f * fade)));
+            dusk::tphd::fillCanvasBox(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                                      mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(),
+                                      JUtility::TColor(0, 0, 0, static_cast<u8>(255.0f * fade)));
         }
         {
             dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)

@@ -746,6 +746,7 @@ public:
     void tphdEraseConfirmOut();
     void tphdEraseConfirmIn();
     void tphdEraseConfirmBack();
+    void tphdYesNoFrameAlpha(int i_no, u8 i_alpha);
     void clearTphdBackToTitle() { mTphdBackToTitle = false; }
 #endif
 

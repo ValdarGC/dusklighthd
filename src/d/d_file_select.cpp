@@ -250,6 +250,7 @@ dFile_select_c::~dFile_select_c() {
 
 #if TARGET_PC
     tphdStampAlbumClose();
+    dusk::tphd::clearCanvasBackgrounds();
     if (mpTphdIconScr != NULL) {
         JKR_DELETE(mpTphdIconScr);
         mpTphdIconScr = NULL;
@@ -2015,10 +2016,9 @@ void dFile_select_c::ToCopyPaneMove() {
     {
         field_0x026b = 0;
         Vec pos = mCpSelPane[field_0x026b]->getGlobalVtxCenter(false, 0);
+        // The RPX (0x0293ef50) adds -6.5 to x here; this port offsets the cursor per slot in
+        // fileSelectRevo instead (only the first slot is off its pane centre).
         mSelIcon2->setPos(pos.x, pos.y, mCpSelPane[field_0x026b]->getPanePtr(), true);
-        if (dusk::tphd_active()) {
-            mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
-        }
         mSelIcon2->setAlphaRate(1.0f);
 
         #if PLATFORM_WII || PLATFORM_SHIELD
@@ -2348,9 +2348,6 @@ void dFile_select_c::copyDataToSelectMoveAnm() {
 
             Vec pos = mCpSelPane[field_0x026b]->getGlobalVtxCenter(false, 0);
             mSelIcon2->setPos(pos.x, pos.y, mCpSelPane[field_0x026b]->getPanePtr(), true);
-            if (dusk::tphd_active()) {
-                mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
-            }
             mSelIcon2->setAlphaRate(1.0f);
         }
 
@@ -2479,9 +2476,7 @@ void dFile_select_c::yesnoMenuMoveAnmInitSet(int param_1, int param_2) {
             // to alpha 0; 0x0293e388 lights only the current one at the end of the slide (here
             // yesnoCursorShow). A previous yes / no left the other one lit.
             for (int i = 0; i < 2; i++) {
-                mYnSelPane_m[i]->setAlpha(0);
-                mYnSelPane_g[i]->setAlpha(0);
-                mYnSelPane_gr[i]->setAlpha(0);
+                tphdYesNoFrameAlpha(i, 0);
             }
         }
 #endif
@@ -2633,12 +2628,39 @@ bool dFile_select_c::yesnoSelectMoveAnm() {
     return rv;
 }
 
+#if TARGET_PC
+// Sets the frame / fill / glow panes of a Yes / No button. The colour animation (bpk) of the
+// Wii U layout writes the alpha of the fill (w_*_m, 250) again on every frame, which kept the
+// unselected button lit: it only stays on the lit button. The interpolated alpha animation is
+// stopped too.
+void dFile_select_c::tphdYesNoFrameAlpha(int i_no, u8 i_alpha) {
+    if (i_no < 0 || i_no > 1) {
+        return;
+    }
+    CPaneMgrAlpha* panes[3] = {mYnSelPane_m[i_no], mYnSelPane_g[i_no], mYnSelPane_gr[i_no]};
+    for (CPaneMgrAlpha* p : panes) {
+        p->getPanePtr()->setAnimation(i_alpha != 0 ? mYnSelBpk : (J2DAnmColor*)NULL);
+        p->alphaAnimeStart(0);
+        p->setAlpha(i_alpha);
+    }
+}
+#endif
+
 void dFile_select_c::yesnoCursorShow() {
     if (field_0x0268 != 0xff) {
         ((J2DTextBox*)mYnSelTxtPane[field_0x0268]->getPanePtr())->setWhite(JUtility::TColor(0xff, 0xff, 0xff, 0xff));
-        mYnSelPane_m[field_0x0268]->setAlpha(0xff);
-        mYnSelPane_g[field_0x0268]->setAlpha(0xff);
-        mYnSelPane_gr[field_0x0268]->setAlpha(0xff);
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // Only the current button lit (RPX 0x0293e388), the other one off.
+            tphdYesNoFrameAlpha(field_0x0268 ^ 1, 0);
+            tphdYesNoFrameAlpha(field_0x0268, 0xff);
+        } else
+#endif
+        {
+            mYnSelPane_m[field_0x0268]->setAlpha(0xff);
+            mYnSelPane_g[field_0x0268]->setAlpha(0xff);
+            mYnSelPane_gr[field_0x0268]->setAlpha(0xff);
+        }
 
         Vec pos = mYnSelPane[field_0x0268]->getGlobalVtxCenter(0, 0);
         mSelIcon->setPos(pos.x, pos.y, mYnSelPane[field_0x0268]->getPanePtr(), true);
@@ -2773,6 +2795,15 @@ void dFile_select_c::yesNoSelectStart() {
 
 void dFile_select_c::yesnoSelectAnmSet() {
     if (field_0x0269 != 0xff) {
+#if TARGET_PC
+        if (dusk::tphd_active()) {
+            // The bpk would keep the fill of the button being left at full alpha until the end of
+            // the move (then it snapped off): drop it so the fade below shows.
+            mYnSelPane_m[field_0x0269]->getPanePtr()->setAnimation((J2DAnmColor*)NULL);
+            mYnSelPane_g[field_0x0269]->getPanePtr()->setAnimation((J2DAnmColor*)NULL);
+            mYnSelPane_gr[field_0x0269]->getPanePtr()->setAnimation((J2DAnmColor*)NULL);
+        }
+#endif
         yesnoWakuAlpahAnmInit(field_0x0269, 0xff, 0, g_fsHIO.select_box_appear_frames);
         mYnSelPane[field_0x0269]->getPanePtr()->setAnimation(mYnSelBck);
         field_0x00f8[field_0x0269] = YnSelEndFrameTbl[field_0x0269];
@@ -3988,9 +4019,6 @@ void dFile_select_c::screenSetCopySel() {
 
     Vec center = mCpSelPane[0]->getGlobalVtxCenter(false, 0);
     mSelIcon2->setPos(center.x, center.y, mCpSelPane[0]->getPanePtr(), true);
-    if (dusk::tphd_active()) {
-        mSelIcon2->setTrackOffset(-6.5f, 0.0f);  // RPX 0x0293ef50
-    }
     mSelIcon2->setAlphaRate(0.0f);
 
     for (int i = 0; i < 2; i++) {
@@ -4623,48 +4651,24 @@ void dFile_select_c::fileSelectRevo() {
         }
     }
 
-    // Start / Erase / Copy: the RPX (menuCursorShow 0x02940540) puts the cursor on the centre of
-    // w_sta_n / w_del_n / w_cop_n (+0x39c, the same panes as here). The button art of w_del_n is
-    // not centred on its pane after the TPHD 3menu bck (the Erase cursor sat ~4 px high), so the
-    // cursor follows the centre of the drawn pictures instead. Estimate: the Wii U offset itself
-    // comes from bck tracks we cannot read reliably.
-    if (mSelIcon != NULL && mSelectMenuNum < 3 && m3mSelPane[mSelectMenuNum] != NULL &&
-        mSelIcon->getTrackPane() == m3mSelPane[mSelectMenuNum]->getPanePtr())
+    // Start / Erase / Copy: the cursor sits on the centre of w_sta_n / w_del_n / w_cop_n, as in
+    // the RPX (menuCursorShow 0x02940540) and as for the Yes / No buttons, which share the layout.
+    // Estimate (measured on screen): after the 3menu bck the Erase art sits ~1.45 units below
+    // the centre of its pane, so its cursor is moved down by that. The Wii U layout puts "Erase"
+    // on w_sta_n (right) and "Start" on w_del_n (middle).
+    if (mSelIcon != NULL && m3mSelPane[0] != NULL &&
+        mSelIcon->getTrackPane() == m3mSelPane[0]->getPanePtr())
     {
-        J2DPane* btn = m3mSelPane[mSelectMenuNum]->getPanePtr();
-        const Vec p0 = btn->getGlbVtx(0);
-        const Vec p3 = btn->getGlbVtx(3);
-        const f32 pcx = (p0.x + p3.x) * 0.5f;
-        const f32 pcy = (p0.y + p3.y) * 0.5f;
-        const f32 phw = std::fabs(p3.x - p0.x) * 0.5f;
-        const f32 phh = std::fabs(p3.y - p0.y) * 0.5f;
-        f32 minPx = 1e9f, maxPx = -1e9f, minPy = 1e9f, maxPy = -1e9f;
-        for (J2DPane* c = btn->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
-            if (c->getTypeID() != 18 || !c->isVisible() || c->getAlpha() == 0) {
-                continue;
-            }
-            const Vec v0 = c->getGlbVtx(0);
-            const Vec v3 = c->getGlbVtx(3);
-            // Only pictures drawn over the button: collapsed or hidden-by-animation pictures sit at
-            // the screen origin and pulled the cursor off the top of the screen.
-            const f32 cx = (v0.x + v3.x) * 0.5f;
-            const f32 cy = (v0.y + v3.y) * 0.5f;
-            if (std::fabs(v3.x - v0.x) < 1.0f || std::fabs(v3.y - v0.y) < 1.0f ||
-                std::fabs(cx - pcx) > phw || std::fabs(cy - pcy) > phh)
-            {
-                continue;
-            }
-            minPx = std::min(minPx, std::min(v0.x, v3.x));
-            maxPx = std::max(maxPx, std::max(v0.x, v3.x));
-            minPy = std::min(minPy, std::min(v0.y, v3.y));
-            maxPy = std::max(maxPy, std::max(v0.y, v3.y));
-        }
-        mSelIcon->setTrackOffset(0.0f, 0.0f);
-        if (maxPx > minPx && maxPy > minPy) {
-            const f32 dx = ((minPx + maxPx) - (p0.x + p3.x)) * 0.5f / sx;
-            const f32 dy = ((minPy + maxPy) - (p0.y + p3.y)) * 0.5f;
-            mSelIcon->setTrackOffset(dx, dy);
-        }
+        mSelIcon->setTrackOffset(0.0f, 1.45f);
+    }
+
+    // "Copy to where?": estimate (measured on screen): the drawn box of the first slot is ~4.4
+    // units left of the centre of w_sel_01 (the second slot is centred on w_sel_02). The RPX
+    // (0x0293ef50) moves the cursor of both slots -6.5 units instead.
+    if (mSelIcon2 != NULL && mCpSelPane[0] != NULL &&
+        mSelIcon2->getTrackPane() == mCpSelPane[0]->getPanePtr())
+    {
+        mSelIcon2->setTrackOffset(-4.4f / sx, 0.0f);
     }
 }
 

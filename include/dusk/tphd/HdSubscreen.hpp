@@ -3,6 +3,7 @@
 #include "JSystem/J2DGraph/J2DScreen.h"
 #include "JSystem/J2DGraph/J2DTextBox.h"
 #include "JSystem/J2DGraph/J2DPicture.h"
+#include "JSystem/J2DGraph/J2DOrthoGraph.h"
 #include "m_Do/m_Do_graphic.h"
 #include "d/d_meter2_info.h"
 #include "d/d_pane_class.h"
@@ -375,25 +376,61 @@ inline Vec mgrDrawnCenter(CPaneMgr* m) {
 // scaled uniformly about the centre of the box (all of them by the same pivot, so split
 // backgrounds stay joined) until it covers the canvas. Uses last frame's global matrices, so call
 // it every frame before drawing.
+// Panes scaled by fillCanvasBackgrounds: our factor, the scale we set and the pane's own pivot.
+struct CanvasFill {
+    f32 k;
+    f32 sx;
+    f32 sy;
+    f32 rotOffsetX;
+    f32 rotOffsetY;
+};
+inline std::unordered_map<J2DPane*, CanvasFill>& canvasFillPanes() {
+    static std::unordered_map<J2DPane*, CanvasFill> s_fill;
+    return s_fill;
+}
+
+// Call when the screens fillCanvasBackgrounds worked on are deleted: a screen created again (the
+// file select after a reset) reuses the addresses of the old panes.
+inline void clearCanvasBackgrounds() {
+    canvasFillPanes().clear();
+}
+
 inline void fillCanvasBackgrounds(J2DPane* pane) {
     if (pane == NULL || !pane->isVisible()) return;
     // Factor applied last frame. Backgrounds may be animated (the save menu ones slide in), so
     // nothing else is cached: the rectangle without our factor is recovered from the drawn one.
-    static std::unordered_map<J2DPane*, f32> s_fill;
+    // An entry only counts while the pane still has the scale we set (an animation can overwrite
+    // it); when we stop scaling a pane its own pivot comes back. The first frame of a new screen
+    // reads global matrices that were never computed (left-overs of the previous screen): a pivot
+    // taken from them, never restored, made the right half of the file select background NaN.
+    auto& fills = canvasFillPanes();
     const u16 type = pane->getTypeID();
     if ((type == 18 || type == 17) && pane->getAlpha() != 0 && pane->getRotateZ() == 0.0f) {
         const f32 bx = (revoMinX() + revoMaxX()) * 0.5f;
         const f32 by = 224.0f;
-        const auto it = s_fill.find(pane);
-        const f32 kPrev = it != s_fill.end() ? it->second : 1.0f;
+        auto it = fills.find(pane);
+        f32 kPrev = it != fills.end() ? it->second.k : 1.0f;
+        if (it != fills.end() &&
+            (pane->getScaleX() != it->second.sx || pane->getScaleY() != it->second.sy))
+        {
+            pane->mRotateOffsetX = it->second.rotOffsetX;
+            pane->mRotateOffsetY = it->second.rotOffsetY;
+            fills.erase(it);
+            it = fills.end();
+            kPrev = 1.0f;
+        }
         const Vec a = pane->getGlbVtx(0);
         const Vec b = pane->getGlbVtx(3);
+        const bool finite = std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(b.x) &&
+                            std::isfinite(b.y);
         // Scaling about the box centre: drawn = centre + k * (unscaled - centre).
         const f32 x0 = bx + (std::min(a.x, b.x) - bx) / kPrev;
         const f32 x1 = bx + (std::max(a.x, b.x) - bx) / kPrev;
         const f32 y0 = by + (std::min(a.y, b.y) - by) / kPrev;
         const f32 y1 = by + (std::max(a.y, b.y) - by) / kPrev;
-        if (x1 - x0 >= revoWidth() * 0.97f && y1 - y0 >= 448.0f * 0.9f) {
+        if (finite && x1 - x0 >= revoWidth() * 0.97f && y1 - y0 >= 448.0f * 0.9f &&
+            x1 - x0 <= revoWidth() * 4.0f && y1 - y0 <= 448.0f * 4.0f)
+        {
             Mtx inv;
             if (MTXInverse(pane->getGlbMtx(), inv) != 0) {
                 f32 k = 1.0f;
@@ -408,23 +445,40 @@ inline void fillCanvasBackgrounds(J2DPane* pane) {
                 Vec g = {bx, by, 0.0f};
                 Vec l;
                 MTXMultVec(inv, &g, &l);
-                const f32 baseSx = pane->getScaleX() / kPrev;
-                const f32 baseSy = pane->getScaleY() / kPrev;
-                pane->mRotateOffsetX = l.x - pane->mBounds.i.x;
-                pane->mRotateOffsetY = l.y - pane->mBounds.i.y;
-                pane->scale(baseSx * k, baseSy * k);
-                s_fill[pane] = k;
-                return;
+                if (std::isfinite(l.x) && std::isfinite(l.y) && std::isfinite(k)) {
+                    const f32 rx = it != fills.end() ? it->second.rotOffsetX : pane->mRotateOffsetX;
+                    const f32 ry = it != fills.end() ? it->second.rotOffsetY : pane->mRotateOffsetY;
+                    const f32 baseSx = pane->getScaleX() / kPrev;
+                    const f32 baseSy = pane->getScaleY() / kPrev;
+                    pane->mRotateOffsetX = l.x - pane->mBounds.i.x;
+                    pane->mRotateOffsetY = l.y - pane->mBounds.i.y;
+                    pane->scale(baseSx * k, baseSy * k);
+                    fills[pane] = {k, pane->getScaleX(), pane->getScaleY(), rx, ry};
+                    return;
+                }
             }
         }
-        if (it != s_fill.end()) {
+        if (it != fills.end()) {
             pane->scale(pane->getScaleX() / kPrev, pane->getScaleY() / kPrev);
-            s_fill.erase(it);
+            pane->mRotateOffsetX = it->second.rotOffsetX;
+            pane->mRotateOffsetY = it->second.rotOffsetY;
+            fills.erase(it);
         }
     }
     for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
         fillCanvasBackgrounds(c);
     }
+}
+
+// Solid box in canvas units through the current 2D graf port. J2DFillBox / fillBox only set the
+// position format and keep the vertex descriptor of whatever was drawn before: when that was not
+// position + colour the vertices no longer matched it and the GX stream went out of step (the
+// save menu crashed on its first frame, "unsupported primitive type"). setup2D sets it first.
+inline void fillCanvasBox(f32 x, f32 y, f32 w, f32 h, JUtility::TColor color) {
+    J2DOrthoGraph* port = static_cast<J2DOrthoGraph*>(dComIfGp_getCurrentGrafPort());
+    port->setup2D();
+    port->setColor(color);
+    port->fillBox(JGeometry::TBox2<f32>(x, y, x + w, y + h));
 }
 
 // Centre of a pane in global (drawn) coordinates (pane drawn this frame).

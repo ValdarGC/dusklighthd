@@ -1965,15 +1965,50 @@ int dSv_info_c::card_to_memory(char* i_cardPtr, int i_dataNum) {
 
 #if TARGET_PC
     if (dusk::tphd_active()) {
-        // GC save backwards-compatibility: if the player already talked to Jovani after collecting
-        // 20+ Poe souls (event bit 0x2B6) or 60 souls (0x1CA), but does not have the Ghost Lantern
-        // in SLOT_7, grant it automatically upon loading.
+        // GC save backwards-compatibility: if the player already got Jovani's 20 Poe souls reward
+        // (event bit 0x2B6) or 60 souls (0x1CA), but does not have the Ghost Lantern in SLOT_7,
+        // grant it automatically upon loading. (The Wii U Jovani flow, zel_04.bmg, gives the bottle
+        // and then the Ghost Lantern before setting 0x2B6.)
         if (dComIfGs_getItem(SLOT_7, true) == dItemNo_NONE_e) {
             if (dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x2B6]) ||
                 dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[0x1CA]))
             {
                 dComIfGs_setItem(SLOT_7, dItemNo_GHOST_KANTERA_e);
                 dComIfGs_onItemFirstBit(dItemNo_GHOST_KANTERA_e);
+            }
+        }
+
+        // GC save backwards-compatibility: 39 of the Wii U stamp chests are GC chests with a stamp
+        // instead of rupees (same stage save table and tbox number, compared in the stage data of
+        // both versions). A chest already opened in a GC game would stay empty: grant its stamp.
+        // The other 7 stamp chests are new (tbox numbers no GC chest uses).
+        static const struct {
+            u8 saveTbl;
+            u8 tboxNo;
+            u8 stampNo;
+        } kGcStampChests[] = {
+            {16, 26, 0},  {20, 1, 1},   {27, 6, 2},   {19, 30, 3},  {6, 4, 4},    {6, 7, 5},
+            {22, 25, 6},  {17, 21, 7},  {26, 14, 9},  {18, 16, 10}, {21, 46, 11}, {27, 4, 12},
+            {16, 1, 13},  {25, 61, 14}, {27, 19, 15}, {20, 23, 16}, {10, 7, 17},  {27, 5, 18},
+            {21, 47, 19}, {17, 14, 20}, {6, 13, 21},  {4, 5, 22},   {7, 2, 23},   {18, 11, 24},
+            {22, 12, 25}, {26, 13, 27}, {26, 61, 28}, {27, 7, 30},  {27, 0, 31},  {27, 16, 32},
+            {23, 25, 36}, {27, 14, 37}, {19, 3, 38},  {22, 22, 39}, {24, 16, 40}, {24, 11, 42},
+            {6, 14, 43},  {23, 29, 44}, {4, 2, 47},
+        };
+        bool stampAdded = false;
+        for (const auto& c : kGcStampChests) {
+            if (!dComIfGs_isStamp(c.stampNo) && savedata->getSave(c.saveTbl).getBit().isTbox(c.tboxNo)) {
+                dComIfGs_onStamp(c.stampNo, 1);
+                stampAdded = true;
+            }
+        }
+        if (stampAdded) {
+            int num = 0;
+            for (int i = 0; i < 49; i++) {
+                num += dComIfGs_isStamp(i) ? 1 : 0;
+            }
+            if (num >= 49) {
+                dComIfGs_onStamp(49, 1);  // the 50th stamp, as item_func_STAMP_n gives it
             }
         }
     }

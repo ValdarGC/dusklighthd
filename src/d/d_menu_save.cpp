@@ -3323,7 +3323,7 @@ void dDlst_MenuSave_c::draw() {
 #if TARGET_PC
     if (dusk::tphd_active()) {
         // The Wii U save select fills its 16:9 box; the window margins around it stay black.
-        J2DFillBox(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(), mDoGph_gInf_c::getWidthF(),
+        dusk::tphd::fillCanvasBox(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(), mDoGph_gInf_c::getWidthF(),
                    mDoGph_gInf_c::getHeightF(), JUtility::TColor(0, 0, 0, 255));
     }
 #endif

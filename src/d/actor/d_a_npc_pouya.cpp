@@ -957,11 +957,6 @@ int daNpc_Pouya_c::cutHaveFavorToAsk(int param_0) {
                 field_0xfce = 0;
                 switch (evt_id) {
                 case 1:
-#if TARGET_PC
-                    if (dusk::tphd_active() && !daNpcT_chkEvtBit(0x2B6) && dComIfGs_getPohSpiritNum() >= 20) {
-                        local_64 = dItemNo_GHOST_KANTERA_e;
-                    }
-#endif
                     if (mItemPartnerId == fpcM_ERROR_PROCESS_ID_e) {
 #if TARGET_PC
                         const char* itemCheckName = nullptr;
@@ -1153,11 +1148,6 @@ int daNpc_Pouya_c::talk(void* param_0) {
                     field_0xfce = 0;
                     switch (evt_id) {
                     case 1:
-#if TARGET_PC
-                        if (dusk::tphd_active() && !daNpcT_chkEvtBit(0x2B6) && dComIfGs_getPohSpiritNum() >= 20) {
-                            local_18 = dItemNo_GHOST_KANTERA_e;
-                        }
-#endif
                         if (mItemPartnerId == fpcM_ERROR_PROCESS_ID_e) {
                             mItemPartnerId = fopAcM_createItemForPresentDemo(&current.pos, local_18,
                                                                              0, -1, -1, 0, 0);
