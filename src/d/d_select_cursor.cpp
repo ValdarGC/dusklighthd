@@ -597,7 +597,7 @@ void dSelect_cursor_c::update() {
 void dSelect_cursor_c::setPosShopPc(f32 i_posX, f32 i_posY) {
     if (dusk::tphd_active()) {
         const f32 sx = dusk::tphd::subscreenScaleX();
-        const f32 minX = mDoGph_gInf_c::getMinXF();
+        const f32 minX = dusk::tphd::revoMinX();
         mPositionX = (i_posX - minX) / sx;
         mPositionY = i_posY;
         setDrawStretch(sx, minX);

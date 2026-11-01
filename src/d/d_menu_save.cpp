@@ -3393,10 +3393,11 @@ void dMenu_save_c::tphdSaveScreenSet() {
 void dMenu_save_c::menuSaveRevo() {
     const f32 sx = dusk::tphd::subscreenScaleX();
     const f32 invSx = dusk::tphd::wiiuTvN43();
-    const f32 minX = mDoGph_gInf_c::getMinXF();
+    const f32 minX = dusk::tphd::revoMinX();
     mSaveSel.Scr->scale(sx, 1.0f);
     mSaveSel.Scr->translate(minX, 0.0f);
     dusk::tphd::applyN43(mSaveSel.Scr, invSx, false, true);
+    dusk::tphd::fillCanvasBackgrounds(mSaveSel.Scr);
     if (J2DPane* p = mSaveSel.Scr->search(MULTI_CHAR('w_sel_03'))) {
         p->hide();
     }
@@ -3456,7 +3457,7 @@ void dMenu_save_c::menuSaveRevo() {
         const Vec v0 = exitArt->getGlbVtx(0);
         const Vec v3 = exitArt->getGlbVtx(3);
         const f32 drawnCentre = (v0.x + v3.x) * 0.5f;
-        const f32 target = mDoGph_gInf_c::getMinXF() + 304.0f * sx;
+        const f32 target = dusk::tphd::revoMinX() + 304.0f * sx;
         if (v3.x > v0.x && std::fabs(drawnCentre - target) > 0.01f) {
             exitBtn->translate(exitBtn->getTranslateX() + (target - drawnCentre) / sx,
                                exitBtn->getTranslateY());

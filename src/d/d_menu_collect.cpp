@@ -47,6 +47,7 @@
 #include "dusk/utilities.hpp"
 #include "dusk/settings.h"
 #include "dusk/logging.h"
+#include "dusk/tphd/RevoCanvas.hpp"
 
 extern JKRArchive* g_tphdCollectRevoArchive;
 extern JKRArchive* g_tphdMain2DRevoArchive;
@@ -62,7 +63,7 @@ bool collectRevo() {
 }
 
 f32 collectRevoScaleX() {
-    return (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+    return dusk::tphd::revoWidth() / 608.0f;
 }
 
 J2DTextBox* collectIconText(J2DScreen* scr, u64 tag) {
@@ -3086,7 +3087,7 @@ void dMenu_Collect2D_c::_draw() {
             }
         }
         mpScreen->scale(collectRevoScaleX(), 1.0f);
-        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, grafPort);
+        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, grafPort);
     } else {
         mpScreen->draw(0.0f, 0.0f, grafPort);
     }
@@ -3190,7 +3191,7 @@ void dMenu_Collect2D_c::_draw() {
         // RPX 0x029b2748: the cursor sits at the cell centre + (-1.75, -1.5) on the 608-unit
         // canvas, and its screen is stretched like the collection screen.
         const f32 sx = collectRevoScaleX();
-        const f32 minX = mDoGph_gInf_c::getMinXF();
+        const f32 minX = dusk::tphd::revoMinX();
         // The offset is applied before the un-stretch (Wii U setPos 0x02aad0ec maps the
         // stretched x back), so it is -1.75 drawn units.
         const f32 cx = ((a.x + b.x) * 0.5f - 1.75f - minX) / sx;
@@ -3898,8 +3899,10 @@ void dMenu_Collect3D_c::toItem3Dpos(f32 param_0, f32 param_1, f32 param_2, cXyz*
 #if TARGET_PC
     if (collectRevo()) {
         // TPHD 0x029ba760: unstretched 608 x 448 canvas, aspect 608 / 448 (= 1.35714).
-        const f32 nx = 2.0f * (param_0 / 608.0f) - 1.0f;
-        const f32 ny = 2.0f * (param_1 / 448.0f) - 1.0f;
+        // The layout fills the 16:9 box of the canvas (RevoCanvas.hpp), not the whole window.
+        const f32 nx = (2.0f * (param_0 / 608.0f) - 1.0f) * dusk::tphd::revoWidth() /
+                       mDoGph_gInf_c::getWidthF();
+        const f32 ny = (2.0f * (param_1 / 448.0f) - 1.0f) * 448.0f / mDoGph_gInf_c::getHeightF();
         calcViewMtx(adStack_98);
         MTXInverse(adStack_98, auStack_c8);
         const f32 t = tan(0.39269909262657166);
@@ -3996,7 +3999,7 @@ void dMenu_Collect2DTop_c::draw() {
                 p->scale(1.0f / sx, 1.0f);
             }
             icon->scale(sx, 1.0f);
-            icon->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_port);
+            icon->draw(dusk::tphd::revoMinX(), 0.0f, graf_port);
         } else {
             mpCollect2D->getIconScreen()->draw(0.0f, 0.0f, graf_port);
         }

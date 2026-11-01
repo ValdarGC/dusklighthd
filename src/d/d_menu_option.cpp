@@ -3721,7 +3721,7 @@ void dMenu_Option_c::_drawRevo() {
         const f32 sx = dusk::tphd::subscreenScaleX();
         const Vec c = dusk::tphd::paneGlobalCenter(row->mpBttn0);
         mpDrawCursor->setPosRevo(c.x - 1.0f, c.y, row->mpBttn0, false, sx,
-                                 mDoGph_gInf_c::getMinXF());
+                                 dusk::tphd::revoMinX());
         mpDrawCursor->draw();
     }
 

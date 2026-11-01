@@ -585,6 +585,24 @@ void mDoGph_gInf_c::setTvSize() {
     m_maxXF = m_maxX;
     m_maxYF = m_maxY;
 
+#if TARGET_PC
+    // TPHD mode: the Wii U UI is laid out on a 16:9 TV. On windows narrower than 16:9 the 2D
+    // canvas keeps the 16:9 width and grows in height instead (same aspect as the window), so the
+    // UI keeps its proportions in the middle and only backgrounds reach the top / bottom edges.
+    if (dusk::tphd_active() && mWide) {
+        constexpr f32 kTvWidth = FB_HEIGHT_BASE * 16.0f / 9.0f;
+        if (m_widthF < kTvWidth) {
+            const f32 height = m_heightF * kTvWidth / m_widthF;
+            m_widthF = kTvWidth;
+            m_heightF = height;
+            m_minXF = (FB_WIDTH_BASE - kTvWidth) * 0.5f;
+            m_maxXF = m_minXF + kTvWidth;
+            m_minYF = (FB_HEIGHT_BASE - height) * 0.5f;
+            m_maxYF = m_minYF + height;
+        }
+    }
+#endif
+
     m_aspect = m_widthF / m_heightF;
     m_scale = m_aspect / 1.3571428f;
     m_invScale = 1.0f / m_scale;

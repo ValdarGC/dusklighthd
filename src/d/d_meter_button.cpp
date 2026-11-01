@@ -54,6 +54,7 @@ bool advance_repeat_hit(f32& frame, u8& cycle, f32 period, f32& elapsedFrames) {
 #include "dusk/settings.h"
 #include "dusk/logging.h"
 #include "m_Do/m_Do_graphic.h"
+#include "dusk/tphd/RevoCanvas.hpp"
 
 // ---- TPHD (Wii U TV) interaction prompt --------------------------------------------------------
 // TPHD dMeterButton_c uses /res/LayoutRevo/buttonR.arc -> zelda_game_image_button_info_revo.blo
@@ -132,7 +133,7 @@ void btnApplyRevoHio() {
 }
 
 f32 btnRevoScaleX() {
-    return (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+    return dusk::tphd::revoWidth() / 608.0f;
 }
 }  // namespace
 #define BTN_SEARCH(scr, tag) btnSearch(scr, tag)
@@ -397,7 +398,7 @@ void dMeterButton_c::draw() {
         const f32 keepX = info->getScaleX();
         info->scale(keepX / sx, info->getScaleY());
         mpButtonScreen->scale(sx, 1.0f);
-        mpButtonScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_ctx);
+        mpButtonScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
         info->scale(keepX, info->getScaleY());
         mpButtonScreen->scale(1.0f, 1.0f);
     } else {

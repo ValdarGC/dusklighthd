@@ -17,6 +17,9 @@
 #include <map>
 #include <array>
 #include <filesystem>
+#include "dusk/tphd/RevoCanvas.hpp"
+#include <cmath>
+#include <unordered_map>
 
 namespace dusk::tphd {
 
@@ -197,8 +200,9 @@ inline bool getWiiUMsgString(u32 stringId, char* outBuf, size_t outSize) {
     return true;
 }
 
+// Stretch of a 608-wide Revo layout over the 16:9 box of the canvas (RevoCanvas.hpp).
 inline f32 subscreenScaleX() {
-    return (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+    return revoWidth() / 608.0f;
 }
 
 struct IconInitPos {
@@ -297,7 +301,7 @@ inline void drawRevoIconScreen(J2DScreen* icon, J2DGrafContext* graf_port) {
         p->scale(1.0f / sx, 1.0f);
     }
     icon->scale(sx, 1.0f);
-    icon->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_port);
+    icon->draw(revoMinX(), 0.0f, graf_port);
 }
 
 inline bool isN43Tag(u64 tag) {
@@ -350,7 +354,7 @@ inline void drawRevoScreen(J2DScreen* scr, J2DGrafContext* graf, f32 i_offsetX =
     const f32 sx = subscreenScaleX();
     applyN43(scr, i_wiiuPivot ? wiiuTvN43() : 1.0f / sx, false, i_wiiuPivot);
     scr->scale(sx, 1.0f);
-    scr->draw(mDoGph_gInf_c::getMinXF() + i_offsetX * sx, i_offsetY, graf);
+    scr->draw(revoMinX() + i_offsetX * sx, i_offsetY, graf);
 }
 
 // Centre of a CPaneMgr pane where it is drawn by drawRevoScreen: CPaneMgr::getGlobalVtxCenter
@@ -360,8 +364,56 @@ inline Vec mgrDrawnCenter(CPaneMgr* m) {
     Vec c = {0.0f, 0.0f, 0.0f};
     if (m == NULL || m->getPanePtr() == NULL) return c;
     c = m->getGlobalVtxCenter(m->getPanePtr(), false, 0);
-    c.x += mDoGph_gInf_c::getMinXF();
+    c.x += revoMinX();
     return c;
+}
+
+// Menu backgrounds of a Revo screen reach the whole window while the rest of the screen stays in
+// the 16:9 box (RevoCanvas.hpp): every picture / window that covers the whole drawn layout is
+// scaled about its centre until it covers the canvas. Uses last frame's global vertices, so call it
+// every frame before drawing. Panes are told apart by size, so no tag list is needed per screen.
+inline void fillCanvasBackgrounds(J2DPane* pane) {
+    if (pane == NULL) return;
+    struct Fill {
+        f32 sx, sy, k, ky;
+    };
+    static std::unordered_map<J2DPane*, Fill> s_fill;
+    const u16 type = pane->getTypeID();
+    if (type == 18 || type == 17) {  // picture / window
+        const Vec a = pane->getGlbVtx(0);
+        const Vec b = pane->getGlbVtx(3);
+        auto it = s_fill.find(pane);
+        const f32 curK = it != s_fill.end() ? it->second.k : 1.0f;
+        const f32 curKy = it != s_fill.end() ? it->second.ky : 1.0f;
+        const f32 w = std::fabs(b.x - a.x) / curK;   // drawn size without our scale
+        const f32 h = std::fabs(b.y - a.y) / curKy;
+        const f32 cx = (a.x + b.x) * 0.5f;
+        const f32 cy = (a.y + b.y) * 0.5f;
+        if (w >= revoWidth() * 0.97f && h >= 448.0f * 0.9f) {
+            const f32 canvasMinX = mDoGph_gInf_c::getMinXF();
+            const f32 canvasMaxX = mDoGph_gInf_c::getMaxXF();
+            const f32 canvasMinY = mDoGph_gInf_c::getMinYF();
+            const f32 canvasMaxY = mDoGph_gInf_c::getMaxYF();
+            const f32 needX = std::max(cx - canvasMinX, canvasMaxX - cx) * 2.0f;
+            const f32 needY = std::max(cy - canvasMinY, canvasMaxY - cy) * 2.0f;
+            const f32 k = std::max(1.0f, needX / std::max(w, 1.0f));
+            const f32 ky = std::max(1.0f, needY / std::max(h, 1.0f));
+            if (it == s_fill.end()) {
+                it = s_fill.emplace(pane, Fill{pane->getScaleX(), pane->getScaleY(), 1.0f, 1.0f}).first;
+            }
+            if (pane->getRotateZ() == 0.0f) {
+                pane->mRotateOffsetX = (pane->mBounds.i.x + pane->mBounds.f.x) * 0.5f;
+                pane->mRotateOffsetY = (pane->mBounds.i.y + pane->mBounds.f.y) * 0.5f;
+            }
+            pane->scale(it->second.sx * k, it->second.sy * ky);
+            it->second.k = k;
+            it->second.ky = ky;
+            return;
+        }
+    }
+    for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {
+        fillCanvasBackgrounds(c);
+    }
 }
 
 // Centre of a pane in global (drawn) coordinates (pane drawn this frame).

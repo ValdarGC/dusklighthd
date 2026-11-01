@@ -1108,7 +1108,7 @@ void dMenu_Skill_c::hdDraw() {
         J2DPane* pane = mpLetterParent[mIndex]->getPanePtr();
         const Vec c = dusk::tphd::mgrDrawnCenter(mpLetterParent[mIndex]);
         mpDrawCursor->setPosRevo(c.x, c.y, pane, false, dusk::tphd::subscreenScaleX(),
-                                 mDoGph_gInf_c::getMinXF());
+                                 dusk::tphd::revoMinX());
     }
     mpDrawCursor->draw();
 

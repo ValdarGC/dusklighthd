@@ -439,7 +439,7 @@ void dMsgScrnTalk_c::draw() {
         }
         const f32 sx = dusk::tphd::subscreenScaleX();
         mpScreen->scale(sx, 1.0f);
-        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, ctx);
+        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, ctx);
     } else {
         mpScreen->draw(0.0f, 0.0f, ctx);
     }

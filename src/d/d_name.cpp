@@ -16,6 +16,7 @@
 #include "dusk/interp/user_interface.h"
 #include "dusk/utilities.hpp"
 #include "dusk/version.hpp"
+#include "dusk/menu_pointer.h"
 #include "dusk/settings.h"
 #include "dusk/tphd/HdSubscreen.hpp"
 
@@ -506,7 +507,106 @@ void dName_c::cursorAnm() {
 
 void dName_c::Wait() {}
 
+#if TARGET_PC
+// Mouse / touch: hovering a letter or a button moves the cursor there with the same animations as
+// the stick, a click on the hovered one acts like A. Panes are hit where they are drawn
+// (menu_pointer::hit_pane), so this follows the file select stretch and the 16:9 box.
+bool dName_c::pointerSelect() {
+    dusk::menu_pointer::begin_context(dusk::menu_pointer::Context::FileSelect);
+    const auto& pointer = dusk::menu_pointer::state();
+    if (!pointer.valid) {
+        return false;
+    }
+    int letter = -1;
+    for (int i = 0; i < 65; i++) {
+        if (mMojiIcon[i] != NULL && dusk::menu_pointer::hit_pane(mMojiIcon[i], 3.0f)) {
+            letter = i;
+            break;
+        }
+    }
+    int menu = -1;
+    if (letter < 0) {
+        for (u8 m = MENU_HIRA; m <= MENU_END; m++) {
+            const s32 idx = getMenuPosIdx(m);
+            if (idx >= 0 && idx < 4 && mMenuIcon[idx] != NULL &&
+                mMenuIcon[idx]->getPanePtr()->isVisible() &&
+                dusk::menu_pointer::hit_pane(mMenuIcon[idx], 3.0f))
+            {
+                menu = m;
+                break;
+            }
+        }
+    }
+    if (letter < 0 && menu < 0) {
+        return false;
+    }
+    dusk::menu_pointer::set_hover_target(
+        static_cast<dusk::menu_pointer::TargetId>(letter >= 0 ? letter : 100 + menu));
+    const bool onMenu = mSelProc == PROC_MENU_SELECT;
+    if (letter >= 0) {
+        const u8 col = static_cast<u8>(letter / 5);
+        const u8 row = static_cast<u8>(letter % 5);
+        if (!onMenu && col == mCharColumn && row == mCharRow) {
+            if (dusk::menu_pointer::consume_click()) {
+                selectMojiSet();
+                return true;
+            }
+            return false;
+        }
+        mDoAud_seStart(Z2SE_SY_NAME_CURSOR, 0, 0, 0);
+        if (onMenu) {
+            mPrevSelMenu = mSelMenu;
+            selectCursorPosSet(row);
+            mCharColumn = col;
+            mCharRow = row;
+            MenuSelectAnmInit();
+            mSelProc = PROC_MENU_SEL_ANM2;
+        } else {
+            mPrevColumn = mCharColumn;
+            mPrevRow = mCharRow;
+            mCharColumn = col;
+            mCharRow = row;
+            MojiSelectAnmInit();
+            mSelProc = PROC_MOJI_SEL_ANM;
+        }
+        return true;
+    }
+    if (onMenu && menu == mSelMenu) {
+        if (dusk::menu_pointer::consume_click()) {
+            if (mSelMenu == EIGO_OR_END) {
+                mDoAud_seStart(nameCheck() != 0 ? Z2SE_SY_NAME_OK : Z2SE_SYS_ERROR, NULL, 0, 0);
+            } else {
+                mDoAud_seStart(Z2SE_SY_CURSOR_OK, NULL, 0, 0);
+            }
+            menuAbtnSelect();
+            return true;
+        }
+        return false;
+    }
+    mDoAud_seStart(Z2SE_SY_CURSOR_OPTION, NULL, 0, 0);
+    if (onMenu) {
+        mPrevSelMenu = mSelMenu;
+        mSelMenu = static_cast<u8>(menu);
+        MenuSelectAnmInit();
+        mSelProc = PROC_MENU_SEL_ANM;
+    } else {
+        mPrevColumn = mCharColumn;
+        mPrevRow = mCharRow;
+        MojiSelectAnmInit();
+        menuCursorPosSet();
+        mSelMenu = static_cast<u8>(menu);
+        mSelProc = PROC_MOJI_SEL_ANM2;
+    }
+    return true;
+}
+#endif
+
 void dName_c::MojiSelect() {
+#if TARGET_PC
+    if (pointerSelect()) {
+        return;
+    }
+#endif
     if (mDoCPd_c::getTrigA(PAD_1)) {
         selectMojiSet();
     } else if (stick->checkRightTrigger()) {
@@ -1170,6 +1270,11 @@ void dName_c::menuCursorPosSet() {
 }
 
 void dName_c::MenuSelect() {
+#if TARGET_PC
+    if (pointerSelect()) {
+        return;
+    }
+#endif
     #if TARGET_PC || REGION_PAL || REGION_JPN
     if (isPalOrJpn() && stick->checkRightTrigger()) {
         mDoAud_seStart(Z2SE_SY_CURSOR_OPTION, NULL, 0, 0);
@@ -1616,7 +1721,7 @@ void dName_c::nameWide() {
         }
         if (mSelIcon) {
             mSelIcon->refreshAspectScale(1.0f);
-            mSelIcon->setRevoTrack(dusk::tphd::subscreenScaleX(), mDoGph_gInf_c::getMinXF());
+            mSelIcon->setRevoTrack(dusk::tphd::subscreenScaleX(), dusk::tphd::revoMinX());
         }
         return;
     }

@@ -26,6 +26,7 @@
 #include "JSystem/JKernel/JKRArchive.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "d/d_com_inf_game.h"
+#include "dusk/menu_pointer.h"
 #include "d/d_kantera_icon_meter.h"
 #include "d/d_lib.h"
 #include "d/d_meter2.h"
@@ -46,6 +47,7 @@
 #include <cstring>
 #include <filesystem>
 #include "dusk/main.h"
+#include "dusk/tphd/RevoCanvas.hpp"
 
 extern JKRArchive* g_tphdRingRevoArchive;
 extern JKRArchive* g_tphdFishRevoArchive;
@@ -437,6 +439,9 @@ void dMenu_Ring_c::hdMove() {
         return;
     }
     mStatus = STATUS_WAIT;
+    if (hdPointer()) {
+        return;
+    }
     mpStick->checkTrigger();
     int c = mHdCursor;
     const int col = c % 7;
@@ -465,6 +470,57 @@ void dMenu_Ring_c::hdMove() {
     hdSyncCursor();
 }
 
+// Mouse / touch on the Wii U grid: hovering a cell moves the cursor there, a click on the hovered
+// item opens its explanation (like A). Cells are hit where they were drawn (menu_pointer).
+bool dMenu_Ring_c::hdPointer() {
+    dusk::menu_pointer::begin_context(dusk::menu_pointer::Context::ItemWheel);
+    const auto& pointer = dusk::menu_pointer::state();
+    if (!pointer.valid || mpHdScreen == NULL) {
+        return false;
+    }
+    int hovered = -1;
+    for (int c = 0; c < kCells; c++) {
+        J2DPane* fr = findCell(mpHdScreen, "Frame%02d", c);
+        if (fr != NULL && dusk::menu_pointer::hit_pane(fr, 2.0f)) {
+            hovered = c;
+            break;
+        }
+    }
+    if (hovered < 0) {
+        return false;
+    }
+    if (pointer.pressed) {
+        mPointerTouchPressHoveredCurrent = pointer.touch && hovered == mHdCursor;
+    }
+    dusk::menu_pointer::set_hover_target(static_cast<dusk::menu_pointer::TargetId>(hovered));
+    if (hovered != mHdCursor) {
+        mHdCursor = hovered;
+        Z2GetAudioMgr()->seStart(Z2SE_ITEM_RING_ROLL, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        hdSyncCursor();
+        return true;
+    }
+    const bool clickOpensExplain = !pointer.touch || mPointerTouchPressHoveredCurrent;
+    if (clickOpensExplain && dusk::menu_pointer::consume_click()) {
+        hdSyncCursor();
+        const u8 item = mHdEmpty ? (u8)dItemNo_NONE_e : dComIfGs_getItem(mItemSlots[mCurrentSlot], false);
+        if (item != dItemNo_NONE_e && !dMeter2Info_isTouchKeyCheck(0xe) && openExplain(item)) {
+            dMeter2Info_setItemExplainWindowStatus(1);
+            field_0x6c4 = mCurrentSlot;
+            setStatus(STATUS_EXPLAIN);
+            dMeter2Info_set2DVibration();
+            setDoStatus(0);
+        } else {
+            Z2GetAudioMgr()->seStart(Z2SE_SYS_ERROR, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
+        }
+        mPointerTouchPressHoveredCurrent = false;
+        return true;
+    }
+    if (pointer.released) {
+        mPointerTouchPressHoveredCurrent = false;
+    }
+    return false;
+}
+
 void dMenu_Ring_c::hdDraw() {
     J2DScreen* scr = mpHdScreen;
     menuCfgLoad();
@@ -486,8 +542,9 @@ void dMenu_Ring_c::hdDraw() {
     setSelectItemForce(2);
     g_tphdItemExplainOpen = mpItemExplain->getStatus() != 0;
     J2DGrafContext* graf = dComIfGp_getCurrentGrafPort();
-    const f32 minX = mDoGph_gInf_c::getMinXF();
-    const f32 maxX = mDoGph_gInf_c::getMaxXF();
+    // 16:9 box of the canvas (RevoCanvas.hpp).
+    const f32 minX = dusk::tphd::revoMinX();
+    const f32 maxX = dusk::tphd::revoMaxX();
     scr->scale((maxX - minX) / kScreenW, 1.0f);
 
     if (J2DPane* all = scr->search(tag8("n_all"))) {

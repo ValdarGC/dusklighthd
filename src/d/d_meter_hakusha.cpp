@@ -20,6 +20,7 @@
 #include "dusk/settings.h"
 #include "JSystem/JKernel/JKRArchive.h"
 #include "m_Do/m_Do_graphic.h"
+#include "dusk/tphd/RevoCanvas.hpp"
 extern JKRArchive* g_tphdMain2DRevoArchive;
 bool dMeter2Draw_isHdRevoHud();
 
@@ -302,7 +303,7 @@ void dMeterHakusha_c::updateHakusha() {
     f32 hdStart = 0.0f;
     const bool hd = s_hdHakusha;
     if (hd) {
-        const f32 canvasW = mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF();
+        const f32 canvasW = dusk::tphd::revoWidth();  // HUD box (RevoCanvas.hpp)
         const f32 sw = 808.0f / 608.0f;
         const f32 tw = 304.0f * (1.0f - sw);
         // Our HUD root is scaled by canvasW / 780 (dMeter2Draw_c::draw), no translation.
@@ -314,7 +315,7 @@ void dMeterHakusha_c::updateHakusha() {
         hdSpacing = (xw5 - xw0) / (f32)getHakushaNum();
     }
     auto hdToCanvas = [](f32 i_xw) {
-        const f32 canvasW = mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF();
+        const f32 canvasW = dusk::tphd::revoWidth();
         return (i_xw - 304.0f) * (canvasW / 808.0f) + 304.0f;
     };
     if (hd) {

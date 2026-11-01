@@ -120,6 +120,9 @@ public:
     void displayInit();
     void NameStrSet();
     s32 getMenuPosIdx(u8);
+#if TARGET_PC
+    bool pointerSelect();
+#endif
 
     virtual ~dName_c();
 

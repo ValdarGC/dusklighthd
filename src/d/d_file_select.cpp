@@ -4583,7 +4583,7 @@ static dusk::utils::PaneCache fileSelPanes[] = {
 void dFile_select_c::fileSelectRevo() {
     const f32 sx = dusk::tphd::subscreenScaleX();
     const f32 invSx = dusk::tphd::wiiuTvN43();
-    const f32 minX = mDoGph_gInf_c::getMinXF();
+    const f32 minX = dusk::tphd::revoMinX();
 
     J2DScreen* roots[3] = {fileSel.Scr, m3mSel.Scr3m, mYnSel.ScrYn};
     for (J2DScreen* scr : roots) {
@@ -4594,6 +4594,7 @@ void dFile_select_c::fileSelectRevo() {
         scr->translate(minX, 0.0f);
         dusk::tphd::applyN43(scr, invSx, false, true);
     }
+    dusk::tphd::fillCanvasBackgrounds(fileSel.Scr);
     // Screens placed on a pane of the main screen through setMtx (details, copy): their root
     // stays unstretched, the main screen stretch comes with the matrix of the base pane.
     // Apply n_43 squeeze to restore correct 1:1 square aspect for icons (armor, shield, sword).

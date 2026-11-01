@@ -442,7 +442,7 @@ void dMsgScrnExplain_c::draw(J2DOrthoGraph* i_graf) {
         const f32 sx = dusk::tphd::subscreenScaleX();
         if (field_0x66 != 2 && field_0x66 != 3) {
             mpScreen->scale(sx, 1.0f);
-            mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, (J2DGrafContext*)i_graf);
+            mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, (J2DGrafContext*)i_graf);
         }
     } else if (field_0x66 != 2 && field_0x66 != 3) {
         mpScreen->draw(0.0f, 0.0f, (J2DGrafContext*)i_graf);

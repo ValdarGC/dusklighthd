@@ -37,6 +37,7 @@
 #include "JSystem/JUtility/JUTPalette.h"
 
 #include <algorithm>
+#include "dusk/tphd/RevoCanvas.hpp"
 
 namespace {
 
@@ -704,8 +705,8 @@ void dMeterMap_c::draw() {
             // 1080), left edge at -87.375 + slide, bottom at 435.56. Converted here through the
             // screen fraction so it lands on the same pixels whatever our ortho width is.
             const f32 slide = drawPosX - 35.0f;  // mSlidePositionOffset
-            const f32 minX = mDoGph_gInf_c::getMinXF();
-            const f32 wUnits = mDoGph_gInf_c::getMaxXF() - minX;
+            const f32 minX = dusk::tphd::revoMinX();  // HUD box (RevoCanvas.hpp)
+            const f32 wUnits = dusk::tphd::revoWidth();
             const f32 w = sizeX * wUnits / 1920.0f;
             const f32 h = sizeY * 448.0f / 1080.0f;
             const f32 x = minX + (-87.375f + 100.0f + slide) * wUnits / 808.0f;

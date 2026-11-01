@@ -87,6 +87,7 @@ public:
     void hdRefresh();
     void hdSyncCursor();
     void hdMove();
+    bool hdPointer();
     void hdDraw();
     void hdDrawNumber(int, int, f32, f32, f32);
     void hdDrawCursor();

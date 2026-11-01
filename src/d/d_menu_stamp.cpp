@@ -656,7 +656,7 @@ void dMenu_Stamp_c::_draw() {
         const f32 sx = dusk::tphd::subscreenScaleX();
         const Vec c = dusk::tphd::mgrDrawnCenter(mpCell[sel]);
         mpDrawCursor->setPosRevo(c.x + kCursorOffsetX * sx, c.y + kCursorOffsetY,
-                                 mpCell[sel]->getPanePtr(), false, sx, mDoGph_gInf_c::getMinXF());
+                                 mpCell[sel]->getPanePtr(), false, sx, dusk::tphd::revoMinX());
         mpDrawCursor->draw();
     }
 

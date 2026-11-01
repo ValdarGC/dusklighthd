@@ -120,7 +120,7 @@ void dMsgScrnArrow_c::draw() {
     if (dusk::tphd_active()) {
         const f32 sx = dusk::tphd::subscreenScaleX();
         mpScreen->scale(sx, 1.0f);
-        mpScreen->draw(mDoGph_gInf_c::getMinXF(), 0.0f, graf_ctx);
+        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
     } else {
         mpScreen->draw(0.0f, 0.0f, graf_ctx);
     }

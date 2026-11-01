@@ -879,7 +879,7 @@ void dMenu_Fishing_c::setCursorPos(int index) {
         return;
     }
     const f32 sx = dusk::tphd::subscreenScaleX();
-    const f32 minX = mDoGph_gInf_c::getMinXF();
+    const f32 minX = dusk::tphd::revoMinX();
     CPaneMgr* targetPane = mpFishParent[index];
     if (targetPane == NULL) {
         return;

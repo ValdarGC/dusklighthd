@@ -485,9 +485,29 @@ bool hit_rect(f32 left, f32 top, f32 right, f32 bottom, f32 padding) noexcept {
            state.y <= bottom + padding;
 }
 
+// Rectangle of a pane where it was last drawn: its global matrix includes the draw offset of the
+// screen (TPHD screens are drawn at the left edge of their 16:9 box, not at 0) and any matrix set
+// with setMtx (e.g. the name entry on the file select). False when the pane was never drawn.
+static bool drawn_rect(J2DPane* pane, f32& left, f32& top, f32& right, f32& bottom) noexcept {
+    const Vec v0 = pane->getGlbVtx(0);
+    const Vec v1 = pane->getGlbVtx(1);
+    const Vec v2 = pane->getGlbVtx(2);
+    const Vec v3 = pane->getGlbVtx(3);
+    left = std::min({v0.x, v1.x, v2.x, v3.x});
+    right = std::max({v0.x, v1.x, v2.x, v3.x});
+    top = std::min({v0.y, v1.y, v2.y, v3.y});
+    bottom = std::max({v0.y, v1.y, v2.y, v3.y});
+    return right > left && bottom > top;
+}
+
 bool hit_pane(CPaneMgr* pane, f32 padding) noexcept {
     if (pane == nullptr || pane->getPanePtr() == nullptr) {
         return false;
+    }
+
+    f32 left, top, right, bottom;
+    if (drawn_rect(pane->getPanePtr(), left, top, right, bottom)) {
+        return hit_rect(left, top, right, bottom, padding);
     }
 
     Mtx mtx;
@@ -495,10 +515,10 @@ bool hit_pane(CPaneMgr* pane, f32 padding) noexcept {
     Vec v1 = pane->getGlobalVtx(&mtx, 1, false, 0);
     Vec v2 = pane->getGlobalVtx(&mtx, 2, false, 0);
     Vec v3 = pane->getGlobalVtx(&mtx, 3, false, 0);
-    const f32 left = std::min({v0.x, v1.x, v2.x, v3.x});
-    const f32 right = std::max({v0.x, v1.x, v2.x, v3.x});
-    const f32 top = std::min({v0.y, v1.y, v2.y, v3.y});
-    const f32 bottom = std::max({v0.y, v1.y, v2.y, v3.y});
+    left = std::min({v0.x, v1.x, v2.x, v3.x});
+    right = std::max({v0.x, v1.x, v2.x, v3.x});
+    top = std::min({v0.y, v1.y, v2.y, v3.y});
+    bottom = std::max({v0.y, v1.y, v2.y, v3.y});
     return hit_rect(left, top, right, bottom, padding);
 }
 
@@ -507,6 +527,10 @@ bool hit_pane(J2DPane* pane, f32 padding) noexcept {
         return false;
     }
 
+    f32 left, top, right, bottom;
+    if (drawn_rect(pane, left, top, right, bottom)) {
+        return hit_rect(left, top, right, bottom, padding);
+    }
     const JGeometry::TBox2<f32>& bounds = pane->getBounds();
     return hit_rect(bounds.i.x, bounds.i.y, bounds.f.x, bounds.f.y, padding);
 }

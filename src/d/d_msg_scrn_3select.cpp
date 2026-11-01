@@ -672,7 +672,7 @@ void dMsgScrn3Select_c::draw(f32 i_xPos, f32 i_yPos) {
         // Wii U J2DPane::draw on the TV: the 608-wide layout is stretched, abc_n ('n_43') keeps
         // its proportions, so the window ends up near the right edge of the 16:9 screen.
         const f32 sx = dusk::tphd::subscreenScaleX();
-        const f32 minX = mDoGph_gInf_c::getMinXF();
+        const f32 minX = dusk::tphd::revoMinX();
         dusk::tphd::applyN43(mpScreen, 1.0f / sx, true);
         mpScreen->scale(sx, 1.0f);
         mpScreen->draw(minX + i_xPos * sx, i_yPos, port);
@@ -1022,7 +1022,7 @@ f32 dMsgScrn3Select_c::hdShiftX() {
     }
     const f32 sx = dusk::tphd::subscreenScaleX();
     const f32 c = mpParent->getGlobalPosX() + mpParent->getPanePtr()->getWidth() * 0.5f;
-    return mDoGph_gInf_c::getMinXF() + c * (sx - 1.0f);
+    return dusk::tphd::revoMinX() + c * (sx - 1.0f);
 }
 #endif
 

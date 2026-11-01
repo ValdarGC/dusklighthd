@@ -1592,6 +1592,7 @@ void dTphdRevoAttach(J2DScreen* scr) {
 }  // namespace
 
 #include "d_meter2_draw_vdt.inc"
+#include "dusk/tphd/RevoCanvas.hpp"
 #endif
 
 dMeter2Draw_c::dMeter2Draw_c(JKRExpHeap* mp_heap) {
@@ -2321,8 +2322,9 @@ void dMeter2Draw_c::draw() {
     f32 hudDrawX = 0.0f;
     if (s_hdRevoHud) {
         // The Wii U HUD spans the whole screen: map its 780 units onto the current canvas.
-        const f32 minX = mDoGph_gInf_c::getMinXF();
-        const f32 maxX = mDoGph_gInf_c::getMaxXF();
+        // Wii U HUD: kept 16:9 in the middle of wider windows (RevoCanvas.hpp).
+        const f32 minX = dusk::tphd::revoMinX();
+        const f32 maxX = dusk::tphd::revoMaxX();
         hudDrawX = minX;
         mpScreen->scale((maxX - minX) / kHdRefW, 1.0f);
         hdRevoFrame(mpScreen);
@@ -3546,8 +3548,8 @@ void dMeter2Draw_c::drawKanteraScreen(u8 i_meterType) {
 #if TARGET_PC
     if (s_hdKanteraRevo) {
         // 608-wide layout stretched to the TV like every Revo screen (J2DPane::draw 0x02b34334).
-        const f32 minX = mDoGph_gInf_c::getMinXF();
-        mpKanteraScreen->scale((mDoGph_gInf_c::getMaxXF() - minX) / 608.0f, 1.0f);
+        const f32 minX = dusk::tphd::revoMinX();
+        mpKanteraScreen->scale(dusk::tphd::revoWidth() / 608.0f, 1.0f);
         mpKanteraScreen->draw(minX, 0.0f, graf_ctx);
         return;
     }
@@ -5776,7 +5778,7 @@ void dMeter2Draw_c::drawKanteraMeter(u8 i_button, f32 i_alphaRate) {
         // layout x; the result on the TV is the gauge centred under the item (checked on Wii U
         // captures with the lantern on X and on Y), so it is centred directly here.
         static const f32 l_offY[4] = {1.0f, 1.5f, 1.0f, 1.0f};  // 0x10099dfc
-        const f32 sx = (mDoGph_gInf_c::getMaxXF() - mDoGph_gInf_c::getMinXF()) / 608.0f;
+        const f32 sx = dusk::tphd::revoWidth() / 608.0f;
         const int k = i_button < 4 ? i_button : 0;
         mpKanteraMeter[i_button]->setPos((vtx0.x + vtx3.x) * 0.5f, vtx3.y + l_offY[k] * oilUserScale);
         // n_43: 1:1 in TV units, i.e. 796.4 / 808 of our (square) ortho units at 16:9.

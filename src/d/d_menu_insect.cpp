@@ -260,7 +260,7 @@ void dMenu_Insect_c::_draw() {
                 const Vec c = dusk::tphd::mgrDrawnCenter(mpINSParent[index]);
                 const f32 sx = dusk::tphd::subscreenScaleX();
                 mpDrawCursor->setPosRevo(c.x - 2.0f, c.y - 2.5f, mpINSParent[index]->getPanePtr(),
-                                         false, sx, mDoGph_gInf_c::getMinXF());
+                                         false, sx, dusk::tphd::revoMinX());
                 mpDrawCursor->draw();
             }
 

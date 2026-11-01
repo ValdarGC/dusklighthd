@@ -502,7 +502,7 @@ void dMenu_Letter_c::hdDraw() {
                           ? dusk::tphd::paneGlobalCenter(hd.item[hd.index].pane)
                           : dusk::tphd::mgrDrawnCenter(hd.item[hd.index].mgr);
         hd.cursor->setPosRevo(c.x, c.y, hd.item[hd.index].pane, false,
-                              dusk::tphd::subscreenScaleX(), mDoGph_gInf_c::getMinXF());
+                              dusk::tphd::subscreenScaleX(), dusk::tphd::revoMinX());
         hd.cursor->draw();
     }
     dusk::tphd::drawRevoScreen(hd.title, graf);
