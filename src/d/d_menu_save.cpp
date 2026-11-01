@@ -12,6 +12,7 @@
 #include "d/d_file_sel_warning.h"
 #include "d/d_lib.h"
 #include "d/d_menu_save.h"
+#include "JSystem/J2DGraph/J2DOrthoGraph.h"
 #include "d/d_meter2_info.h"
 #include "d/d_msg_scrn_explain.h"
 #include "d/d_msg_string.h"
@@ -3319,6 +3320,13 @@ void dDlst_MenuSaveExplain_c::draw() {
 
 
 void dDlst_MenuSave_c::draw() {
+#if TARGET_PC
+    if (dusk::tphd_active()) {
+        // The Wii U save select fills its 16:9 box; the window margins around it stay black.
+        J2DFillBox(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(), mDoGph_gInf_c::getWidthF(),
+                   mDoGph_gInf_c::getHeightF(), JUtility::TColor(0, 0, 0, 255));
+    }
+#endif
     Scr->draw(0.0f, 0.0f, dComIfGp_getCurrentGrafPort());
 }
 
@@ -3397,7 +3405,6 @@ void dMenu_save_c::menuSaveRevo() {
     mSaveSel.Scr->scale(sx, 1.0f);
     mSaveSel.Scr->translate(minX, 0.0f);
     dusk::tphd::applyN43(mSaveSel.Scr, invSx, false, true);
-    dusk::tphd::fillCanvasBackgrounds(mSaveSel.Scr);
     if (J2DPane* p = mSaveSel.Scr->search(MULTI_CHAR('w_sel_03'))) {
         p->hide();
     }

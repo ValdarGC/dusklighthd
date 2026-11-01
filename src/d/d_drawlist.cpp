@@ -8,6 +8,7 @@
 #include "SSystem/SComponent/c_math.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_drawlist.h"
+#include "dusk/settings.h"
 #include "d/d_s_play.h"
 #include "m_Do/m_Do_graphic.h"
 #include "m_Do/m_Do_lib.h"
@@ -1145,11 +1146,15 @@ void dDlst_shadowReal_c::draw() {
     }
 
 #ifdef DUSK_TPHD
-    GX2SetPolygonOffset(-10.0f, -10.0f, -10.0f, -10.0f, 0);
+    if (dusk::tphd_active()) {
+        GX2SetPolygonOffset(-10.0f, -10.0f, -10.0f, -10.0f, 0);
+    }
 #endif
     mShadowRealPoly.draw();
 #ifdef DUSK_TPHD
-    GX2SetPolygonOffset(0.0f, 0.0f, 0.0f, 0.0f, 0);
+    if (dusk::tphd_active()) {
+        GX2SetPolygonOffset(0.0f, 0.0f, 0.0f, 0.0f, 0);
+    }
 #endif
 }
 

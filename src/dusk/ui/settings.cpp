@@ -734,15 +734,59 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         }),
             rightPane, [](Pane& pane) { pane.clear(); });
 #if DUSK_TPHD
-        config_bool_select(leftPane, rightPane, getSettings().backend.tphdEnabled,
-            {
+        {
+            // TPHD Mode is fixed for a session: ask before restarting the game to apply it.
+            auto& var = getSettings().backend.tphdEnabled;
+            auto& button = leftPane.add_child<BoolButton>(BoolButton::Props{
                 .key = "TPHD Mode (Wii U HD)",
-                .helpText = "Plays with the Wii U Twilight Princess HD content: HD textures, Wii U "
-                            "HUD, menus and saves. Needs the Wii U content folder chosen in the "
-                            "launcher.<br/><br/>Changing it restarts the game: save first.",
-                .onChange = [](bool) { RequestRestart(); },
+                .getValue = [&var] { return var.getValue(); },
+                .setValue =
+                    [this, &var](bool value) {
+                        if (value == var.getValue()) {
+                            return;
+                        }
+                        const auto dismiss = [](Modal& modal) { modal.pop(); };
+                        push(std::make_unique<Modal>(Modal::Props{
+                            .title = value ? "Turn TPHD Mode on" : "Turn TPHD Mode off",
+                            .bodyRml = "The game has to restart for this change to take effect.<br/>"
+                                       "Unsaved progress will be lost.",
+                            .actions =
+                                {
+                                    ModalAction{
+                                        .label = "Cancel",
+                                        .onPressed =
+                                            [dismiss](Modal& modal) {
+                                                mDoAud_seStartMenu(kSoundWindowClose);
+                                                dismiss(modal);
+                                            },
+                                    },
+                                    ModalAction{
+                                        .label = "Restart",
+                                        .onPressed =
+                                            [&var, value, dismiss](Modal& modal) {
+                                                mDoAud_seStartMenu(kSoundClick);
+                                                var.setValue(value);
+                                                config::save();
+                                                dismiss(modal);
+                                                RequestRestart();
+                                            },
+                                    },
+                                },
+                            .onDismiss = dismiss,
+                            .icon = "warning",
+                        }));
+                    },
                 .isDisabled = [] { return !tphd_content_available(); },
+                .isModified = [&var] { return var.getValue() != var.getDefaultValue(); },
             });
+            leftPane.register_control(button, rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_rml("Plays with the Wii U Twilight Princess HD content: HD textures, Wii U "
+                             "HUD, menus and saves. Off: plain GameCube Dusklight. Needs the Wii U "
+                             "content folder chosen in the launcher.<br/><br/>Changing it restarts "
+                             "the game: unsaved progress will be lost.");
+            });
+        }
 #endif
         config_bool_select(leftPane, rightPane, getSettings().video.enableVsync,
             {

@@ -20,6 +20,7 @@
 #include "d/d_com_inf_game.h"
 #include "global.h"
 #include "m_Do/m_Do_ext.h"
+#include "dusk/settings.h"
 #include "m_Do/m_Do_main.h"
 #include "m_Do/m_Do_mtx.h"
 #include <cstdio>
@@ -2255,7 +2256,7 @@ void mDoExt_invJntPacket::draw() {
             shapePkt->getShape()->loadPreDrawSetting();
 
 #if DUSK_TPHD
-            {
+            if (dusk::tphd_active()) {
                 const auto* offs = sp18->getMaterial()->getPEBlock()->getPolygonOffset();
                 GX2SetPolygonOffset(offs->mFrontOffset, offs->mFrontScale, offs->mBackOffset, offs->mBackScale, offs->mClamp);
             }

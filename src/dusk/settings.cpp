@@ -273,7 +273,8 @@ static bool isTphdContentFolder(const std::filesystem::path& i_path) {
     return std::filesystem::is_directory(i_path / "res" / "LayoutRevo", ec);
 }
 
-std::filesystem::path tphd_content_path() {
+// The configured Wii U content folder, valid or empty, whatever the TPHD Mode switch says.
+static std::filesystem::path tphd_configured_content_path() {
 #if DUSK_TPHD
     static std::string s_checkedFor;
     static std::filesystem::path s_result;
@@ -301,18 +302,27 @@ std::filesystem::path tphd_content_path() {
 }
 
 bool tphd_content_available() {
-    return !tphd_content_path().empty();
+    return !tphd_configured_content_path().empty();
 }
 
-bool tphd_active() {
+// TPHD mode cannot change during a session (archives, layouts and saves depend on it): the
+// "TPHD Mode" setting is read once and applies after a restart. With it off nothing of the Wii U
+// content is used (plain GameCube Dusklight).
+static bool tphd_enabled_at_launch() {
 #if DUSK_TPHD
-    // TPHD mode cannot change during a session (archives, layouts and saves depend on it): the
-    // "TPHD Mode" setting is read once and applies after a restart.
-    static const bool s_enabledAtLaunch = g_userSettings.backend.tphdEnabled.getValue();
-    return s_enabledAtLaunch && tphd_content_available();
+    static const bool s_enabled = g_userSettings.backend.tphdEnabled.getValue();
+    return s_enabled;
 #else
     return false;
 #endif
+}
+
+std::filesystem::path tphd_content_path() {
+    return tphd_enabled_at_launch() ? tphd_configured_content_path() : std::filesystem::path{};
+}
+
+bool tphd_active() {
+    return !tphd_content_path().empty();
 }
 
 float brightnessGamma(int i_brightness) {

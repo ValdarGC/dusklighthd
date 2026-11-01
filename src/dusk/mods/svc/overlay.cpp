@@ -202,17 +202,20 @@ void overlay_sync_files() {
 
     Log.debug("Registering {} overlay file(s).", files.size());
 #if DUSK_TPHD
-    // The TPHD layer owns the single aurora DVD overlay and puts these files over the HD ones.
-    dusk::tphd::set_mod_overlay_files(files, &s_overlayCallbacks);
-#else
-    static bool callbacksRegistered = false;
-    if (!callbacksRegistered) {
-        aurora_dvd_overlay_callbacks(&s_overlayCallbacks);
-        callbacksRegistered = true;
-    }
-
-    aurora_dvd_overlay_files(files.data(), files.size(), nullptr);
+    if (dusk::tphd_active()) {
+        // The TPHD layer owns the single aurora DVD overlay and puts these files over the HD ones.
+        dusk::tphd::set_mod_overlay_files(files, &s_overlayCallbacks);
+    } else
 #endif
+    {
+        static bool callbacksRegistered = false;
+        if (!callbacksRegistered) {
+            aurora_dvd_overlay_callbacks(&s_overlayCallbacks);
+            callbacksRegistered = true;
+        }
+
+        aurora_dvd_overlay_files(files.data(), files.size(), nullptr);
+    }
     JKRArchive::notifyOverlayFilesChanged();
 
     for (const auto& file : files) {
