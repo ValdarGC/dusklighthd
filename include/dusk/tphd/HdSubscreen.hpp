@@ -377,49 +377,49 @@ inline Vec mgrDrawnCenter(CPaneMgr* m) {
 // it every frame before drawing.
 inline void fillCanvasBackgrounds(J2DPane* pane) {
     if (pane == NULL || !pane->isVisible()) return;
-    struct Fill {
-        f32 sx, sy;              // pane scale before ours
-        f32 x0, y0, x1, y1;      // global rectangle before ours
-        f32 pivotX, pivotY;      // box centre in the pane's local (bounds) coordinates
-    };
-    static std::unordered_map<J2DPane*, Fill> s_fill;
+    // Factor applied last frame. Backgrounds may be animated (the save menu ones slide in), so
+    // nothing else is cached: the rectangle without our factor is recovered from the drawn one.
+    static std::unordered_map<J2DPane*, f32> s_fill;
     const u16 type = pane->getTypeID();
-    if ((type == 18 || type == 17) && pane->getAlpha() != 0) {
-        auto it = s_fill.find(pane);
+    if ((type == 18 || type == 17) && pane->getAlpha() != 0 && pane->getRotateZ() == 0.0f) {
         const f32 bx = (revoMinX() + revoMaxX()) * 0.5f;
         const f32 by = 224.0f;
-        if (it == s_fill.end()) {
-            const Vec a = pane->getGlbVtx(0);
-            const Vec b = pane->getGlbVtx(3);
-            const f32 w = std::fabs(b.x - a.x);
-            const f32 h = std::fabs(b.y - a.y);
-            if (w >= revoWidth() * 0.97f && h >= 448.0f * 0.9f && pane->getRotateZ() == 0.0f) {
-                Mtx inv;
-                if (MTXInverse(pane->getGlbMtx(), inv) != 0) {
-                    Vec g = {bx, by, 0.0f};
-                    Vec l;
-                    MTXMultVec(inv, &g, &l);
-                    it = s_fill.emplace(pane, Fill{pane->getScaleX(), pane->getScaleY(),
-                                                   std::min(a.x, b.x), std::min(a.y, b.y),
-                                                   std::max(a.x, b.x), std::max(a.y, b.y), l.x, l.y})
-                             .first;
-                }
+        const auto it = s_fill.find(pane);
+        const f32 kPrev = it != s_fill.end() ? it->second : 1.0f;
+        const Vec a = pane->getGlbVtx(0);
+        const Vec b = pane->getGlbVtx(3);
+        // Scaling about the box centre: drawn = centre + k * (unscaled - centre).
+        const f32 x0 = bx + (std::min(a.x, b.x) - bx) / kPrev;
+        const f32 x1 = bx + (std::max(a.x, b.x) - bx) / kPrev;
+        const f32 y0 = by + (std::min(a.y, b.y) - by) / kPrev;
+        const f32 y1 = by + (std::max(a.y, b.y) - by) / kPrev;
+        if (x1 - x0 >= revoWidth() * 0.97f && y1 - y0 >= 448.0f * 0.9f) {
+            Mtx inv;
+            if (MTXInverse(pane->getGlbMtx(), inv) != 0) {
+                f32 k = 1.0f;
+                auto need = [&](f32 edgeDist, f32 paneDist) {
+                    if (paneDist > 1.0f) k = std::max(k, edgeDist / paneDist);
+                };
+                need(bx - mDoGph_gInf_c::getMinXF(), bx - x0);
+                need(mDoGph_gInf_c::getMaxXF() - bx, x1 - bx);
+                need(by - mDoGph_gInf_c::getMinYF(), by - y0);
+                need(mDoGph_gInf_c::getMaxYF() - by, y1 - by);
+                // Pivot: the local point drawn at the box centre (a fixed point of our scale).
+                Vec g = {bx, by, 0.0f};
+                Vec l;
+                MTXMultVec(inv, &g, &l);
+                const f32 baseSx = pane->getScaleX() / kPrev;
+                const f32 baseSy = pane->getScaleY() / kPrev;
+                pane->mRotateOffsetX = l.x - pane->mBounds.i.x;
+                pane->mRotateOffsetY = l.y - pane->mBounds.i.y;
+                pane->scale(baseSx * k, baseSy * k);
+                s_fill[pane] = k;
+                return;
             }
         }
         if (it != s_fill.end()) {
-            const Fill& f = it->second;
-            f32 k = 1.0f;
-            auto need = [&](f32 edgeDist, f32 paneDist) {
-                if (paneDist > 1.0f) k = std::max(k, edgeDist / paneDist);
-            };
-            need(bx - mDoGph_gInf_c::getMinXF(), bx - f.x0);
-            need(mDoGph_gInf_c::getMaxXF() - bx, f.x1 - bx);
-            need(by - mDoGph_gInf_c::getMinYF(), by - f.y0);
-            need(mDoGph_gInf_c::getMaxYF() - by, f.y1 - by);
-            pane->mRotateOffsetX = f.pivotX - pane->mBounds.i.x;
-            pane->mRotateOffsetY = f.pivotY - pane->mBounds.i.y;
-            pane->scale(f.sx * k, f.sy * k);
-            return;
+            pane->scale(pane->getScaleX() / kPrev, pane->getScaleY() / kPrev);
+            s_fill.erase(it);
         }
     }
     for (J2DPane* c = pane->getFirstChildPane(); c != NULL; c = c->getNextChildPane()) {

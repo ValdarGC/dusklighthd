@@ -558,6 +558,27 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
                     mPendingButtonMapping = &mapping;
                 });
         }
+        if (dusk::tphd_active()) {
+            // Wii U R: the R item slot, kept in the "Extra Item Button (R)" action binding.
+            auto* rBind = &getSettings().actionBindings.useItemR[port];
+            pane.add_select_button({
+                                       .key = "R",
+                                       .getValue =
+                                           [this, gamepad, rBind] {
+                                               if (mPendingActionBinding == rBind) {
+                                                   return pending_button_label();
+                                               }
+                                               return native_button_name(gamepad, rBind->getValue());
+                                           },
+                                   })
+                .on_pressed([this, port, rBind] {
+                    mDoAud_seStartMenu(kSoundClick);
+                    cancel_pending_binding();
+                    mPendingPort = port;
+                    mPendingBindingArmed = false;
+                    mPendingActionBinding = rBind;
+                });
+        }
 
         pane.add_section("D-Pad");
         for (u32 i = 0; i < buttonCount; ++i) {
