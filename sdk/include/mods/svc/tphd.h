@@ -12,12 +12,15 @@
 
 /*
  * TPHD mode: the game runs with the Wii U (Twilight Princess HD) content folder, its HD textures
- * and its Revo (Wii U TV) layouts. Mods use this service to tell whether TPHD mode is on and to
- * reuse the helpers the TPHD screens are drawn with.
+ * and its Revo (Wii U TV) layouts. It is a setting (TPHD Mode) fixed for the session: with it off
+ * the game is plain GameCube Dusklight and is_active returns false. Mods use this service to tell
+ * whether TPHD mode is on and to reuse the helpers the TPHD screens are drawn with.
  *
- * Revo layouts are authored 608 units wide. The Wii U stretches every Revo screen to the whole TV
- * width (get_tv_stretch) and squeezes back the panes whose user info is 'n_43' (get_n43_squeeze),
- * so text and icons keep their proportions. apply_n43 / draw_revo_screen do exactly that.
+ * Revo layouts are authored 608 units wide. The Wii U stretches every Revo screen to its 16:9 TV
+ * (get_tv_stretch) and squeezes back the panes whose user info is 'n_43' (get_n43_squeeze), so text
+ * and icons keep their proportions. Here the TV is the largest centred 16:9 box of the window: on
+ * narrower windows the 2D canvas is taller than 448 units (negative mDoGph_gInf_c::getMinYF()).
+ * apply_n43 / draw_revo_screen do all of this.
  */
 
 /* Wii U layout archives the TPHD screens load (from <content>/res/LayoutRevo). */
@@ -59,7 +62,7 @@ typedef struct TphdService {
     /* JKRArchive* of a loaded Wii U layout archive (NULL when not loaded / TPHD mode off). */
     void* (*get_archive)(ModContext* ctx, TphdArchive archive);
 
-    /* Horizontal stretch of Revo screens on the current canvas (canvas width / 608). */
+    /* Horizontal stretch of Revo screens: width of the 16:9 box of the canvas / 608. */
     float (*get_tv_stretch)(ModContext* ctx);
 
     /* Horizontal scale the Wii U applies to 'n_43' panes of a stretched screen. */
@@ -72,9 +75,9 @@ typedef struct TphdService {
     ModResult (*apply_n43)(ModContext* ctx, void* pane);
 
     /*
-     * Draws a Revo screen (J2DScreen*) the Wii U way: stretched to the canvas, 'n_43' panes
-     * squeezed. graf_context is a J2DGrafContext* (NULL: the current 2D graf port). Offsets are in
-     * layout units.
+     * Draws a Revo screen (J2DScreen*) the Wii U way: stretched over the 16:9 box from its left
+     * edge, 'n_43' panes squeezed, clipped to the box. graf_context is a J2DGrafContext* (NULL: the
+     * current 2D graf port). Offsets are in layout units.
      */
     ModResult (*draw_revo_screen)(ModContext* ctx, void* screen, void* graf_context, float offset_x,
         float offset_y);

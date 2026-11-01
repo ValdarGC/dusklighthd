@@ -173,13 +173,13 @@ export type ResourceModule = { load: (relativePath: string) -> string }
 --
 
 export type TphdModule = {
-    -- TPHD mode (Wii U content folder) is on.
+    -- TPHD mode (Wii U content, Settings > Video > TPHD Mode) is on for this session.
     is_active: () -> boolean,
     -- The Wii U content folder, nil when TPHD mode is off.
     content_path: () -> string?,
     -- A file of a Wii U archive (Yaz0 decoded), e.g. ("res/Object/Alink.arc", "bmdr/al.bmd"); nil if missing.
     read_arc_file: (resPath: string, filePath: string) -> string?,
-    -- Horizontal stretch of Revo (Wii U) screens on the current canvas (canvas width / 608).
+    -- Horizontal stretch of Revo (Wii U) screens: width of the 16:9 box of the canvas / 608.
     tv_stretch: () -> number,
     -- Horizontal scale of the 'n_43' panes of a stretched Revo screen.
     n43_squeeze: () -> number,

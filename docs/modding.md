@@ -1238,17 +1238,19 @@ svc_game_mode->register_game_mode(mod_ctx, &gameModeDesc);
 
 ### TphdService ([`mods/svc/tphd.h`](../sdk/include/mods/svc/tphd.h))
 
-TPHD mode runs the game with a Wii U (Twilight Princess HD) content folder: HD textures, Wii U
-(Revo) layouts and HUD. Use this service to adapt a mod to it.
+TPHD mode runs the game with a Wii U (Twilight Princess HD) content folder: HD textures, the Wii U
+(Revo) HUD and menus, Wii U texts and saves. It is chosen in *Settings > Video > TPHD Mode (Wii U
+HD)* and is fixed for a session (changing it restarts the game). With it off the game is plain
+GameCube Dusklight and `is_active` returns false. Use this service to adapt a mod to either mode.
 
 | Function | Use |
 |---|---|
-| `is_active` | TPHD mode is on |
-| `get_content_path` | the Wii U `content` folder |
+| `is_active` | TPHD mode is on for this session |
+| `get_content_path` | the Wii U `content` folder (`MOD_UNAVAILABLE` when TPHD mode is off) |
 | `read_arc_file` | read a file from a Wii U archive (e.g. `res/Object/Alink.arc`, `bmdr/al.bmd`) |
 | `get_archive` | the loaded Wii U layout archives (`TPHD_ARCHIVE_MAIN_2D`, `..._RING`, `..._COLLECT`...), as `JKRArchive*` |
-| `get_tv_stretch` / `get_n43_squeeze` | how Revo screens are stretched to the TV and how `n_43` panes are squeezed back |
-| `apply_n43` / `draw_revo_screen` | draw a Revo `J2DScreen` the way the Wii U does |
+| `get_tv_stretch` / `get_n43_squeeze` | how Revo screens are stretched over the 16:9 box and how `n_43` panes are squeezed back |
+| `apply_n43` / `draw_revo_screen` | draw a Revo `J2DScreen` the way the Wii U does (in the 16:9 box, clipped to it) |
 | `reload_texture_packs` | rescan the `tphd_*` texture packs |
 
 ```cpp
@@ -1263,16 +1265,44 @@ void draw_my_screen(J2DScreen* screen) {
 }
 ```
 
-Assets in TPHD mode:
+Script mods get the same information from the `dusklight.tphd` Luau module (`is_active`,
+`content_path`, `read_arc_file`, `tv_stretch`, `n43_squeeze`, `reload_texture_packs`), e.g. to pick
+different overlay files per mode:
+
+```lua
+local tphd = require("dusklight.tphd")
+local overlay = require("dusklight.overlay")
+
+overlay.add_file("/res/Object/Alink.arc", tphd.is_active() and "res/hd/Alink.arc" or "res/gc/Alink.arc")
+```
+
+**Screen layout.** The Wii U UI is designed for a 16:9 TV. In TPHD mode it is laid out in the
+largest centred 16:9 box of the window: on wider windows the box leaves side margins, on narrower
+ones the 2D canvas grows taller than 448 units (`mDoGph_gInf_c::getMinYF()` becomes negative). Revo
+screens are stretched by `get_tv_stretch()` (box width / 608) from the left edge of the box, not
+from `getMinXF()`; `draw_revo_screen` does all of this. Full-screen 2D effects still use the whole
+window.
+
+**Assets in TPHD mode:**
 
 - **Textures**: name them after the Wii U texture hash, `tphd_{w}x{h}_{hash}.dds|.png` (the
-  *TPHD Textures* tool in the Tools menu exports every Wii U texture with these names). GameCube
-  hash packs (`tex1_*`) are not loaded in TPHD mode.
-- **Archives**: a mod file replaces the Wii U file at the same path. Wii U archives keep their
-  textures in the `.pack.gz` next to them, so a replaced archive gets no HD textures: ship its
-  images inside the archive (regular BTI), or leave them to a `tphd_` pack.
-- **Text**: Wii U only messages (stamps, Ghost Lantern...) must be present in a text mod's
-  `bmgres` archives for TPHD mode.
+  *TPHD Textures* tool in the Tools menu exports every Wii U texture with these names, sorted by
+  stage / object / UI / particle, with an `index.txt` per folder). DDS files may carry their mip
+  levels, PNG files take `_mipN` sidecars. They are read from the `texture_replacements` folder
+  (any subfolder) and load immediately. `tphd_*` packs are only used in TPHD mode, and GameCube
+  hash packs (`tex1_*`) in `texture_replacements` are only loaded outside it. Textures a mod
+  registers through `TextureService` use GameCube hashes, so in TPHD mode they only match the few
+  textures still loaded from the GameCube disc. Mod bundles cannot ship `tphd_*` packs through
+  `TextureService` yet: distribute them as a folder for `texture_replacements`.
+- **Archives**: a mod overlay file replaces the Wii U file at the same path (mod files win over
+  the HD content). Wii U archives keep their textures in the `.pack.gz` next to them, so a
+  replaced archive gets no HD textures: ship its images inside the archive (regular BTI), or leave
+  them to a `tphd_` pack. Wii U only models (e.g. the Ghost Lantern in `Alink.arc`) may be missing
+  from a GameCube archive; the game skips them.
+- **Text**: a mod that replaces `res/Msg*/bmgres*.arc` is merged with the Wii U texts: messages the
+  mod leaves out or empty keep the Wii U text, so Wii U only messages (stamps, Ghost Lantern...)
+  survive GameCube text mods. A mod made for the other region's folder (`Msguk` / `Msgus`, `Msgfr` /
+  `Msgusfr`, `Msgsp` / `Msgussp`) also applies to the folder the game reads.
 
 ### ActorService (`mods/svc/actor.h`)
 
