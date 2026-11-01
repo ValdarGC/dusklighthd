@@ -3087,7 +3087,10 @@ void dMenu_Collect2D_c::_draw() {
             }
         }
         mpScreen->scale(collectRevoScaleX(), 1.0f);
-        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, grafPort);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, grafPort);
+        }
     } else {
         mpScreen->draw(0.0f, 0.0f, grafPort);
     }
@@ -3874,10 +3877,16 @@ void dMenu_Collect3D_c::setupItem3D(Mtx param_0) {
         // 608 / 448 projection that the Wii U scales to the TV *together with the framebuffer*.
         // Here we render straight to the real framebuffer, so the projection must use the real
         // aspect or the models get stretched horizontally.
-        GXSetViewport(0.0f, 0.0f, FB_WIDTH, FB_HEIGHT, 0.0f, 1.0f);
+        // The models live in the 16:9 box of the canvas like the rest of the screen
+        // (RevoCanvas.hpp): viewport = that box, so they shrink and move with it.
+        const f32 kx = FB_WIDTH / mDoGph_gInf_c::getWidthF();
+        const f32 ky = FB_HEIGHT / mDoGph_gInf_c::getHeightF();
+        GXSetViewport((dusk::tphd::revoMinX() - mDoGph_gInf_c::getMinXF()) * kx,
+                      -mDoGph_gInf_c::getMinYF() * ky, dusk::tphd::revoWidth() * kx, 448.0f * ky,
+                      0.0f, 1.0f);
         mViewOffsetY = -100.0f;
         Mtx44 projection;
-        C_MTXPerspective(projection, 45.0f, mDoGph_gInf_c::getAspect(), 1.0f, 100000.0f);
+        C_MTXPerspective(projection, 45.0f, dusk::tphd::revoWidth() / 448.0f, 1.0f, 100000.0f);
         GXSetProjection(projection, GX_PERSPECTIVE);
         calcViewMtx(param_0);
         return;
@@ -3899,14 +3908,13 @@ void dMenu_Collect3D_c::toItem3Dpos(f32 param_0, f32 param_1, f32 param_2, cXyz*
 #if TARGET_PC
     if (collectRevo()) {
         // TPHD 0x029ba760: unstretched 608 x 448 canvas, aspect 608 / 448 (= 1.35714).
-        // The layout fills the 16:9 box of the canvas (RevoCanvas.hpp), not the whole window.
-        const f32 nx = (2.0f * (param_0 / 608.0f) - 1.0f) * dusk::tphd::revoWidth() /
-                       mDoGph_gInf_c::getWidthF();
-        const f32 ny = (2.0f * (param_1 / 448.0f) - 1.0f) * 448.0f / mDoGph_gInf_c::getHeightF();
+        // Same 16:9 box viewport as setupItem3D.
+        const f32 nx = 2.0f * (param_0 / 608.0f) - 1.0f;
+        const f32 ny = 2.0f * (param_1 / 448.0f) - 1.0f;
         calcViewMtx(adStack_98);
         MTXInverse(adStack_98, auStack_c8);
         const f32 t = tan(0.39269909262657166);
-        cXyz v(nx * param_2 * mDoGph_gInf_c::getAspect() * t, t * (ny * -param_2), -param_2);
+        cXyz v(nx * param_2 * (dusk::tphd::revoWidth() / 448.0f) * t, t * (ny * -param_2), -param_2);
         MTXMultVec(auStack_c8, &v, param_3);
         return;
     }
@@ -3999,7 +4007,10 @@ void dMenu_Collect2DTop_c::draw() {
                 p->scale(1.0f / sx, 1.0f);
             }
             icon->scale(sx, 1.0f);
-            icon->draw(dusk::tphd::revoMinX(), 0.0f, graf_port);
+            {
+                dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+                icon->draw(dusk::tphd::revoMinX(), 0.0f, graf_port);
+            }
         } else {
             mpCollect2D->getIconScreen()->draw(0.0f, 0.0f, graf_port);
         }

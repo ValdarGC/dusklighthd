@@ -302,7 +302,10 @@ void dMsgScrnLight_c::drawCommon(f32 i_posX, f32 i_posY, f32 i_scaleX, f32 i_sca
         mpParent_c->scale(init_scale_x * i_scaleX * n43, init_scale_y * i_scaleY);
         const f32 sx = dusk::tphd::subscreenScaleX();
         mpScreen->scale(sx, 1.0f);
-        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
+        }
     } else {
         mpParent_c->scale(init_scale_x * i_scaleX, init_scale_y * i_scaleY);
         mpScreen->draw(0.0f, 0.0f, graf_ctx);

@@ -675,7 +675,10 @@ void dMsgScrn3Select_c::draw(f32 i_xPos, f32 i_yPos) {
         const f32 minX = dusk::tphd::revoMinX();
         dusk::tphd::applyN43(mpScreen, 1.0f / sx, true);
         mpScreen->scale(sx, 1.0f);
-        mpScreen->draw(minX + i_xPos * sx, i_yPos, port);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpScreen->draw(minX + i_xPos * sx, i_yPos, port);
+        }
         if (field_0x110 != 0xFF && mSelNo != 0xFF && field_0x117 != 0) {
             f32 var_f31 = (mWidth - 1.0f) * (mpCursor_c[mSelNo]->getInitCenterPosX() -
                                                   mpSelCldw_c[1][mSelNo]->getInitPosX());

@@ -1149,7 +1149,8 @@ void dMenu_Fmap_c::region_map_proc() {
 
         f32 pos_x = mpDraw2DBack->getArrowPos2DX() - mDoGph_gInf_c::getMinXF()
                                                     - mDoGph_gInf_c::getWidthF() * 0.5f;
-        f32 pos_y = mpDraw2DBack->getArrowPos2DY() - mDoGph_gInf_c::getHeightF() * 0.5f;
+        f32 pos_y = mpDraw2DBack->getArrowPos2DY() -
+                    (mDoGph_gInf_c::getMinYF() + mDoGph_gInf_c::getHeightF() * 0.5f);
 
         mpMenuFmapMap->getPointStagePathInnerNo(getNowFmapRegionData(), pos_x, pos_y,
                                                 mStayStageNo, &stage_no, &room_no);
@@ -1480,7 +1481,8 @@ void dMenu_Fmap_c::spot_map_proc() {
         int stage_no, room_no;
         f32 pos_x = mpDraw2DBack->getMapAreaGlobalCenterPosX() - mDoGph_gInf_c::getMinXF()
                                                                 - mDoGph_gInf_c::getWidthF() * 0.5f;
-        f32 pos_y = mpDraw2DBack->getMapAreaGlobalCenterPosY() - mDoGph_gInf_c::getHeightF() * 0.5f;
+        f32 pos_y = mpDraw2DBack->getMapAreaGlobalCenterPosY() -
+                    (mDoGph_gInf_c::getMinYF() + mDoGph_gInf_c::getHeightF() * 0.5f);
         mpMenuFmapMap->getPointStagePathInnerNo(getNowFmapRegionData(), pos_x, pos_y,
                                                 mStayStageNo, &stage_no, &room_no);
 

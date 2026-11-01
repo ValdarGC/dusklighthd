@@ -55,8 +55,10 @@ static void hdDmapStretch(J2DScreen* i_scrn) {
     }
     const f32 sx = dusk::tphd::subscreenScaleX();
     dusk::tphd::applyN43(i_scrn, dusk::tphd::wiiuTvN43(), false, true);
+    // Laid out in the 16:9 box (RevoCanvas.hpp); full-screen backgrounds cover the window.
     i_scrn->scale(sx, 1.0f);
-    i_scrn->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+    i_scrn->translate(dusk::tphd::revoMinX(), 0.0f);
+    dusk::tphd::fillCanvasBackgrounds(i_scrn);
 }
 
 static J2DTextBox* hdDmapTextBox(J2DScreen* i_scrn, u64 i_tag) {
@@ -91,7 +93,7 @@ static void hdDmapCursorSetPos(dSelect_cursor_c* i_cursor, f32 i_x, f32 i_y, J2D
                                bool i_scale) {
     if (hdDmapActive()) {
         i_cursor->setPosRevo(i_x, i_y, i_pane, i_scale, dusk::tphd::subscreenScaleX(),
-                             mDoGph_gInf_c::getMinXF());
+                             dusk::tphd::revoMinX());
     } else {
         i_cursor->setPos(i_x, i_y, i_pane, i_scale);
     }

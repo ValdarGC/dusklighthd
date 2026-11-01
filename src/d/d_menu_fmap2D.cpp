@@ -161,10 +161,12 @@ void dMenu_Fmap2DBack_c::fMapBackWide() {
         const f32 sx = dusk::tphd::subscreenScaleX();
         dusk::tphd::applyN43(mpBaseScreen, dusk::tphd::wiiuTvN43(), false, true);
         dusk::tphd::applyN43(mpBackScreen, dusk::tphd::wiiuTvN43(), false, true);
+        // Laid out in the 16:9 box (RevoCanvas.hpp); the background screen covers the window.
         mpBaseScreen->scale(sx, 1.0f);
-        mpBaseScreen->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+        mpBaseScreen->translate(dusk::tphd::revoMinX(), 0.0f);
         mpBackScreen->scale(sx, 1.0f);
-        mpBackScreen->translate(mDoGph_gInf_c::getMinXF(), 0.0f);
+        mpBackScreen->translate(dusk::tphd::revoMinX(), 0.0f);
+        dusk::tphd::fillCanvasBackgrounds(mpBackScreen);
         return;
     }
     mpBaseScreen->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
@@ -458,7 +460,8 @@ void dMenu_Fmap2DBack_c::draw() {
     f32 height = mDoGph_gInf_c::getHeightF() / FB_HEIGHT;
 
     grafPort->scissor(mTransX + ((vec1.x - mDoGph_gInf_c::getMinXF()) / width),
-                      mTransZ + (vec1.y / height), (vec2.x - vec1.x) / width,
+                      mTransZ + ((vec1.y - mDoGph_gInf_c::getMinYF()) / height),
+                      (vec2.x - vec1.x) / width,
                       (vec2.y - vec1.y) / height);
 
     grafPort->setScissor();
@@ -2587,7 +2590,8 @@ static void hdDrawFmapIcon(J2DScreen* i_icon, f32 i_x, f32 i_y, u8 i_alpha, J2DG
     }
     i_icon->setAlpha(i_alpha);
     i_icon->scale(sx, 1.0f);
-    i_icon->draw(mDoGph_gInf_c::getMinXF() + i_x, i_y, i_graf);
+    dusk::tphd::RevoClip revoClip;
+    i_icon->draw(dusk::tphd::revoMinX() + i_x, i_y, i_graf);
 }
 #endif
 

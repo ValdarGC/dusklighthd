@@ -439,7 +439,10 @@ void dMsgScrnTalk_c::draw() {
         }
         const f32 sx = dusk::tphd::subscreenScaleX();
         mpScreen->scale(sx, 1.0f);
-        mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, ctx);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpScreen->draw(dusk::tphd::revoMinX(), 0.0f, ctx);
+        }
     } else {
         mpScreen->draw(0.0f, 0.0f, ctx);
     }

@@ -626,7 +626,10 @@ void dMenu_Ring_c::hdDraw() {
         }
     }
 
-    scr->draw(minX, 0.0f, graf);
+    {
+        dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+        scr->draw(minX, 0.0f, graf);
+    }
 
     // Item icons, ammo counters and lantern oil, drawn with the wheel's own textures.
     for (int c = 0; c < kCells; c++) {

@@ -3,6 +3,8 @@
 
 #include <algorithm>
 
+#include <dolphin/gx.h>
+
 #include "m_Do/m_Do_graphic.h"
 
 namespace dusk::tphd {
@@ -25,6 +27,29 @@ inline f32 revoMinX() {
 inline f32 revoMaxX() {
     return revoMinX() + revoWidth();
 }
+
+// Clips the Wii U screens drawn in its scope to the 16:9 box. The TV never shows what the Revo
+// layouts keep outside it (slide-in panes, oversized ornaments), which would otherwise appear in
+// the side / top / bottom margins. GX scissor units: the logical 608 x 448 framebuffer spanning
+// the whole canvas.
+class RevoClip {
+public:
+    RevoClip() {
+        GXGetScissor(&mX, &mY, &mW, &mH);
+        const f32 kx = FB_WIDTH / mDoGph_gInf_c::getWidthF();
+        const f32 ky = FB_HEIGHT / mDoGph_gInf_c::getHeightF();
+        const f32 left = (revoMinX() - mDoGph_gInf_c::getMinXF()) * kx;
+        const f32 top = (0.0f - mDoGph_gInf_c::getMinYF()) * ky;
+        GXSetScissor(static_cast<u32>(left), static_cast<u32>(top),
+                     static_cast<u32>(revoWidth() * kx + 0.5f), static_cast<u32>(448.0f * ky + 0.5f));
+    }
+    ~RevoClip() { GXSetScissor(mX, mY, mW, mH); }
+    RevoClip(const RevoClip&) = delete;
+    RevoClip& operator=(const RevoClip&) = delete;
+
+private:
+    u32 mX, mY, mW, mH;
+};
 
 }  // namespace dusk::tphd
 

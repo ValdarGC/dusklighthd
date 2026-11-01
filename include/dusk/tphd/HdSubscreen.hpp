@@ -301,6 +301,7 @@ inline void drawRevoIconScreen(J2DScreen* icon, J2DGrafContext* graf_port) {
         p->scale(1.0f / sx, 1.0f);
     }
     icon->scale(sx, 1.0f);
+    RevoClip clip;
     icon->draw(revoMinX(), 0.0f, graf_port);
 }
 
@@ -354,6 +355,7 @@ inline void drawRevoScreen(J2DScreen* scr, J2DGrafContext* graf, f32 i_offsetX =
     const f32 sx = subscreenScaleX();
     applyN43(scr, i_wiiuPivot ? wiiuTvN43() : 1.0f / sx, false, i_wiiuPivot);
     scr->scale(sx, 1.0f);
+    RevoClip clip;
     scr->draw(revoMinX() + i_offsetX * sx, i_offsetY, graf);
 }
 

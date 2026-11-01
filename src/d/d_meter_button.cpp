@@ -398,7 +398,10 @@ void dMeterButton_c::draw() {
         const f32 keepX = info->getScaleX();
         info->scale(keepX / sx, info->getScaleY());
         mpButtonScreen->scale(sx, 1.0f);
-        mpButtonScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpButtonScreen->draw(dusk::tphd::revoMinX(), 0.0f, graf_ctx);
+        }
         info->scale(keepX, info->getScaleY());
         mpButtonScreen->scale(1.0f, 1.0f);
     } else {

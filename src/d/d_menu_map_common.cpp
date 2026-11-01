@@ -448,7 +448,7 @@ void dMenuMapCommon_c::drawIcon(f32 i_posX, f32 i_posY, f32 param_3, f32 param_4
                     // (wider than tall, ~93x74 px vs the GC 83x85 at 1080p).
                     if (dusk::tphd_active() && mpPortalIcon != NULL) {
                         const f32 sx = dusk::tphd::subscreenScaleX();
-                        const f32 min_x = mDoGph_gInf_c::getMinXF();
+                        const f32 min_x = dusk::tphd::revoMinX();
                         mpDrawCursor->setDrawStretch(sx, min_x);
                         mpDrawCursor->setPos((pos_x - min_x) / sx, icon_pos_y + i_posY);
                         mpDrawCursor->setScale(mIconInfo[info_idx].scale *

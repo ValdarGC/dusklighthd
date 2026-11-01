@@ -1593,6 +1593,7 @@ void dTphdRevoAttach(J2DScreen* scr) {
 
 #include "d_meter2_draw_vdt.inc"
 #include "dusk/tphd/RevoCanvas.hpp"
+#include <optional>
 #endif
 
 dMeter2Draw_c::dMeter2Draw_c(JKRExpHeap* mp_heap) {
@@ -2339,7 +2340,18 @@ void dMeter2Draw_c::draw() {
     const f32 hudDrawX = 0.0f;
 #endif
 
+#if TARGET_PC
+    {
+        // Wii U HUD clipped to its 16:9 box (RevoCanvas.hpp): off-screen layout parts stay hidden.
+        std::optional<dusk::tphd::RevoClip> revoClip;
+        if (s_hdRevoHud) {
+            revoClip.emplace();
+        }
+        mpScreen->draw(hudDrawX, 0.0f, graf_ctx);
+    }
+#else
     mpScreen->draw(hudDrawX, 0.0f, graf_ctx);
+#endif
 #if TARGET_PC
     if (s_hdRevoHud) {
         static int s_hdDumpFrames = 0;
@@ -3550,7 +3562,10 @@ void dMeter2Draw_c::drawKanteraScreen(u8 i_meterType) {
         // 608-wide layout stretched to the TV like every Revo screen (J2DPane::draw 0x02b34334).
         const f32 minX = dusk::tphd::revoMinX();
         mpKanteraScreen->scale(dusk::tphd::revoWidth() / 608.0f, 1.0f);
-        mpKanteraScreen->draw(minX, 0.0f, graf_ctx);
+        {
+            dusk::tphd::RevoClip revoClip;  // 16:9 box (RevoCanvas.hpp)
+            mpKanteraScreen->draw(minX, 0.0f, graf_ctx);
+        }
         return;
     }
 #endif
