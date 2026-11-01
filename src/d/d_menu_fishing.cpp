@@ -444,7 +444,7 @@ void dMenu_Fishing_c::wait_move() {
                 }
             }
 
-            mpStick->checkTrigger();
+            // dMw_c::_move already advanced mpStick this frame (see d_menu_letter.cpp).
             int next = s_tphdFishing.mSelectedFish;
             if (mpStick->checkLeftTrigger() || mDoCPd_c::getTrigLeft(PAD_1)) {
                 next = checkLeft();

@@ -161,12 +161,12 @@ void dMenu_Fmap2DBack_c::fMapBackWide() {
         const f32 sx = dusk::tphd::subscreenScaleX();
         dusk::tphd::applyN43(mpBaseScreen, dusk::tphd::wiiuTvN43(), false, true);
         dusk::tphd::applyN43(mpBackScreen, dusk::tphd::wiiuTvN43(), false, true);
-        // Laid out in the 16:9 box (RevoCanvas.hpp); the background screen covers the window.
+        // Laid out in the 16:9 box (RevoCanvas.hpp) and clipped to it when drawn; the window
+        // background is mpBackTex, drawn over the whole canvas.
         mpBaseScreen->scale(sx, 1.0f);
         mpBaseScreen->translate(dusk::tphd::revoMinX(), 0.0f);
         mpBackScreen->scale(sx, 1.0f);
         mpBackScreen->translate(dusk::tphd::revoMinX(), 0.0f);
-        dusk::tphd::fillCanvasBackgrounds(mpBackScreen);
         return;
     }
     mpBaseScreen->scale(mDoGph_gInf_c::hudAspectScaleUp, 1.0f);
@@ -448,8 +448,17 @@ void dMenu_Fmap2DBack_c::draw() {
                     mTransZ + mDoGph_gInf_c::getMinYF(), mDoGph_gInf_c::getWidthF(),
                     mDoGph_gInf_c::getHeightF(), false, false, false);
 
-    mpBackScreen->draw(mTransX, mTransZ, grafPort);
-    mpBaseScreen->draw(mTransX, mTransZ, grafPort);
+#if TARGET_PC
+    if (hdFmapActive()) {
+        dusk::tphd::RevoClip revoClip;
+        mpBackScreen->draw(mTransX, mTransZ, grafPort);
+        mpBaseScreen->draw(mTransX, mTransZ, grafPort);
+    } else
+#endif
+    {
+        mpBackScreen->draw(mTransX, mTransZ, grafPort);
+        mpBaseScreen->draw(mTransX, mTransZ, grafPort);
+    }
 
     Mtx mtx;
     Vec vec1 = mpMapArea->getGlobalVtx(&mtx, 0, false, 0);

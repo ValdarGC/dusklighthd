@@ -4816,9 +4816,15 @@ void dFile_select_c::tphdStampAlbumOpen() {
         return;
     }
     JKRHeap* prev = mDoExt_setCurrentHeap(mpTphdStampHeap);
-    mpTphdStamp = JKR_NEW dMenu_Stamp_c(mpTphdStampHeap, stick, NULL, dMenu_Stamp_c::MODE_FILESEL);
+    // The Wii U album (ctor RPX 0x02a11898) does not take the file select stick: it moves at the
+    // menu speed it has when opened from the collection screen (dMw_c stick parameters), not
+    // with the fast repeat of the file select stick.
+    mpTphdStampStick = JKR_NEW STControl(5, 2, 1, 1, 0.9f, 0.5f, 0, 0x800);
+    mpTphdStamp = JKR_NEW dMenu_Stamp_c(mpTphdStampHeap, mpTphdStampStick, NULL,
+                                        dMenu_Stamp_c::MODE_FILESEL);
     mDoExt_setCurrentHeap(prev);
     if (mpTphdStamp == NULL) {
+        mpTphdStampStick = NULL;  // lived in the heap destroyed below
         mDoExt_destroyExpHeap(mpTphdStampHeap);
         mpTphdStampHeap = NULL;
         return;
@@ -4836,7 +4842,7 @@ bool dFile_select_c::tphdStampAlbumMove() {
     if (mpTphdStamp->getStatus() == 1) {
         mpTphdStamp->_open();
     } else if (mpTphdStamp->getStatus() == 2) {
-        stick->checkTrigger();
+        mpTphdStampStick->checkTrigger();
         mpTphdStamp->_move();
     }
     const bool closing = mpTphdStamp->getStatus() == 3 || mpTphdStamp->getStatus() == 0;
@@ -4851,6 +4857,10 @@ void dFile_select_c::tphdStampAlbumClose() {
     if (mpTphdStamp != NULL) {
         JKR_DELETE(mpTphdStamp);
         mpTphdStamp = NULL;
+    }
+    if (mpTphdStampStick != NULL) {
+        JKR_DELETE(mpTphdStampStick);
+        mpTphdStampStick = NULL;
     }
     if (mpTphdStampHeap != NULL) {
         mDoExt_destroyExpHeap(mpTphdStampHeap);

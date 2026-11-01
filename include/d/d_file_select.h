@@ -738,6 +738,7 @@ public:
 #ifdef TARGET_PC
     J2DScreen* mpTphdIconScr = NULL;
     dMenu_Stamp_c* mpTphdStamp = NULL;
+    STControl* mpTphdStampStick = NULL;
     JKRExpHeap* mpTphdStampHeap = NULL;
     u8 mTphdStampNum[3] = {0, 0, 0};
     bool mTphdBackToTitle = false;

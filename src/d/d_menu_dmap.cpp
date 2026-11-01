@@ -55,10 +55,9 @@ static void hdDmapStretch(J2DScreen* i_scrn) {
     }
     const f32 sx = dusk::tphd::subscreenScaleX();
     dusk::tphd::applyN43(i_scrn, dusk::tphd::wiiuTvN43(), false, true);
-    // Laid out in the 16:9 box (RevoCanvas.hpp); full-screen backgrounds cover the window.
+    // Laid out in the 16:9 box (RevoCanvas.hpp).
     i_scrn->scale(sx, 1.0f);
     i_scrn->translate(dusk::tphd::revoMinX(), 0.0f);
-    dusk::tphd::fillCanvasBackgrounds(i_scrn);
 }
 
 static J2DTextBox* hdDmapTextBox(J2DScreen* i_scrn, u64 i_tag) {

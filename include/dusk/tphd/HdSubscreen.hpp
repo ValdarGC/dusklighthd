@@ -371,45 +371,54 @@ inline Vec mgrDrawnCenter(CPaneMgr* m) {
 }
 
 // Menu backgrounds of a Revo screen reach the whole window while the rest of the screen stays in
-// the 16:9 box (RevoCanvas.hpp): every picture / window that covers the whole drawn layout is
-// scaled about its centre until it covers the canvas. Uses last frame's global vertices, so call it
-// every frame before drawing. Panes are told apart by size, so no tag list is needed per screen.
+// the 16:9 box (RevoCanvas.hpp): every visible picture / window covering the whole drawn layout is
+// scaled uniformly about the centre of the box (all of them by the same pivot, so split
+// backgrounds stay joined) until it covers the canvas. Uses last frame's global matrices, so call
+// it every frame before drawing.
 inline void fillCanvasBackgrounds(J2DPane* pane) {
-    if (pane == NULL) return;
+    if (pane == NULL || !pane->isVisible()) return;
     struct Fill {
-        f32 sx, sy, k, ky;
+        f32 sx, sy;              // pane scale before ours
+        f32 x0, y0, x1, y1;      // global rectangle before ours
+        f32 pivotX, pivotY;      // box centre in the pane's local (bounds) coordinates
     };
     static std::unordered_map<J2DPane*, Fill> s_fill;
     const u16 type = pane->getTypeID();
-    if (type == 18 || type == 17) {  // picture / window
-        const Vec a = pane->getGlbVtx(0);
-        const Vec b = pane->getGlbVtx(3);
+    if ((type == 18 || type == 17) && pane->getAlpha() != 0) {
         auto it = s_fill.find(pane);
-        const f32 curK = it != s_fill.end() ? it->second.k : 1.0f;
-        const f32 curKy = it != s_fill.end() ? it->second.ky : 1.0f;
-        const f32 w = std::fabs(b.x - a.x) / curK;   // drawn size without our scale
-        const f32 h = std::fabs(b.y - a.y) / curKy;
-        const f32 cx = (a.x + b.x) * 0.5f;
-        const f32 cy = (a.y + b.y) * 0.5f;
-        if (w >= revoWidth() * 0.97f && h >= 448.0f * 0.9f) {
-            const f32 canvasMinX = mDoGph_gInf_c::getMinXF();
-            const f32 canvasMaxX = mDoGph_gInf_c::getMaxXF();
-            const f32 canvasMinY = mDoGph_gInf_c::getMinYF();
-            const f32 canvasMaxY = mDoGph_gInf_c::getMaxYF();
-            const f32 needX = std::max(cx - canvasMinX, canvasMaxX - cx) * 2.0f;
-            const f32 needY = std::max(cy - canvasMinY, canvasMaxY - cy) * 2.0f;
-            const f32 k = std::max(1.0f, needX / std::max(w, 1.0f));
-            const f32 ky = std::max(1.0f, needY / std::max(h, 1.0f));
-            if (it == s_fill.end()) {
-                it = s_fill.emplace(pane, Fill{pane->getScaleX(), pane->getScaleY(), 1.0f, 1.0f}).first;
+        const f32 bx = (revoMinX() + revoMaxX()) * 0.5f;
+        const f32 by = 224.0f;
+        if (it == s_fill.end()) {
+            const Vec a = pane->getGlbVtx(0);
+            const Vec b = pane->getGlbVtx(3);
+            const f32 w = std::fabs(b.x - a.x);
+            const f32 h = std::fabs(b.y - a.y);
+            if (w >= revoWidth() * 0.97f && h >= 448.0f * 0.9f && pane->getRotateZ() == 0.0f) {
+                Mtx inv;
+                if (MTXInverse(pane->getGlbMtx(), inv) != 0) {
+                    Vec g = {bx, by, 0.0f};
+                    Vec l;
+                    MTXMultVec(inv, &g, &l);
+                    it = s_fill.emplace(pane, Fill{pane->getScaleX(), pane->getScaleY(),
+                                                   std::min(a.x, b.x), std::min(a.y, b.y),
+                                                   std::max(a.x, b.x), std::max(a.y, b.y), l.x, l.y})
+                             .first;
+                }
             }
-            if (pane->getRotateZ() == 0.0f) {
-                pane->mRotateOffsetX = (pane->mBounds.i.x + pane->mBounds.f.x) * 0.5f;
-                pane->mRotateOffsetY = (pane->mBounds.i.y + pane->mBounds.f.y) * 0.5f;
-            }
-            pane->scale(it->second.sx * k, it->second.sy * ky);
-            it->second.k = k;
-            it->second.ky = ky;
+        }
+        if (it != s_fill.end()) {
+            const Fill& f = it->second;
+            f32 k = 1.0f;
+            auto need = [&](f32 edgeDist, f32 paneDist) {
+                if (paneDist > 1.0f) k = std::max(k, edgeDist / paneDist);
+            };
+            need(bx - mDoGph_gInf_c::getMinXF(), bx - f.x0);
+            need(mDoGph_gInf_c::getMaxXF() - bx, f.x1 - bx);
+            need(by - mDoGph_gInf_c::getMinYF(), by - f.y0);
+            need(mDoGph_gInf_c::getMaxYF() - by, f.y1 - by);
+            pane->mRotateOffsetX = f.pivotX - pane->mBounds.i.x;
+            pane->mRotateOffsetY = f.pivotY - pane->mBounds.i.y;
+            pane->scale(f.sx * k, f.sy * k);
             return;
         }
     }

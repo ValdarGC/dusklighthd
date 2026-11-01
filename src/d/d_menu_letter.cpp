@@ -444,7 +444,8 @@ void dMenu_Letter_c::hdMove() {
                 break;
             }
         }
-        mpStick->checkTrigger();
+        // dMw_c::_move already called mpStick->checkTrigger() this frame (the GC letter screen
+        // does not call it again); a second call doubled the repeat speed.
         if (next == old) {
             if (mpStick->checkUpTrigger()) {
                 if (old > 0) {
