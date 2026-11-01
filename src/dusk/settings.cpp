@@ -185,6 +185,7 @@ UserSettings g_userSettings = {
         .isoVerification {"backend.isoVerification", DiscVerificationState::Unknown},
 #if DUSK_TPHD
         .hdContentPath {"backend.hdContentPath", ""},
+        .tphdEnabled {"backend.tphdEnabled", true},
 #endif
         .graphicsBackend {"backend.graphicsBackend", "auto"},
         .skipPreLaunchUI {"backend.skipPreLaunchUI", false},
@@ -299,8 +300,19 @@ std::filesystem::path tphd_content_path() {
 #endif
 }
 
-bool tphd_active() {
+bool tphd_content_available() {
     return !tphd_content_path().empty();
+}
+
+bool tphd_active() {
+#if DUSK_TPHD
+    // TPHD mode cannot change during a session (archives, layouts and saves depend on it): the
+    // "TPHD Mode" setting is read once and applies after a restart.
+    static const bool s_enabledAtLaunch = g_userSettings.backend.tphdEnabled.getValue();
+    return s_enabledAtLaunch && tphd_content_available();
+#else
+    return false;
+#endif
 }
 
 float brightnessGamma(int i_brightness) {
@@ -476,6 +488,7 @@ void registerSettings() {
     Register(g_userSettings.backend.isoVerification);
 #if DUSK_TPHD
     Register(g_userSettings.backend.hdContentPath);
+    Register(g_userSettings.backend.tphdEnabled);
 #endif
     Register(g_userSettings.backend.graphicsBackend);
     Register(g_userSettings.backend.skipPreLaunchUI);

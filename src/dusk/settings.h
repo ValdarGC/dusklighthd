@@ -346,6 +346,7 @@ struct UserSettings {
         ConfigVar<DiscVerificationState> isoVerification;
 #if DUSK_TPHD
         ConfigVar<std::string> hdContentPath;
+        ConfigVar<bool> tphdEnabled;
 #endif
         ConfigVar<std::string> graphicsBackend;
         ConfigVar<bool> skipPreLaunchUI;
@@ -373,6 +374,8 @@ UserSettings& getSettings();
 
 std::filesystem::path tphd_content_path();
 bool tphd_active();
+// A valid Wii U content folder is configured (whether TPHD mode is switched on or not).
+bool tphd_content_available();
 
 void registerSettings();
 

@@ -22,6 +22,7 @@
 #include "dusk/imgui/ImGuiEngine.hpp"
 #include "dusk/language.hpp"
 #include "dusk/livesplit.h"
+#include "dusk/main.h"
 #include "dusk/presentation.hpp"
 #include "dusk/speedrun.h"
 
@@ -732,6 +733,17 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             VICenterWindow();
         }),
             rightPane, [](Pane& pane) { pane.clear(); });
+#if DUSK_TPHD
+        config_bool_select(leftPane, rightPane, getSettings().backend.tphdEnabled,
+            {
+                .key = "TPHD Mode (Wii U HD)",
+                .helpText = "Plays with the Wii U Twilight Princess HD content: HD textures, Wii U "
+                            "HUD, menus and saves. Needs the Wii U content folder chosen in the "
+                            "launcher.<br/><br/>Changing it restarts the game: save first.",
+                .onChange = [](bool) { RequestRestart(); },
+                .isDisabled = [] { return !tphd_content_available(); },
+            });
+#endif
         config_bool_select(leftPane, rightPane, getSettings().video.enableVsync,
             {
                 .key = "Enable VSync",

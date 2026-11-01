@@ -357,6 +357,21 @@ void mDoGph_gInf_c::create() {
 
 static bool data_80450BE8;
 
+#if TARGET_PC
+// Ortho for full-screen 2D particles (wolf senses, transformation...). They are authored for a
+// 448-unit tall screen, so on windows narrower than 16:9 in TPHD mode (taller 2D canvas, see
+// setTvSize) they are drawn on the window's own 448-tall canvas to keep covering it.
+static void setParticleOrtho(J2DOrthoGraph& ortho, f32 i_near, f32 i_far) {
+    if (dusk::tphd_active() && mDoGph_gInf_c::getHeightF() > FB_HEIGHT_BASE + 0.5f) {
+        const f32 width = FB_HEIGHT_BASE * mDoGph_gInf_c::getAspect();
+        ortho.setOrtho((FB_WIDTH_BASE - width) * 0.5f, 0.0f, width, FB_HEIGHT_BASE, i_near, i_far);
+        return;
+    }
+    ortho.setOrtho(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(), mDoGph_gInf_c::getWidthF(),
+                   mDoGph_gInf_c::getHeightF(), i_near, i_far);
+}
+#endif
+
 void mDoGph_gInf_c::beginRender() {
     ZoneScoped;
 
@@ -2679,9 +2694,13 @@ int mDoGph_Painter() {
                     } else
                     #endif
                     {
+#if TARGET_PC
+                        setParticleOrtho(ortho, 100000.0f, -100000.0f);
+#else
                         ortho.setOrtho(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
                                        mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(),
                                        100000.0f, -100000.0f);
+#endif
                     }
                     ortho.setPort();
 
@@ -2786,11 +2805,21 @@ int mDoGph_Painter() {
 
         JPADrawInfo draw_info3(m5, 0.0f, FB_HEIGHT_BASE, 0.0f, FB_WIDTH_BASE);
 
+#if TARGET_PC
+        setParticleOrtho(ortho, 100000.0f, -100000.0f);
+        ortho.setPort();
+#endif
         if (!dComIfGp_isPauseFlag()) {
             GX_DEBUG_GROUP(dComIfGp_particle_draw2Dback, &draw_info3);
         }
 
         GX_DEBUG_GROUP(dComIfGp_particle_draw2DmenuBack, &draw_info3);
+#if TARGET_PC
+        // Back to the canvas ortho for the 2D UI.
+        ortho.setOrtho(mDoGph_gInf_c::getMinXF(), mDoGph_gInf_c::getMinYF(),
+                       mDoGph_gInf_c::getWidthF(), mDoGph_gInf_c::getHeightF(), 100000.0f,
+                       -100000.0f);
+#endif
         ortho.setPort();
 
         GX_DEBUG_GROUP(dComIfGd_draw2DOpa);
