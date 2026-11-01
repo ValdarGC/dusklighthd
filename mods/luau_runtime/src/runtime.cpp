@@ -6,6 +6,7 @@
 #include "mods/runtime.h"
 #include "mods/service.hpp"
 #include "mods/svc/audio_res.h"
+#include "mods/svc/tphd.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,7 @@ IMPORT_OPTIONAL_SERVICE(OverlayService, svc_overlay);
 IMPORT_OPTIONAL_SERVICE(TextureService, svc_texture);
 IMPORT_OPTIONAL_SERVICE(UiService, svc_ui);
 IMPORT_OPTIONAL_SERVICE(AudioResService, svc_audio_res);
+IMPORT_OPTIONAL_SERVICE(TphdService, svc_tphd);
 
 namespace luau_runtime {
 namespace {

@@ -169,6 +169,25 @@ export type HostModule = {
 export type ResourceModule = { load: (relativePath: string) -> string }
 
 --
+-- tphd
+--
+
+export type TphdModule = {
+    -- TPHD mode (Wii U content folder) is on.
+    is_active: () -> boolean,
+    -- The Wii U content folder, nil when TPHD mode is off.
+    content_path: () -> string?,
+    -- A file of a Wii U archive (Yaz0 decoded), e.g. ("res/Object/Alink.arc", "bmdr/al.bmd"); nil if missing.
+    read_arc_file: (resPath: string, filePath: string) -> string?,
+    -- Horizontal stretch of Revo (Wii U) screens on the current canvas (canvas width / 608).
+    tv_stretch: () -> number,
+    -- Horizontal scale of the 'n_43' panes of a stretched Revo screen.
+    n43_squeeze: () -> number,
+    -- Rescans the tphd_* texture packs of the data folder.
+    reload_texture_packs: () -> (),
+}
+
+--
 -- audio_res
 --
 
@@ -255,4 +274,5 @@ declare function require(path: "dusklight.overlay"): OverlayModule
 declare function require(path: "dusklight.texture"): TextureModule
 declare function require(path: "dusklight.ui"): UiModule
 declare function require(path: "dusklight.audio_res"): AudioResModule
+declare function require(path: "dusklight.tphd"): TphdModule
 declare function require(path: string): any

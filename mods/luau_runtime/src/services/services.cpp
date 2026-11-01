@@ -15,6 +15,7 @@ constexpr std::pair<std::string_view, lua_CFunction> kModules[] = {
     {"dusklight.config"sv, open_config},
     {"dusklight.ui"sv, open_ui},
     {"dusklight.audio_res"sv, open_audio_res},
+    {"dusklight.tphd"sv, open_tphd},
 };
 
 }  // namespace

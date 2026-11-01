@@ -39,6 +39,7 @@ add_mod(luau_runtime
         src/services/config.cpp
         src/services/config.hpp
         src/services/services.cpp
+        src/services/tphd.cpp
         src/services/services.hpp
         src/services/ui.cpp
         src/services/ui.hpp

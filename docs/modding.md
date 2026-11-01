@@ -241,6 +241,8 @@ The runtime provides these modules:
 - `dusklight.overlay`: file and copied-buffer overlays with removable handles.
 - `dusklight.texture`: encoded-file and raw-data replacements with unregisterable handles.
 - `dusklight.ui`: Mods panels, controls, lists, windows, dialogs, styles, menu tabs, toasts, and clipboard access.
+- `dusklight.tphd`: TPHD mode: `is_active`, `content_path`, `read_arc_file`, `tv_stretch`, `n43_squeeze` and
+  `reload_texture_packs` (see [TphdService](#tphdservice-modssvctphdh)).
 
 For completion and type checking, add `sdk/luau/dusklight.d.luau` to the `luau-lsp.types.definitionFiles` setting.
 

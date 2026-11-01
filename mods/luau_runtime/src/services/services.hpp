@@ -15,6 +15,7 @@ int open_overlay(lua_State* state);
 int open_texture(lua_State* state);
 int open_config(lua_State* state);
 int open_ui(lua_State* state);
+int open_tphd(lua_State* state);
 
 ModuleOpenFn module_factory(std::string_view name);
 
